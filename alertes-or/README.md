@@ -55,6 +55,23 @@ ventes équilibrés, ratio TP2 médian **5,3R**, dix setups à 5R ou plus. Le ta
 de réussite affiché sur ces jeux n'a aucune valeur prédictive : ce sont des
 marches aléatoires, sans avantage statistique par construction.
 
+## Journal auto-apprenant
+
+Chaque trade proposé par l'analyseur est **enregistré définitivement**, que tu
+l'aies pris ou non, puis rejoué contre les bougies réelles jusqu'à son issue :
+jamais déclenché, stop, TP1, TP2 ou TP3, avec le résultat en R.
+
+Les statistiques sont regroupées par **note** (A/B/C/D) et par **sens**, et la
+page en tire des conseils du type « les setups note D t'ont coûté 6R sur 24
+trades : relève le score minimum ».
+
+C'est de la **mesure, pas de l'apprentissage automatique**. Un conseil ne
+s'affiche qu'à partir de 20 trades clôturés dans le groupe concerné ; en
+dessous, l'interface le dit explicitement plutôt que de tirer des conclusions
+sur trois trades. Le journal survit au rechargement (`localStorage`) et
+n'influence jamais la détection : un test vérifie qu'il n'est pas référencé
+dans `detect()`.
+
 ## Zones ICT / SMC
 
 Détection sur bougies clôturées, de D1 à M5 :
