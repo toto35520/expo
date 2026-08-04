@@ -55,6 +55,34 @@ ventes équilibrés, ratio TP2 médian **5,3R**, dix setups à 5R ou plus. Le ta
 de réussite affiché sur ces jeux n'a aucune valeur prédictive : ce sont des
 marches aléatoires, sans avantage statistique par construction.
 
+## Taille de position et plan de trade
+
+L'analyseur dimensionne chaque trade sur ton capital réel :
+
+- lot **arrondi au pas du broker** vers le bas (jamais au-dessus du risque autorisé) et plafonné par `maxLot` ;
+- `riskPercent` borné par `maxRiskPercent` ;
+- **conversion de devise** : l'or cote en USD, ton compte peut être en EUR. Le champ « 1 unité de ta devise = ? USD » sert à convertir le risque et les gains ;
+- **marge** calculée depuis le levier, avec alerte au-delà de `maxMarginPercent` ;
+- **gain projeté** à TP1, TP2 et TP3, dans la devise du compte ;
+- si le lot minimum du broker dépasse déjà le risque autorisé, le trade est marqué **capital insuffisant** avec le chiffre exact, au lieu d'un lot fantaisiste.
+
+## Familles de setups
+
+Au-delà de la séquence sweep → réintégration → BOS → retest, l'analyseur
+exploite les zones qu'il calcule déjà :
+
+| Famille | Déclencheur |
+| --- | --- |
+| `SEQUENCE` | sweep, réintégration, BOS puis retest |
+| `ZONE_HTF` | retour sur un OB, FVG, IFVG, BPR ou Breaker H4/H1/M30 avec bougie de rejet |
+| `OTE` | retracement dans la zone 62–79 % d'une impulsion, avec rejet |
+| `SILVER_BULLET` | sweep + MSS + FVG dans la fenêtre horaire stricte |
+
+Chaque famille passe par les **mêmes garde-fous** : ratio minimum, veto
+actualités, filtre de session, stop ni trop serré ni trop large, notation et
+journal. La famille est enregistrée avec le trade, donc le journal dira
+laquelle fonctionne réellement chez toi.
+
 ## Journal auto-apprenant
 
 Chaque trade proposé par l'analyseur est **enregistré définitivement**, que tu
