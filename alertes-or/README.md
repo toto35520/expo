@@ -85,6 +85,25 @@ viennent toujours des bougies réelles. C'est aussi le choix de GoldGuard, dont
 `vision.py` ne lit pas les images non plus : il consomme des métadonnées OCR
 et ne sert que de garde-fou.
 
+### Calendrier local
+
+Les sources publiques de calendrier refusent les navigateurs (pas d'en-tête
+CORS) et renvoient une page HTML aux relais. Plutôt que d'empiler des proxies
+fragiles, la page recalcule **hors ligne** les annonces USD à horaire
+déterministe, en heure de New York et avec l'heure d'été :
+
+- inscriptions hebdomadaires au chômage — chaque jeudi 08:30 NY ;
+- emploi non agricole (NFP) — premier vendredi du mois, 08:30 NY ;
+- décisions FOMC — dates programmées, 14:00 NY.
+
+Le filtre actualités reste donc **actif même sans réseau**. Ces dates sont
+marquées « estimé » dans l'onglet Actus : le CPI, dont la date varie, n'est
+volontairement pas deviné.
+
+Les fenêtres de blocage sont des plages **absolues** (et non des heures de la
+journée), pour qu'une annonce d'un jour ne bloque pas le même horaire les
+autres jours.
+
 ## Suivi de trades
 
 La page **suit** un trade dont tu fournis les niveaux, d'où qu'ils viennent.
@@ -110,7 +129,7 @@ backtest.
 | --- | --- | --- |
 | Bougies M5 | Binance PAXGUSDT | Binance data-api, Bybit, OKX, 2 relais CORS |
 | Cours spot | gold-api.com | relais CORS |
-| Calendrier USD | ForexFactory (`ff_calendar_thisweek.json`) | codetabs, allorigins (×2), corsproxy, thingproxy |
+| Calendrier USD | ForexFactory (`ff_calendar_thisweek.json`) | 5 relais CORS, puis **calendrier local hors ligne** |
 | Actualités | GDELT | relais CORS |
 
 ## Profondeur d'historique
