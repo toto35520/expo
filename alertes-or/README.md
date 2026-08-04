@@ -252,6 +252,22 @@ Repris de la logique du moteur GoldGuard :
 Les deux conditions doivent être réunies pour un choc, ce qui évite les faux
 positifs (une actualité « guerre » sans acteur politique ne bloque pas).
 
+## Setups de référence
+
+Deux séquences « manuel de cours » sont construites à la main, une à l'achat et
+une à la vente : rallye, pivot bas propre, pivot haut, sweep de liquidité,
+réintégration en clôture, cassure de structure avec déplacement, puis retest.
+Le test exige que le moteur sorte une entrée du bon sens, avec trois objectifs
+ordonnés et un ratio d'au moins 2R.
+
+Ces tests ont révélé un faux négatif réel : quand une bougie invalidait un
+setup encore en attente, le moteur traitait l'invalidation **après** avoir déjà
+sauté le bloc d'armement, si bien que cette bougie ne pouvait pas armer un
+nouveau sweep. Or c'est précisément le cas fréquent en marché rapide, la bougie
+qui invalide étant souvent la nouvelle prise de liquidité. Le setup de
+référence était donc perdu. L'armement est désormais retenté sur la même
+bougie après chaque invalidation.
+
 ## Vérification
 
 Testé en navigateur headless : syntaxe, absence d'erreur JS/NaN, rendu de chaque
