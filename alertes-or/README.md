@@ -26,6 +26,35 @@ notifications dans l'onglet Réglages.
 - **Réglages** — capital, risque, score/ratio minimum, sessions, mode d'entrée.
 - **Aide** — fonctionnement et limites.
 
+## Philosophie : qualifier, pas bloquer
+
+Les analyses ICT et institutionnelles **ne bloquent aucun signal**. Elles lui
+donnent une note. Seuls deux garde-fous refusent réellement un trade : le
+**ratio** (il faut un objectif à `minRiskReward`) et le **filtre actualités**.
+
+Chaque entrée reçoit une note A/B/C/D issue des zones ICT touchées, de la
+position dans le dealing range, de la confluence institutionnelle, du score de
+séquence et du ratio disponible. Un setup moyen sort quand même — annoté comme
+tel — plutôt que d'être supprimé en silence.
+
+### Comment le blocage a été levé
+
+Le sweep n'était armé que si toute la confluence était réunie **sur la bougie
+même du sweep**. Sur 17 jours réels : 29 zones approchées, 2 sweeps, 0 entrée.
+Le sweep s'arme désormais sur la prise de liquidité seule, et la confluence est
+passée dans la note.
+
+Les objectifs suivaient la même erreur : TP1 était le niveau le plus proche et
+on exigeait qu'il fasse déjà 2R, ce qui refusait 197 candidates sur 223. TP1
+vise maintenant ≈ 1R et c'est **TP2** qui doit atteindre le ratio, conformément
+à la règle V8. Les cibles au-delà de 25 ATR sont ignorées : elles gonflaient le
+ratio sans être atteignables.
+
+Mesuré sur 60 jeux de données de 17 jours : entrées **1 → 20**, achats et
+ventes équilibrés, ratio TP2 médian **5,3R**, dix setups à 5R ou plus. Le taux
+de réussite affiché sur ces jeux n'a aucune valeur prédictive : ce sont des
+marches aléatoires, sans avantage statistique par construction.
+
 ## Zones ICT / SMC
 
 Détection sur bougies clôturées, de D1 à M5 :
