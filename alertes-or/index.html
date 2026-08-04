@@ -1351,7 +1351,7 @@ function emitFamilySignals(e){
     if(state.seen.has(t))continue;
     state.seen.add(t);
     const s={...e,receivedAt:Date.now(),adj:n,sizing:sizing(e,state.settings)};
-    try{s.quality=gradeSignal(e),e.score=s.quality?s.quality.points:0,s.score=e.score}catch(t){s.quality=null,s.score=0}
+    try{s.quality=gradeSignal(e),e.score=s.quality?Math.max(1,Math.min(10,Math.round(10*s.quality.points/13))):0,s.score=e.score}catch(t){s.quality=null,s.score=0}
     journalAdd(e,s.quality),state.signals.unshift(s),notifySignal(s);
   }
   state.signals=state.signals.slice(0,60);

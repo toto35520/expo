@@ -83,6 +83,17 @@ actualités, filtre de session, stop ni trop serré ni trop large, notation et
 journal. La famille est enregistrée avec le trade, donc le journal dira
 laquelle fonctionne réellement chez toi.
 
+## Livraison des signaux
+
+Tout signal validé, quelle que soit sa famille, suit le même chemin, vérifié
+par test : **notation → journal → notification → fiche**. Aucun signal
+n'échappe à l'analyse, et un même signal n'est jamais enregistré deux fois.
+
+**Limite importante** : les notifications n'arrivent que si la page est
+**ouverte** et les notifications autorisées. Page fermée, rien ne part — une
+page statique ne peut pas s'exécuter en arrière-plan. Il faudrait un serveur
+qui tourne en continu pour des alertes téléphone éteint.
+
 ## Journal auto-apprenant
 
 Chaque trade proposé par l'analyseur est **enregistré définitivement**, que tu
