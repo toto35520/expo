@@ -18,12 +18,37 @@ notifications dans l'onglet Réglages.
 
 - **Temps réel** — progression du setup, marché, confluence, dernier signal.
 - **Signaux** — backtest de tes réglages sur l'historique chargé + signaux de la session.
+- **Zones ICT** — Order Blocks, Breakers, FVG, IFVG, BPR, dealing range, liquidité, gaps.
 - **Captures** — dépôt des graphiques H4/H1/M30/M5 et analyse visuelle locale.
 - **Mes trades** — suivi live des trades saisis à la main ou adoptés depuis un signal.
 - **Institutionnel** — suite ICT complète et score de confluence pondéré.
 - **Actus** — calendrier économique USD et fil géopolitique lié à l'or.
 - **Réglages** — capital, risque, score/ratio minimum, sessions, mode d'entrée.
 - **Aide** — fonctionnement et limites.
+
+## Zones ICT / SMC
+
+Détection sur bougies clôturées, de D1 à M5 :
+
+| Élément | Détail |
+| --- | --- |
+| Timeframes | D1, H4, H1, M30, M15, M5 |
+| Order Blocks | dernière bougie opposée avant un déplacement ≥ 1,1 ATR, validée par une cassure de structure, avec test d'invalidation |
+| Breaker Blocks | Order Block cassé, rejoué en sens inverse |
+| FVG | trois bougies, filtre ATR (8 %), suivi d'activité |
+| IFVG | FVG traversée en clôture, rôle inversé |
+| BPR | chevauchement de deux FVG opposées |
+| Dealing range | swings H4, equilibrium 50 %, quartiles premium / discount |
+| ERL | PDH, PDL, PWH, PWL |
+| IRL | swings internes, equal highs/lows, midpoints de FVG |
+| NDOG / NWOG | écarts 17:00 → 18:00 New York |
+| Échelle d'objectifs | chaque cible de liquidité au-delà de l'entrée, avec son ratio R |
+
+**Le ratio n'est pas plafonné** : `minRiskReward` est un plancher. Une cible à
+5 R ou 10 R apparaît dans l'échelle dès qu'un niveau de liquidité la porte.
+
+**SMT Gold/Silver n'est pas implémenté** : il faudrait des bougies M5 d'argent,
+qu'aucune source branchée ici ne fournit. Le signaler vaut mieux que le simuler.
 
 ## Suite institutionnelle
 
