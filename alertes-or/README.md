@@ -18,6 +18,7 @@ notifications dans l'onglet Réglages.
 
 - **Temps réel** — progression du setup, marché, confluence, dernier signal.
 - **Signaux** — backtest de tes réglages sur l'historique chargé + signaux de la session.
+- **Mes trades** — suivi live des trades saisis à la main ou adoptés depuis un signal.
 - **Institutionnel** — suite ICT complète et score de confluence pondéré.
 - **Actus** — calendrier économique USD et fil géopolitique lié à l'or.
 - **Réglages** — capital, risque, score/ratio minimum, sessions, mode d'entrée.
@@ -58,13 +59,35 @@ couvraient que `silver_bullet_window` (l'horloge), pas `silver_bullet_setup`
 (la détection). Ici les deux bornes sont normalisées sur l'échelle de session,
 et un test vérifie que les six fenêtres renvoient des bougies.
 
+## Suivi de trades
+
+La page ne lit pas les graphiques : elle n'a ni OCR ni modèle de vision, et
+`vision.py` de GoldGuard ne lit pas non plus les images (il consomme des
+métadonnées OCR et ne sert que de garde-fou). En revanche elle **suit** un
+trade dont tu fournis les niveaux, d'où qu'ils viennent.
+
+- Saisie manuelle : sens, entrée, stop, TP1, TP2, note.
+- Adoption en un clic du dernier signal de l'analyseur.
+- Suivi live : attente d'entrée → déclenchement → stop/TP, résultat en R,
+  excursion maximale favorable et défavorable, taille de lot, notifications.
+- L'évaluation rejoue l'historique depuis la création : un trade posé la
+  veille est correctement résolu même si la page est restée fermée.
+- Les trades sont conservés dans le navigateur (`localStorage`) et survivent
+  au rechargement.
+
+Les niveaux se saisissent dans l'échelle affichée à l'écran (spot XAU/USD si
+l'alignement est actif) et sont convertis vers l'échelle brute des bougies au
+moment de l'évaluation. Un TP situé du mauvais côté de l'entrée est ignoré, et
+une bougie touchant stop et TP est comptée comme perdante, comme dans le
+backtest.
+
 ## Sources de données
 
 | Donnée | Source | Repli |
 | --- | --- | --- |
 | Bougies M5 | Binance PAXGUSDT | Binance data-api, Bybit, OKX, 2 relais CORS |
 | Cours spot | gold-api.com | relais CORS |
-| Calendrier USD | ForexFactory (`ff_calendar_thisweek.json`) | 2 relais CORS |
+| Calendrier USD | ForexFactory (`ff_calendar_thisweek.json`) | codetabs, allorigins (×2), corsproxy, thingproxy |
 | Actualités | GDELT | relais CORS |
 
 ## Profondeur d'historique
