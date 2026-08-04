@@ -18,6 +18,7 @@ notifications dans l'onglet Réglages.
 
 - **Temps réel** — progression du setup, marché, confluence, dernier signal.
 - **Signaux** — backtest de tes réglages sur l'historique chargé + signaux de la session.
+- **Captures** — dépôt des graphiques H4/H1/M30/M5 et analyse visuelle locale.
 - **Mes trades** — suivi live des trades saisis à la main ou adoptés depuis un signal.
 - **Institutionnel** — suite ICT complète et score de confluence pondéré.
 - **Actus** — calendrier économique USD et fil géopolitique lié à l'or.
@@ -59,12 +60,34 @@ couvraient que `silver_bullet_window` (l'horloge), pas `silver_bullet_setup`
 (la détection). Ici les deux bornes sont normalisées sur l'échelle de session,
 et un test vérifie que les six fenêtres renvoient des bougies.
 
+## Analyse de captures
+
+Glisser-déposer, clic ou Ctrl+V dans les emplacements H4, H1, M30 et M5. Les
+images sont analysées **dans le navigateur** et ne sont jamais envoyées.
+
+Mesuré au pixel, sans OCR :
+
+| Mesure | Méthode |
+| --- | --- |
+| Graphique ou non | part de colonnes contenant des bougies |
+| Tendance visuelle | régression du centre du tracé, exprimée en % de la hauteur |
+| Premium / discount | position de la dernière bougie dans le range visible |
+| Équilibre haussier / baissier | proportion de pixels verts et rouges |
+| Lignes horizontales | rangées dont un segment continu couvre > 55 % de la largeur |
+| Zones dessinées | blocs de teinte uniforme distincts du fond et des bougies |
+
+La page **compare** ensuite la tendance lue sur l'image à celle que le moteur
+calcule sur les bougies réelles, et signale tout désaccord.
+
+Ce qui n'est **pas** extrait : les prix. Lire des chiffres au pixel produirait
+des niveaux faux, et un stop faux coûte de l'argent. Les niveaux chiffrés
+viennent toujours des bougies réelles. C'est aussi le choix de GoldGuard, dont
+`vision.py` ne lit pas les images non plus : il consomme des métadonnées OCR
+et ne sert que de garde-fou.
+
 ## Suivi de trades
 
-La page ne lit pas les graphiques : elle n'a ni OCR ni modèle de vision, et
-`vision.py` de GoldGuard ne lit pas non plus les images (il consomme des
-métadonnées OCR et ne sert que de garde-fou). En revanche elle **suit** un
-trade dont tu fournis les niveaux, d'où qu'ils viennent.
+La page **suit** un trade dont tu fournis les niveaux, d'où qu'ils viennent.
 
 - Saisie manuelle : sens, entrée, stop, TP1, TP2, note.
 - Adoption en un clic du dernier signal de l'analyseur.
@@ -117,6 +140,13 @@ Testé en navigateur headless : syntaxe, absence d'erreur JS/NaN, rendu de chaqu
 type de signal, pagination de l'historique, calcul de taille de position, parsing
 du calendrier, précision du filtre de chocs (10/10), et blocage effectif d'une
 entrée tombant dans une fenêtre d'annonce.
+
+Analyse de captures : sur des graphiques générés à trajectoire imposée, la
+tendance haussière, baissière et neutre est correctement identifiée, le
+premium et le discount aussi, les lignes tracées sont comptées, une image qui
+n'est pas un graphique est rejetée, un fichier non-image est refusé, et un
+désaccord capture/moteur est signalé sans faux positif quand les deux
+concordent.
 
 Suite institutionnelle : les six fenêtres horaires renvoient des bougies, le
 passage heure d'été/hiver de New York est correct (16 h en juillet, 15 h en
