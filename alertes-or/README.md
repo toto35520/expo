@@ -94,6 +94,36 @@ n'échappe à l'analyse, et un même signal n'est jamais enregistré deux fois.
 page statique ne peut pas s'exécuter en arrière-plan. Il faudrait un serveur
 qui tourne en continu pour des alertes téléphone éteint.
 
+## Suivi des propositions : « tu l'as pris ? »
+
+Chaque trade proposé pose la question sur l'onglet Temps réel, avec l'entrée,
+le stop, les objectifs et le lot conseillé.
+
+- **Oui, je l'ai pris** — le trade rejoint « Mes trades » et est suivi en
+  direct jusqu'à son issue, avec le lot calculé sur ton capital.
+- **Non, passé** — il reste suivi dans le journal, pour apprendre.
+
+Dans les deux cas l'analyseur continue de chercher l'entrée suivante. Le
+journal compare ensuite **ce que tu prends** et **ce que tu laisses** : si les
+trades laissés rapportent davantage, c'est que tu filtres trop.
+
+### Notes et notifications
+
+Le réglage « Notifier à partir de la note » (D / C / B / A) filtre uniquement
+les **notifications**. Le journal continue d'enregistrer et de suivre *toutes*
+les propositions, sinon l'apprentissage serait biaisé par ce qu'on a choisi de
+ne pas voir.
+
+## Persistance
+
+Réglages, journal et trades sont enregistrés dans le navigateur et survivent à
+la fermeture de l'app. Les réglages restent aussi dans l'adresse, qui garde la
+priorité pour qu'un lien partagé fonctionne.
+
+Le suivi rejoue l'historique depuis la création de chaque trade : fermer l'app
+ne fait rien perdre, l'issue est recalculée à la réouverture. En revanche, une
+**notification** ne part que si la page est ouverte.
+
 ## Journal auto-apprenant
 
 Chaque trade proposé par l'analyseur est **enregistré définitivement**, que tu
