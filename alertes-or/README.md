@@ -107,6 +107,14 @@ vise maintenant ≈ 1R et c'est **TP2** qui doit atteindre le ratio, conforméme
 à la règle V8. Les cibles au-delà de 25 ATR sont ignorées : elles gonflaient le
 ratio sans être atteignables.
 
+**Objectif de repli.** Quand aucun niveau de liquidité n'atteint le ratio
+demandé, un objectif à `minRiskReward` fixe prend le relais — pratique
+courante, et le setup n'est plus jeté pour cette seule raison. C'était le
+premier motif de refus : 57 % des candidates, et 4 déclencheurs sur 5 du côté
+des familles. Les entrées passent de 90 à 187 sur le même historique, soit un
+trade tous les 2,7 jours au lieu de 5,7, auxquels s'ajoutent les setups sur
+zone. Les trois objectifs restent ordonnés dans tous les cas.
+
 Mesuré sur 60 jeux de données de 17 jours : entrées **1 → 20**, achats et
 ventes équilibrés, ratio TP2 médian **5,3R**, dix setups à 5R ou plus. Le taux
 de réussite affiché sur ces jeux n'a aucune valeur prédictive : ce sont des
