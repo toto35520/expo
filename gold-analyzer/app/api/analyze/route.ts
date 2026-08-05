@@ -1,35 +1,25 @@
-import Anthropic from '@anthropic-ai/sdk';
 import { NextRequest } from 'next/server';
 import { ANALYSIS_SCHEMA } from '@/lib/schema';
 import { buildFollowUpPrompt, buildSystemPrompt, buildUserPrompt } from '@/lib/prompt';
-import { computeConfidence, computeGates, computeGrade, computeScore, orderModules } from '@/lib/scoring';
-import { computeSizing } from '@/lib/sizing';
-import type { Analysis, AnalysisContext, ChartUpload, RawAnalysis } from '@/lib/types';
+import { callProvider, extractJson, PROVIDER_BY_ID, type ProviderId } from '@/lib/providers';
+import { assembleAnalysis } from '@/lib/assemble';
+import type { AnalysisContext, ChartUpload, RawAnalysis } from '@/lib/types';
 
 export const runtime = 'nodejs';
-// Une analyse vision sur 4-6 graphiques à effort élevé prend couramment 60-150 s.
 export const maxDuration = 300;
 
-const MODEL = process.env.ANTHROPIC_MODEL || 'claude-opus-5';
-const MAX_TOKENS = 32000;
 const ALLOWED_MEDIA = ['image/png', 'image/jpeg', 'image/webp', 'image/gif'];
 
 type Event =
   | { type: 'status'; message: string }
-  | { type: 'progress'; chars: number; thinking: boolean }
-  | { type: 'result'; data: Analysis }
+  | { type: 'result'; data: unknown }
   | { type: 'error'; message: string };
 
 export async function POST(req: NextRequest) {
-  const apiKey = process.env.ANTHROPIC_API_KEY;
-  if (!apiKey) {
-    return json(
-      { error: 'ANTHROPIC_API_KEY absente. Ajoute-la dans les variables d’environnement Vercel.' },
-      500,
-    );
-  }
-
   let body: {
+    provider: ProviderId;
+    model: string;
+    apiKey?: string;
     context: AnalysisContext;
     charts: ChartUpload[];
     followUp?: Parameters<typeof buildFollowUpPrompt>[0];
@@ -40,124 +30,94 @@ export async function POST(req: NextRequest) {
     return json({ error: 'Corps de requête illisible.' }, 400);
   }
 
-  const charts = (body.charts ?? []).filter((c) => ALLOWED_MEDIA.includes(c.mediaType));
-  if (charts.length !== (body.charts ?? []).length) {
+  const provider = body.provider;
+  if (!provider || !PROVIDER_BY_ID[provider]) {
+    return json({ error: 'Fournisseur inconnu.' }, 400);
+  }
+  if (provider === 'manual') {
+    return json({ error: 'Le mode manuel se calcule dans le navigateur, sans appel serveur.' }, 400);
+  }
+
+  // La clé vient du navigateur de l'utilisateur. Une variable d'environnement
+  // sert uniquement de repli pour qui préfère la poser une fois sur Vercel.
+  const apiKey = (body.apiKey || '').trim() || envKey(provider);
+  if (!apiKey) {
+    return json(
+      {
+        error: `Aucune clé ${PROVIDER_BY_ID[provider].label}. Ajoute-la dans les réglages de l’app — elle reste dans ton navigateur.`,
+      },
+      400,
+    );
+  }
+
+  const charts = body.charts ?? [];
+  if (charts.some((c) => !ALLOWED_MEDIA.includes(c.mediaType))) {
     return json({ error: 'Format d’image non supporté. Utilise PNG, JPEG, WebP ou GIF.' }, 400);
   }
 
-  const client = new Anthropic({ apiKey });
   const encoder = new TextEncoder();
 
   const stream = new ReadableStream({
     async start(controller) {
+      let closed = false;
       const send = (e: Event) => {
+        if (closed) return;
         try {
           controller.enqueue(encoder.encode(JSON.stringify(e) + '\n'));
         } catch {
-          /* client parti */
+          closed = true;
         }
       };
 
+      // Le fournisseur répond en un bloc : on entretient la connexion pour que
+      // ni le navigateur ni la plateforme ne coupent pendant l'attente.
+      const started = Date.now();
+      const beat = setInterval(() => {
+        const s = Math.round((Date.now() - started) / 1000);
+        send({ type: 'status', message: `Analyse des 14 couches — ${s} s écoulées…` });
+      }, 4000);
+
       try {
-        send({ type: 'status', message: 'Lecture des graphiques…' });
+        send({ type: 'status', message: 'Préparation des graphiques…' });
 
-        const content: Anthropic.ContentBlockParam[] = [];
-        for (const c of charts) {
-          content.push({
-            type: 'text',
-            text: `Graphique — ${c.timeframe}`,
-          });
-          content.push({
-            type: 'image',
-            source: {
-              type: 'base64',
-              media_type: c.mediaType as 'image/png' | 'image/jpeg' | 'image/webp' | 'image/gif',
-              data: stripDataUrl(c.dataUrl),
-            },
-          });
-        }
-        content.push({
-          type: 'text',
-          text: body.followUp
-            ? `${buildFollowUpPrompt(body.followUp)}\n\n---\n\n${buildUserPrompt(body.context, charts)}`
-            : buildUserPrompt(body.context, charts),
+        const images = charts.map((c, i) => ({
+          mediaType: c.mediaType,
+          base64: stripDataUrl(c.dataUrl),
+          caption: `Graphique ${i + 1} — ${c.timeframe || 'timeframe non précisé'}`,
+        }));
+
+        const userText = body.followUp
+          ? `${buildFollowUpPrompt(body.followUp)}\n\n---\n\n${buildUserPrompt(body.context, charts)}`
+          : buildUserPrompt(body.context, charts);
+
+        send({ type: 'status', message: 'Envoi au modèle…' });
+
+        const result = await callProvider(provider, {
+          model: body.model,
+          apiKey,
+          system: buildSystemPrompt(provider !== 'gemini'),
+          userText,
+          images,
+          schema: ANALYSIS_SCHEMA as unknown as Record<string, unknown>,
+          signal: req.signal,
         });
 
-        send({ type: 'status', message: 'Analyse des 14 couches en cours…' });
-
-        let chars = 0;
-        let thinking = false;
-        const ms = client.messages.stream({
-          model: MODEL,
-          max_tokens: MAX_TOKENS,
-          system: buildSystemPrompt(),
-          // Sur Opus 5 le raisonnement est actif par défaut ; `summarized` permet
-          // de renvoyer une progression à l'écran plutôt qu'un long silence.
-          thinking: { type: 'adaptive', display: 'summarized' },
-          output_config: {
-            effort: 'high',
-            format: { type: 'json_schema', schema: ANALYSIS_SCHEMA },
-          },
-          messages: [{ role: 'user', content }],
-        });
-
-        for await (const ev of ms) {
-          if (ev.type === 'content_block_start') {
-            thinking = ev.content_block.type === 'thinking';
-            if (thinking) send({ type: 'status', message: 'Raisonnement…' });
-            else send({ type: 'status', message: 'Rédaction de l’analyse…' });
-          } else if (ev.type === 'content_block_delta') {
-            const d = ev.delta as { type: string; text?: string; thinking?: string };
-            const chunk = d.text ?? d.thinking ?? '';
-            if (chunk) {
-              chars += chunk.length;
-              if (chars % 400 < chunk.length) send({ type: 'progress', chars, thinking });
-            }
-          }
-        }
-
-        const message = await ms.finalMessage();
-
-        if (message.stop_reason === 'refusal') {
-          send({
-            type: 'error',
-            message:
-              'La requête a été déclinée par les classifieurs de sécurité. Reformule la demande ou retire les éléments non liés à l’analyse de marché.',
-          });
-          controller.close();
-          return;
-        }
-
-        if (message.stop_reason === 'max_tokens') {
-          send({
-            type: 'error',
-            message:
-              'Réponse tronquée (limite de tokens atteinte). Réduis le nombre de graphiques ou réessaie.',
-          });
-          controller.close();
-          return;
-        }
-
-        const text = message.content
-          .filter((b): b is Anthropic.TextBlock => b.type === 'text')
-          .map((b) => b.text)
-          .join('');
-
-        let raw: RawAnalysis;
-        try {
-          raw = JSON.parse(text);
-        } catch {
-          send({ type: 'error', message: 'Réponse du modèle illisible (JSON invalide).' });
-          controller.close();
-          return;
-        }
-
+        clearInterval(beat);
         send({ type: 'status', message: 'Calcul du score et des conditions éliminatoires…' });
-        send({ type: 'result', data: assemble(raw, body.context) });
-        controller.close();
+
+        const raw = extractJson(result.text) as RawAnalysis;
+        send({ type: 'result', data: assembleAnalysis(raw, body.context) });
       } catch (err) {
-        send({ type: 'error', message: describeError(err) });
-        controller.close();
+        clearInterval(beat);
+        send({ type: 'error', message: err instanceof Error ? err.message : 'Erreur inconnue.' });
+      } finally {
+        clearInterval(beat);
+        closed = true;
+        try {
+          controller.close();
+        } catch {
+          /* déjà fermé */
+        }
       }
     },
   });
@@ -171,59 +131,19 @@ export async function POST(req: NextRequest) {
   });
 }
 
-/**
- * Le modèle ne produit ni score global ni verdict : ils sont calculés ici, à
- * partir de règles fixes. Le modèle juge chaque couche, l'application tranche.
- */
-function assemble(raw: RawAnalysis, context: AnalysisContext): Analysis {
-  const modules = orderModules(raw.modules ?? []);
-  const normalized: RawAnalysis = { ...raw, modules };
-
-  const sizing = computeSizing(raw.tradePlan, context);
-  const gates = computeGates(normalized, sizing, context);
-  const score = computeScore(modules);
-  const confidenceScore = computeConfidence(modules);
-  const grade = computeGrade(score, gates, confidenceScore, raw.dataQuality?.completeness ?? 0);
-
-  return {
-    ...normalized,
-    score,
-    confidenceScore,
-    gates,
-    grade,
-    sizing,
-    createdAt: new Date().toISOString(),
-    id: cryptoId(),
-    context,
+/** Repli optionnel : une clé posée en variable d'environnement Vercel. */
+function envKey(provider: ProviderId): string {
+  const map: Record<string, string | undefined> = {
+    gemini: process.env.GEMINI_API_KEY,
+    groq: process.env.GROQ_API_KEY,
+    openrouter: process.env.OPENROUTER_API_KEY,
   };
+  return (map[provider] ?? '').trim();
 }
 
 function stripDataUrl(dataUrl: string): string {
   const i = dataUrl.indexOf(',');
   return i >= 0 ? dataUrl.slice(i + 1) : dataUrl;
-}
-
-function describeError(err: unknown): string {
-  if (err instanceof Anthropic.AuthenticationError) {
-    return 'Clé API invalide. Vérifie ANTHROPIC_API_KEY dans les variables Vercel.';
-  }
-  if (err instanceof Anthropic.RateLimitError) {
-    return 'Limite de requêtes atteinte. Réessaie dans un moment.';
-  }
-  if (err instanceof Anthropic.BadRequestError) {
-    return `Requête refusée par l’API : ${err.message}`;
-  }
-  if (err instanceof Anthropic.APIConnectionError) {
-    return 'Connexion à l’API impossible.';
-  }
-  if (err instanceof Anthropic.APIError) {
-    return `Erreur API ${err.status ?? ''} : ${err.message}`;
-  }
-  return err instanceof Error ? err.message : 'Erreur inconnue.';
-}
-
-function cryptoId(): string {
-  return `an_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
 }
 
 function json(data: unknown, status: number) {

@@ -1,10 +1,16 @@
 import { MODULES } from './modules';
 import type { AnalysisContext, ChartUpload } from './types';
 
-export function buildSystemPrompt(): string {
+/**
+ * @param inlineSchema Vrai pour les fournisseurs sans schéma JSON natif : la
+ *   forme attendue est alors décrite en toutes lettres dans le prompt.
+ */
+export function buildSystemPrompt(inlineSchema = false): string {
   const layers = MODULES.map(
     (m) => `### ${m.n}. \`${m.id}\` — ${m.title} (poids ${m.weight})\n${m.brief}`,
   ).join('\n\n');
+
+  const schemaBlock = inlineSchema ? `\n\n${SHAPE}` : '';
 
   return `Tu es un analyste discrétionnaire sur l'or (XAU/USD) travaillant pour un desk qui juge le process, pas le résultat d'un trade isolé. Tu produis une analyse structurée en 14 couches, puis un plan de trade uniquement si les conditions le justifient.
 
@@ -50,8 +56,47 @@ Ne propose pas un trade dégradé pour éviter de dire non.
 
 Écris en français, dense et direct. L'essentiel d'abord. Pas de préambule, pas de récapitulatif de tes propres constats, pas de mise en garde générique répétée. Les \`findings\` sont des constats courts, un par ligne. Le \`reasoning\` est le raisonnement, pas un résumé.
 
-Rends ce qui est demandé, à la portée demandée. Tu n'ajoutes pas de couches, de scénarios ou de recommandations qui n'ont pas été demandés.`;
+Rends ce qui est demandé, à la portée demandée. Tu n'ajoutes pas de couches, de scénarios ou de recommandations qui n'ont pas été demandés.${schemaBlock}`;
 }
+
+/**
+ * Forme de sortie rappelée en clair pour les fournisseurs qui n'imposent pas de
+ * schéma côté API (Groq, OpenRouter). Gemini reçoit le schéma nativement.
+ */
+const SHAPE = `## Format de sortie
+
+Réponds avec un objet JSON et rien d'autre — pas de texte avant, pas de bloc Markdown, pas de commentaire.
+
+\`\`\`
+{
+  "dataQuality": { "completeness": 0-100, "notes": "", "missing": [""] },
+  "modules": [
+    {
+      "id": "${MODULES.map((m) => m.id).join('" | "')}",
+      "status": "PASS" | "WARN" | "FAIL" | "UNKNOWN",
+      "score": 0-100,
+      "confidence": "HIGH" | "MEDIUM" | "LOW" | "NONE",
+      "findings": [""],
+      "dataGaps": [""],
+      "reasoning": ""
+    }
+  ],
+  "tradePlan": {
+    "hasTrade": true | false,
+    "direction": "LONG" | "SHORT" | "NONE",
+    "setupName": "", "timeframe": "",
+    "entryType": "MARKET" | "LIMIT" | "STOP" | "CONFIRMATION" | "NONE",
+    "entry": 0, "stop": 0, "tp1": 0, "tp2": 0,
+    "trigger": "", "invalidation": "", "rationale": "", "riskNotes": [""]
+  },
+  "synthesis": {
+    "regime": "", "dominantDriver": "", "bias": "",
+    "summary": "", "reactionCheck": "", "whatWouldChangeMyMind": ""
+  }
+}
+\`\`\`
+
+Le tableau \`modules\` contient les 14 entrées, une par identifiant ci-dessus, sans exception et sans doublon. Les prix sont des nombres bruts (3345.2), sans symbole ni séparateur de milliers.`;
 
 const CTX_FIELDS: Array<[keyof AnalysisContext, string]> = [
   ['dxy', 'DXY / dollar'],

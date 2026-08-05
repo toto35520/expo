@@ -1,8 +1,37 @@
 # Gold Desk — analyse XAU/USD en 14 couches
 
-Application web (PWA installable sur téléphone) qui analyse l'or couche par couche à partir de tes graphiques, puis **refuse ou valide** un trade selon des conditions éliminatoires calculées, pas selon une impression.
+Application web (PWA installable sur téléphone) qui analyse l'or couche par couche, puis **refuse ou valide** un trade selon des conditions éliminatoires calculées, pas selon une impression.
+
+**Entièrement gratuit.** Hébergement sur l'offre gratuite Vercel, modèles à palier gratuit, et un mode manuel qui ne consomme aucune API du tout.
 
 > **Ce que cet outil n'est pas.** Il ne prédit pas le marché et ne garantit aucun trade gagnant. Sa valeur vient de sa capacité à dire non : la plupart des configurations reçoivent la note **NO TRADE**. Un outil qui valide tout ne sert à rien. Cadre pédagogique — pas un conseil en investissement.
+
+---
+
+## Choisir son moteur
+
+L'app est indépendante de tout fournisseur. Tu choisis dans l'interface, et tu peux changer à tout moment.
+
+| Moteur | Coût | Ce qu'il vaut |
+|---|---|---|
+| **Google Gemini** | palier gratuit, sans carte bancaire | Le meilleur des options gratuites pour lire des graphiques. Schéma JSON natif. **Conseillé.** |
+| **Groq** | palier gratuit | Très rapide. Lecture des chandeliers plus grossière — attends-toi à plus de couches UNKNOWN. |
+| **OpenRouter** | modèles suffixés `:free` | Roue de secours quand un autre quota est épuisé. Disponibilité instable. |
+| **Manuel** | 0 €, sans compte, sans quota | Tu notes toi-même les 14 couches, l'app fait le reste. Fonctionne hors ligne, pour toujours. |
+
+**Ta clé reste dans ton navigateur.** Elle est stockée en local, transite par le serveur le temps d'un appel, et n'y est jamais enregistrée. Elle n'apparaît pas non plus dans l'export du journal.
+
+### La partie qui ne dépend d'aucun modèle
+
+Le modèle **juge** les 14 couches. L'application **décide** : le score, la confiance, les 11 conditions éliminatoires et le dimensionnement sont du code déterministe.
+
+Conséquence pratique : passer d'un modèle haut de gamme à un modèle gratuit dégrade la lecture des graphiques, **pas la rigueur du verdict**. Un modèle qui renvoie « tout va bien, 100/100 » sur un trade au R:R de 1 obtient quand même NO TRADE — c'est couvert par les tests.
+
+### Le mode manuel
+
+C'est le seul mode réellement gratuit pour toujours, et probablement le plus formateur : il force à passer chaque couche au lieu de la survoler. Tu notes chaque couche *Soutient / Réserve / Contredit / Inconnu*, tu saisis ton trade, et l'app applique exactement les mêmes conditions éliminatoires, le même score et le même dimensionnement.
+
+Laisse « Inconnu » ce que tu n'as pas vérifié. Cocher au hasard fait monter le score sans rien apporter — c'est le seul moyen de tromper cet outil, et ce serait te tromper toi.
 
 ---
 
@@ -10,8 +39,8 @@ Application web (PWA installable sur téléphone) qui analyse l'or couche par co
 
 1. Tu déposes tes graphiques (W1, D1, H4, H1, M30, M5 — autant que tu veux).
 2. Tu renseignes ce qu'un graphique ne peut pas montrer : DXY, taux réels, COT, GEX, prime de Shanghai, calendrier…
-3. Claude analyse **les 14 couches, une par une, sans exception**.
-4. L'application — pas le modèle — calcule le score, applique **11 conditions éliminatoires** et rend un verdict.
+3. Le modèle analyse **les 14 couches, une par une, sans exception**.
+4. L'application calcule le score, applique **11 conditions éliminatoires** et rend un verdict.
 5. Si le trade passe, tu l'envoies au journal, qui le suit jusqu'à la clôture et calcule ton espérance réelle.
 
 ### Les 14 couches
@@ -38,7 +67,7 @@ Application web (PWA installable sur téléphone) qui analyse l'or couche par co
 Une seule qui échoue annule le trade, **quel que soit le score**.
 
 - Les 4 couches éliminatoires ne sont pas en FAIL
-- Un setup existe réellement
+- Un setup existe réellement, avec des niveaux exploitables
 - Entrée / stop / objectif cohérents avec la direction
 - R:R au TP1 ≥ 1,5
 - Stop compris entre 0,35 × et 3 × l'ATR journalier (**ATR obligatoire**)
@@ -51,17 +80,13 @@ Une seule qui échoue annule le trade, **quel que soit le score**.
 - **Score** : la qualité du setup.
 - **Confiance** : ce qu'on en sait réellement.
 
-Les confondre est malhonnête. Un score de 90 sur une confiance de 20 ne vaut rien, et l'outil le refuse. Une couche `UNKNOWN` est ramenée à 50 quel que soit le score renvoyé : **une donnée absente n'est jamais un argument favorable**.
+Les confondre est malhonnête. Un score de 90 sur une confiance de 20 est refusé. Une couche `UNKNOWN` est ramenée à 50 quel que soit le score renvoyé : **une donnée absente n'est jamais un argument favorable**.
 
 ---
 
-## Déploiement sur Vercel
+## Déploiement sur Vercel — gratuit
 
-### 1. Récupérer une clé API
-
-Sur [console.anthropic.com](https://console.anthropic.com/settings/keys). L'app tourne sur `claude-opus-5`.
-
-### 2. Importer le projet
+### 1. Importer le projet
 
 Sur [vercel.com/new](https://vercel.com/new), importe ce dépôt.
 
@@ -73,17 +98,19 @@ Sur [vercel.com/new](https://vercel.com/new), importe ce dépôt.
 | Framework Preset | Next.js (détecté automatiquement) |
 | Build Command | par défaut |
 
-### 3. Variable d'environnement
+### 2. Aucune variable d'environnement n'est requise
 
-Project Settings → Environment Variables :
+Tu saisis ta clé directement dans l'app, à la première utilisation. C'est ce qui permet de rester sur l'offre gratuite Vercel : rien à configurer, rien à payer.
 
-```
-ANTHROPIC_API_KEY = sk-ant-...
-```
+*Optionnel* — si tu préfères poser la clé une bonne fois côté serveur (usage strictement personnel : toute personne ayant l'URL consommerait ton quota), tu peux définir `GEMINI_API_KEY`, `GROQ_API_KEY` ou `OPENROUTER_API_KEY`.
 
-Optionnel : `ANTHROPIC_MODEL` pour changer de modèle.
+### 3. Récupérer une clé gratuite
 
-La clé reste **côté serveur** — elle n'est jamais exposée au navigateur.
+- **Gemini** → [aistudio.google.com/apikey](https://aistudio.google.com/apikey) (sans carte bancaire)
+- **Groq** → [console.groq.com/keys](https://console.groq.com/keys)
+- **OpenRouter** → [openrouter.ai/keys](https://openrouter.ai/keys)
+
+Ou n'en prends aucune et reste en mode manuel.
 
 ### 4. Installer sur le téléphone
 
@@ -92,18 +119,13 @@ La clé reste **côté serveur** — elle n'est jamais exposée au navigateur.
 
 ---
 
-## Durée d'exécution et plans Vercel
+## Limites des paliers gratuits
 
-Une analyse vision sur 4-6 graphiques à effort élevé prend **60 à 180 secondes**. La route déclare `maxDuration = 300`.
+Les quotas sont limités **par minute et par jour**, et les fournisseurs les modifient sans préavis. En cas de dépassement, l'app affiche l'erreur en clair et propose de changer de fournisseur ou de basculer en manuel. Rien n'est perdu.
 
-| Plan | Durée max | Résultat |
-|---|---|---|
-| Hobby | 300 s (Fluid Compute, activé par défaut) | fonctionne |
-| Pro | 300 s+ | fonctionne |
+**Point de confidentialité** : Google indique pouvoir utiliser les contenus envoyés via le palier gratuit pour améliorer ses produits. Ce sont des captures de graphiques, mais sache-le. Le mode manuel n'envoie rien nulle part.
 
-Si tu obtiens un timeout : réduis le nombre de graphiques, ou vérifie que Fluid Compute est actif (Project Settings → Functions).
-
-La réponse est diffusée en flux continu (NDJSON), ce qui maintient la connexion ouverte et affiche la progression pendant l'analyse.
+Une analyse prend 20 s à 2 min selon le modèle. La route déclare `maxDuration = 300` et diffuse la réponse en flux continu (NDJSON) pour maintenir la connexion et afficher la progression.
 
 ---
 
@@ -112,11 +134,10 @@ La réponse est diffusée en flux continu (NDJSON), ce qui maintient la connexio
 ```bash
 cd gold-analyzer
 npm install
-echo "ANTHROPIC_API_KEY=sk-ant-..." > .env.local
 npm run dev
 ```
 
-Sur http://localhost:3000.
+Sur http://localhost:3000. Aucune clé nécessaire pour démarrer — le mode manuel fonctionne immédiatement.
 
 ```bash
 npm run build       # build de production
@@ -124,30 +145,15 @@ npm run typecheck   # vérification TypeScript
 node scripts/make-icons.mjs   # régénère les icônes PWA
 ```
 
----
-
-## Coût par analyse
-
-`claude-opus-5` : 5 $ / M tokens en entrée, 25 $ / M en sortie.
-
-Une analyse typique — 5 graphiques + contexte + raisonnement + rapport complet :
-
-| Poste | Ordre de grandeur |
-|---|---|
-| Images (5 × ~4 800 tokens) | ~24 000 |
-| Prompt système + contexte | ~4 000 |
-| Raisonnement + rapport | ~8 000 |
-| **Coût** | **~0,35 $** |
-
-Les captures sont redimensionnées à 2 576 px sur le grand côté côté navigateur — au-delà, l'API redimensionne de toute façon, donc les pixels en plus ne sont que du coût.
+Aucune dépendance à un SDK propriétaire : les appels partent en `fetch` brut vers l'API HTTP du fournisseur choisi. Ajouter un fournisseur revient à ajouter une entrée dans `lib/providers.ts`.
 
 ---
 
 ## Données et vie privée
 
-Trades, analyses et contexte sont stockés dans le **localStorage du navigateur**. Rien n'est envoyé à un serveur en dehors de l'appel à l'API Anthropic pendant l'analyse.
+Trades, analyses, contexte et clé API sont stockés dans le **localStorage du navigateur**. Le serveur ne conserve rien.
 
-Conséquence : vider le cache du navigateur efface tout. Le journal a un bouton **Exporter** / **Importer** — sers-t'en.
+Conséquence : vider le cache du navigateur efface tout. Le journal a un bouton **Exporter** / **Importer** — sers-t'en. La clé API est volontairement exclue de l'export.
 
 ---
 
@@ -175,10 +181,12 @@ Depuis le journal, bouton **Réévaluer la thèse** sur un trade en attente ou o
 ```
 gold-analyzer/
 ├── app/
-│   ├── page.tsx                  écran d'analyse
+│   ├── page.tsx                  écran d'analyse (modes API et manuel)
 │   ├── journal/page.tsx          journal + statistiques
-│   └── api/analyze/route.ts      appel Claude (vision + sortie structurée), flux NDJSON
+│   └── api/analyze/route.ts      relais vers le fournisseur choisi, flux NDJSON
 ├── lib/
+│   ├── providers.ts              Gemini / Groq / OpenRouter, erreurs, extraction JSON
+│   ├── assemble.ts               normalisation défensive + verdict
 │   ├── modules.ts                les 14 couches, poids, couches éliminatoires
 │   ├── prompt.ts                 prompt système et contexte
 │   ├── schema.ts                 schéma JSON de la sortie structurée
@@ -187,10 +195,14 @@ gold-analyzer/
 │   ├── stats.ts                  espérance, MAE/MFE, attribution, Monte-Carlo, Kelly
 │   ├── image.ts                  redimensionnement navigateur
 │   └── storage.ts                persistance localStorage
-└── components/                   Dropzone, ContextForm, Report, Nav
+└── components/                   ProviderSetup, Dropzone, ContextForm, ManualForm, Report, Nav
 ```
 
-**Séparation volontaire** : le modèle juge chaque couche indépendamment ; l'application calcule le score, applique les conditions éliminatoires et rend le verdict. Le modèle ne peut pas s'auto-attribuer une bonne note.
+**Séparation volontaire** : le modèle juge chaque couche ; l'application calcule le score, applique les conditions éliminatoires et rend le verdict.
+
+### Robustesse face aux modèles gratuits
+
+Les petits modèles omettent des champs, renvoient des nombres en chaînes (`"3 345,20"`, `"$3,325.00"`), inventent des identifiants de couche ou encadrent le JSON de Markdown. `lib/assemble.ts` répare ce qui est réparable et marque `UNKNOWN` le reste. Un plan de trade sans niveaux exploitables est neutralisé, quoi qu'annonce le modèle.
 
 ### Garde-fous dans le prompt
 
@@ -205,7 +217,7 @@ gold-analyzer/
 
 ## Limites connues
 
-- **Une clé API est nécessaire** — l'app n'a pas de mode démo.
+- **Un modèle gratuit lit les graphiques moins bien qu'un modèle haut de gamme.** C'est le compromis assumé. Le moteur de décision, lui, est identique.
 - **Aucune donnée de marché n'est récupérée automatiquement.** DXY, COT, GEX, prime de Shanghai : tu les saisis à la main. C'est délibéré — inventer ces valeurs serait pire que de les laisser vides, et chaque source demande un abonnement ou un scraping fragile.
 - **Le volume réel du COMEX n'est pas accessible** depuis une capture de broker CFD. L'app le signale plutôt que de faire semblant.
 - **Aucun backtest intégré.** Le journal mesure ton edge en avant, pas en arrière.

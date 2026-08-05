@@ -3,6 +3,7 @@ import type { Analysis, JournalTrade } from './types';
 const TRADES_KEY = 'gold-analyzer:trades:v1';
 const ANALYSES_KEY = 'gold-analyzer:analyses:v1';
 const CONTEXT_KEY = 'gold-analyzer:context:v1';
+const PROVIDER_KEY = 'gold-analyzer:provider:v1';
 const MAX_ANALYSES = 30;
 
 function read<T>(key: string, fallback: T): T {
@@ -104,6 +105,19 @@ export function getSavedContext<T>(fallback: T): T {
 
 export function saveContext(ctx: unknown): void {
   write(CONTEXT_KEY, ctx);
+}
+
+// --- Fournisseur & clé API ------------------------------------------------
+//
+// La clé vit ici et nulle part ailleurs : jamais sur le serveur, jamais dans
+// l'export (qu'on peut transmettre ou déposer dans un dossier partagé).
+
+export function getProviderSettings<T>(fallback: T): T {
+  return read<T>(PROVIDER_KEY, fallback);
+}
+
+export function saveProviderSettings(s: unknown): void {
+  write(PROVIDER_KEY, s);
 }
 
 export function exportAll(): string {

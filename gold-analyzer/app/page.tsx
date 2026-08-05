@@ -4,13 +4,18 @@ import { useEffect, useMemo, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { ContextForm, DEFAULT_CONTEXT } from '@/components/ContextForm';
 import { Dropzone } from '@/components/Dropzone';
+import { ManualForm } from '@/components/ManualForm';
+import { ProviderSetup } from '@/components/ProviderSetup';
 import { Report } from '@/components/Report';
 import { MAX_TOTAL_BYTES } from '@/lib/image';
+import { DEFAULT_PROVIDER, type ProviderSettings } from '@/lib/providers';
 import {
+  getProviderSettings,
   getSavedContext,
   getTrades,
   saveAnalysis,
   saveContext,
+  saveProviderSettings,
   saveTrade,
   tradeFromAnalysis,
 } from '@/lib/storage';
@@ -21,18 +26,20 @@ type Phase = 'idle' | 'running' | 'done' | 'error';
 export default function AnalyzePage() {
   const router = useRouter();
   const [ctx, setCtx] = useState<AnalysisContext>(DEFAULT_CONTEXT);
+  const [settings, setSettings] = useState<ProviderSettings>(DEFAULT_PROVIDER);
   const [charts, setCharts] = useState<ChartUpload[]>([]);
   const [phase, setPhase] = useState<Phase>('idle');
   const [status, setStatus] = useState('');
-  const [chars, setChars] = useState(0);
   const [error, setError] = useState('');
   const [result, setResult] = useState<Analysis | null>(null);
   const [followUp, setFollowUp] = useState<JournalTrade | null>(null);
+  const [hydrated, setHydrated] = useState(false);
 
-  // Contexte mémorisé d'une session à l'autre (sauf les notes, propres au trade).
   useEffect(() => {
     const saved = getSavedContext<Partial<AnalysisContext>>({});
     setCtx({ ...DEFAULT_CONTEXT, ...saved, notes: '' });
+    setSettings(getProviderSettings<ProviderSettings>(DEFAULT_PROVIDER));
+    setHydrated(true);
 
     const id = new URLSearchParams(window.location.search).get('followUp');
     if (id) {
@@ -42,9 +49,14 @@ export default function AnalyzePage() {
   }, []);
 
   useEffect(() => {
-    if (phase !== 'running') saveContext({ ...ctx, notes: '' });
-  }, [ctx, phase]);
+    if (hydrated && phase !== 'running') saveContext({ ...ctx, notes: '' });
+  }, [ctx, phase, hydrated]);
 
+  useEffect(() => {
+    if (hydrated) saveProviderSettings(settings);
+  }, [settings, hydrated]);
+
+  const manual = settings.provider === 'manual';
   const totalBytes = useMemo(() => charts.reduce((s, c) => s + c.bytes, 0), [charts]);
   const tooHeavy = totalBytes > MAX_TOTAL_BYTES;
   const canRun = charts.length > 0 && !tooHeavy && phase !== 'running';
@@ -53,7 +65,6 @@ export default function AnalyzePage() {
     setPhase('running');
     setError('');
     setResult(null);
-    setChars(0);
     setStatus('Envoi…');
 
     try {
@@ -61,6 +72,9 @@ export default function AnalyzePage() {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
+          provider: settings.provider,
+          model: settings.model,
+          apiKey: settings.apiKey,
           context: ctx,
           charts,
           followUp: followUp
@@ -87,6 +101,7 @@ export default function AnalyzePage() {
       const reader = res.body.getReader();
       const decoder = new TextDecoder();
       let buffer = '';
+      let got = false;
 
       for (;;) {
         const { done, value } = await reader.read();
@@ -98,9 +113,9 @@ export default function AnalyzePage() {
           if (!line.trim()) continue;
           const ev = JSON.parse(line);
           if (ev.type === 'status') setStatus(ev.message);
-          else if (ev.type === 'progress') setChars(ev.chars);
           else if (ev.type === 'error') throw new Error(ev.message);
           else if (ev.type === 'result') {
+            got = true;
             setResult(ev.data);
             saveAnalysis(ev.data);
             setPhase('done');
@@ -108,18 +123,22 @@ export default function AnalyzePage() {
           }
         }
       }
-      setPhase((p) => (p === 'running' ? 'error' : p));
-      setError((e) => e || 'Flux interrompu avant la fin de l’analyse.');
+      if (!got) throw new Error('Flux interrompu avant la fin de l’analyse.');
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Erreur inconnue.');
       setPhase('error');
     }
   }
 
+  function onManualResult(a: Analysis) {
+    setResult(a);
+    saveAnalysis(a);
+    setPhase('done');
+  }
+
   function sendToJournal() {
     if (!result) return;
-    const t = tradeFromAnalysis(result);
-    saveTrade(t);
+    saveTrade(tradeFromAnalysis(result));
     router.push('/journal');
   }
 
@@ -147,10 +166,14 @@ export default function AnalyzePage() {
         </section>
       )}
 
-      <section>
-        <h2 className="sec">Graphiques</h2>
-        <Dropzone charts={charts} onChange={setCharts} />
-      </section>
+      <ProviderSetup settings={settings} onChange={setSettings} />
+
+      {!manual && (
+        <section>
+          <h2 className="sec">Graphiques</h2>
+          <Dropzone charts={charts} onChange={setCharts} />
+        </section>
+      )}
 
       <ContextForm ctx={ctx} onChange={setCtx} />
 
@@ -162,8 +185,8 @@ export default function AnalyzePage() {
               <strong style={{ fontSize: 13.5 }}>{status}</strong>
             </div>
             <p className="tiny" style={{ marginTop: 8, marginBottom: 0 }}>
-              {chars > 0 && `${chars.toLocaleString('fr-FR')} caractères produits. `}
-              Les 14 couches sont traitées une par une — compte 1 à 3 minutes. Ne ferme pas l’onglet.
+              Les 14 couches sont traitées en une passe — compte 20 s à 2 min selon le modèle. Ne
+              ferme pas l’onglet.
             </p>
           </div>
         </section>
@@ -176,27 +199,39 @@ export default function AnalyzePage() {
             <p className="muted" style={{ marginBottom: 0 }}>
               {error}
             </p>
+            <p className="tiny" style={{ marginTop: 10, marginBottom: 0 }}>
+              Quota épuisé ou modèle indisponible ? Change de fournisseur plus haut, ou bascule en
+              mode manuel — il ne dépend d’aucune API.
+            </p>
           </div>
         </section>
       )}
 
       {result && <Report a={result} onJournal={followUp ? undefined : sendToJournal} />}
 
-      <div className="sticky-cta">
-        <div className="inner">
-          <button className="btn btn-primary btn-block" disabled={!canRun} onClick={() => void run()}>
-            {phase === 'running'
-              ? 'Analyse en cours…'
-              : charts.length === 0
-                ? 'Ajoute au moins un graphique'
-                : tooHeavy
-                  ? 'Graphiques trop lourds'
-                  : followUp
-                    ? 'Réévaluer le trade'
-                    : `Analyser (${charts.length} graphique${charts.length > 1 ? 's' : ''})`}
-          </button>
+      {manual ? (
+        <ManualForm ctx={ctx} onResult={onManualResult} />
+      ) : (
+        <div className="sticky-cta">
+          <div className="inner">
+            <button
+              className="btn btn-primary btn-block"
+              disabled={!canRun}
+              onClick={() => void run()}
+            >
+              {phase === 'running'
+                ? 'Analyse en cours…'
+                : charts.length === 0
+                  ? 'Ajoute au moins un graphique'
+                  : tooHeavy
+                    ? 'Graphiques trop lourds'
+                    : followUp
+                      ? 'Réévaluer le trade'
+                      : `Analyser (${charts.length} graphique${charts.length > 1 ? 's' : ''})`}
+            </button>
+          </div>
         </div>
-      </div>
+      )}
     </>
   );
 }
