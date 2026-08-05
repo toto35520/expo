@@ -44,6 +44,25 @@ confluence, familles et suivi. Sur téléphone, compter trois à cinq fois plus.
 Le backtest, qui pesait la moitié du cycle, n'est plus recalculé qu'à
 l'ouverture du Bilan.
 
+## Fréquence des signaux
+
+Un réglage unique, calibré sur 30 jeux de 17 jours :
+
+| Profil | Cassure exigée | Signaux mesurés |
+| --- | --- | --- |
+| Sélectif | corps ≥ 0,5 ATR | ~1,2 / semaine |
+| **Équilibré** (défaut) | corps ≥ 0,3 ATR | ~2,3 / semaine |
+| Fréquent | corps ≥ 0,2 ATR, réintégration ≤ 4 bougies | ~2,6 / semaine |
+
+C'est le paramètre qui compte le plus : l'entonnoir perdait **92 % des setups
+à l'étape de la cassure** (3 626 réintégrations pour 278 cassures). Assouplir
+l'exigence de déplacement fait passer de 90 à 191 entrées sur le même
+historique.
+
+Le prix à payer est visible dans les mêmes mesures : la proportion de trades
+atteignant TP1 avant le stop baisse à mesure qu'on assouplit. Plus de signaux
+veut dire moins sélectif, pas plus rentable.
+
 ## Garde-fous de risque
 
 Trois protections ajoutées après analyse d'une série de trades réels perdants :
