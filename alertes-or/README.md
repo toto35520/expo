@@ -26,6 +26,26 @@ notifications dans l'onglet Réglages.
 - **Réglages** — capital, risque, score/ratio minimum, sessions, mode d'entrée.
 - **Aide** — fonctionnement et limites.
 
+## Garde-fous de risque
+
+Trois protections ajoutées après analyse d'une série de trades réels perdants :
+
+| Garde-fou | Règle |
+| --- | --- |
+| Contre-tendance | un setup qui s'oppose **à la fois** à H4 et à H1 est refusé |
+| Arrêt journalier | plus aucune proposition après 2 pertes ou −2R sur la journée |
+| Exposition cumulée | avertissement si une position du même sens est déjà ouverte |
+
+Le garde-fou contre-tendance corrige une régression que le découplage de
+l'armement avait introduite : en retirant l'exigence d'alignement pour obtenir
+plus de signaux, plus rien n'empêchait de vendre dans une tendance haussière
+confirmée. Il ne bloque que le cas franc — les deux unités de temps opposées.
+Un contexte neutre reste autorisé.
+
+Ces trois règles portent sur la **décision**, pas sur la taille de position :
+le lot reste calculé séparément et refuse déjà tout ce qui dépasse le risque
+autorisé.
+
 ## Philosophie : qualifier, pas bloquer
 
 Les analyses ICT et institutionnelles **ne bloquent aucun signal**. Elles lui
