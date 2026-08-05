@@ -84,7 +84,12 @@ L'analyseur dimensionne chaque trade sur ton capital réel :
 - **conversion de devise** : l'or cote en USD, ton compte peut être en EUR. Le champ « 1 unité de ta devise = ? USD » sert à convertir le risque et les gains ;
 - **marge** calculée depuis le levier, avec alerte au-delà de `maxMarginPercent` ;
 - **gain projeté** à TP1, TP2 et TP3, dans la devise du compte ;
-- si le lot minimum du broker dépasse déjà le risque autorisé, le trade est marqué **capital insuffisant** avec le chiffre exact, au lieu d'un lot fantaisiste.
+- si le lot minimum du broker dépasse le risque autorisé, le trade est **quand même proposé**, avec le chiffre exact : « stop de 5,00 $ · au lot 0,01 cela risque 4,63 EUR, soit 4,63 % de ton capital, au lieu des 1 % que tu autorises ». C'est à toi de décider si tu assumes ce pourcentage, pas au moteur.
+
+Les réglages affichent aussi le **stop maximum tenable** avec ton capital au lot
+minimum. Les setups M5 sur l'or ont typiquement des stops de 4 à 10 $ : si ton
+plafond est en dessous, tu le vois immédiatement et tu sais quoi ajuster
+(risque assumé, capital, ou broker en micro-lots).
 
 ## Familles de setups
 
