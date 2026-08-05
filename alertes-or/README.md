@@ -19,8 +19,14 @@ notifications dans l'onglet Réglages.
 Six onglets, organisés autour de ce que la page sert à faire : proposer un
 trade, le suivre, en tirer un bilan.
 
-- **Temps réel** — le scan en cours, la question « tu l'as pris ? », les
-  alertes et le dernier signal. C'est l'écran opérationnel.
+- **Temps réel** — **le trade, et rien d'autre** : sens, entrée, stop, TP1,
+  TP2, TP3, lot et risque, avec les boutons « Je l'ai pris » / « Passé ».
+  Sans trade en cours, une seule ligne discrète indique ce que le moteur
+  cherche. Toute l'analyse tourne en arrière-plan et ne s'affiche que si on
+  va la chercher dans l'onglet Analyse.
+
+  Deux exceptions restent à l'écran, parce que les masquer serait dangereux :
+  le flux de prix coupé (l'analyse est alors à l'arrêt) et l'arrêt journalier.
 - **Mes trades** — suivi live des positions.
 - **Bilan** — backtest des réglages, entonnoir des setups, journal.
 - **Analyse** — regroupe Zones ICT, Institutionnel, Actus et Captures en
