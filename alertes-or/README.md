@@ -141,6 +141,36 @@ sur trois trades. Le journal survit au rechargement (`localStorage`) et
 n'influence jamais la détection : un test vérifie qu'il n'est pas référencé
 dans `detect()`.
 
+## Macro : force du dollar
+
+L'or se négocie en dollars, donc la force du dollar le pénalise mécaniquement.
+Aucune source publique de DXY n'accepte le navigateur, mais l'indice se
+reconstitue exactement depuis son panier officiel (EUR 57,6 %, JPY 13,6 %,
+GBP 11,9 %, CAD 9,1 %, SEK 4,2 %, CHF 3,6 %), dont les taux sont en libre
+accès via la BCE.
+
+Règle reprise de GoldGuard : dollar en baisse d'au moins 0,10 % → favorable à
+l'or ; en hausse → défavorable. Le résultat entre dans le **score de
+confluence**, il ne bloque rien.
+
+**Limite à connaître** : les taux BCE sont publiés une fois par jour ouvré. La
+variation est donc **quotidienne, pas intraday** — c'est un biais de fond, pas
+un signal de timing. US10Y, VIX et WTI restent absents, faute de source
+publique acceptant le navigateur.
+
+## Cadence
+
+| Cycle | Fréquence |
+| --- | --- |
+| Bougies, détection, zones, suivi | **60 s** |
+| Actualités et chocs macro | 3 min |
+| Calendrier économique | 10 min |
+| Force du dollar | 15 min |
+
+Les bougies M5 se clôturant toutes les 5 minutes, un cycle de 60 s garantit
+une réaction au plus tard une minute après la clôture. L'heure du dernier
+passage est affichée dans la pastille d'état.
+
 ## Zones ICT / SMC
 
 Détection sur bougies clôturées, de D1 à M5 :
