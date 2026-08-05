@@ -63,6 +63,22 @@ Le prix à payer est visible dans les mêmes mesures : la proportion de trades
 atteignant TP1 avant le stop baisse à mesure qu'on assouplit. Plus de signaux
 veut dire moins sélectif, pas plus rentable.
 
+## Cadence des propositions
+
+Mesuré sur trois jeux couvrant ~68 jours : environ **2 propositions par jour en
+moyenne**, mais **groupées** — près d'un tiers des jours en concentrent
+plusieurs, les autres n'en ont aucune. Ce n'est donc pas un signal quotidien
+garanti, et la page ne le promet pas.
+
+Deux règles évitent que le groupage tourne au sur-trading :
+
+- **temporisation** : un setup sur zone par sens toutes les 2 heures, et jamais
+  deux fois la même zone ;
+- **plafond journalier** : 4 propositions par jour au maximum.
+
+Sans elles, une seule journée pouvait produire 31 propositions, qui n'étaient
+que la même zone redéclenchée à chaque bougie.
+
 ## Garde-fous de risque
 
 Trois protections ajoutées après analyse d'une série de trades réels perdants :
