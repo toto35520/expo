@@ -16,15 +16,27 @@ notifications dans l'onglet Réglages.
 
 ## Onglets
 
-- **Temps réel** — progression du setup, marché, confluence, dernier signal.
-- **Signaux** — backtest de tes réglages sur l'historique chargé + signaux de la session.
-- **Zones ICT** — Order Blocks, Breakers, FVG, IFVG, BPR, dealing range, liquidité, gaps.
-- **Captures** — dépôt des graphiques H4/H1/M30/M5 et analyse visuelle locale.
-- **Mes trades** — suivi live des trades saisis à la main ou adoptés depuis un signal.
-- **Institutionnel** — suite ICT complète et score de confluence pondéré.
-- **Actus** — calendrier économique USD et fil géopolitique lié à l'or.
-- **Réglages** — capital, risque, score/ratio minimum, sessions, mode d'entrée.
-- **Aide** — fonctionnement et limites.
+Six onglets, organisés autour de ce que la page sert à faire : proposer un
+trade, le suivre, en tirer un bilan.
+
+- **Temps réel** — le scan en cours, la question « tu l'as pris ? », les
+  alertes et le dernier signal. C'est l'écran opérationnel.
+- **Mes trades** — suivi live des positions.
+- **Bilan** — backtest des réglages, entonnoir des setups, journal.
+- **Analyse** — regroupe Zones ICT, Institutionnel, Actus et Captures en
+  sous-onglets. C'est le détail, consulté quand on le cherche.
+- **Réglages** · **Aide**.
+
+Le panneau **Scan en cours** montre en une ligne ce que le moteur fait à
+l'instant : ce qu'il cherche, depuis combien de temps, ce qui manque au setup
+et dans combien de secondes tombe le prochain passage.
+
+### Coût d'un cycle
+
+Mesuré sur 5 000 bougies : environ 45 ms pour l'ensemble détection, zones,
+confluence, familles et suivi. Sur téléphone, compter trois à cinq fois plus.
+Le backtest, qui pesait la moitié du cycle, n'est plus recalculé qu'à
+l'ouverture du Bilan.
 
 ## Garde-fous de risque
 
