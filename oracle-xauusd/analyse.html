@@ -210,7 +210,7 @@
   </div>
 </div>
 
-<footer>Outil d'analyse — aucune exécution d'ordre. Ceci n'est pas un conseil financier. · <b>version 2026.08.06-h</b></footer>
+<footer>Outil d'analyse — aucune exécution d'ordre. Ceci n'est pas un conseil financier. · <b>version 2026.08.06-i</b></footer>
 
 <script>
 "use strict";
@@ -1063,8 +1063,11 @@ function decideTrade(v) {
   const candleCloseMin = Math.max(1, (v.c[v.c.length - 1].t + tfMin * 60000 - Date.now()) / 60000);
 
   const base = { entry, sl, slLabel, tp1, tp2, rr, rr2, slDist, lotInfo, side, planShort, dirUp: v.dirUp, conf: v.conf, score: v.score };
-  const wait = (whyShort, whyLong, etaMin, etaWhen, condition) => ({
-    ...base, action: "WAIT", whyShort, whyLong, condition,
+  /* hard = blocage de SÉCURITÉ : tant qu'il tient, aucun setup ne peut être armé.
+     Sans ce drapeau, la carte proposait un trade prêt à cliquer juste sous
+     « journée terminée après 2 stops » ou « NFP dans 20 min ». */
+  const wait = (whyShort, whyLong, etaMin, etaWhen, condition, hard = false) => ({
+    ...base, action: "WAIT", whyShort, whyLong, condition, hard,
     etaMin, etaTxt: fmtEta(etaMin) + (etaWhen ? ` (${etaWhen})` : ""),
   });
 
@@ -1074,7 +1077,7 @@ function decideTrade(v) {
     return wait(m.why + ".",
       "Même si le graphique bouge (PAXG cote 24/7), ton broker n'exécutera pas — et l'ouverture peut gapper au-delà de ton stop.",
       etaMin, atTime(m.reopenAt),
-      `À la réouverture, je refais l'analyse complète avant de valider le ${side}. Ne place JAMAIS d'ordre en attente avant un week-end.`);
+      `À la réouverture, je refais l'analyse complète avant de valider le ${side}. Ne place JAMAIS d'ordre en attente avant un week-end.`, true);
   }
   /* 1bis. discipline : 2 de mes signaux au stop aujourd'hui → journée TERMINÉE (même règle que ton bot) */
   if (slToday() >= 2) {
@@ -1082,7 +1085,7 @@ function decideTrade(v) {
     return wait(`2 de mes signaux ont fini au stop aujourd'hui — journée TERMINÉE.`,
       "Après 2 pertes, la probabilité de sur-trading émotionnel explose — chez toi comme chez moi. Le meilleur trade du reste de la journée, c'est aucun.",
       (mid - Date.now()) / 60000, atTime(mid),
-      `Réouverture demain. Je continue d'analyser et de vérifier le journal, mais je n'ordonne plus d'entrée aujourd'hui.`);
+      `Réouverture demain. Je continue d'analyser et de vérifier le journal, mais je n'ordonne plus d'entrée aujourd'hui.`, true);
   }
   /* 2. événement éco majeur imminent → on laisse passer */
   if (v.evt && v.evt.impact === "High" && v.evt.inMin <= 45) {
@@ -1090,41 +1093,41 @@ function decideTrade(v) {
     return wait(`${v.evt.title} dans ${Math.max(0, v.evt.inMin)} min.`,
       "Une statistique US majeure peut balayer tous les niveaux techniques en quelques secondes : le SL peut sauter avec slippage.",
       etaMin, null,
-      `Laisser sortir le chiffre, attendre ~20 min que le marché digère, puis revalider le ${side} si le biais tient.`);
+      `Laisser sortir le chiffre, attendre ~20 min que le marché digère, puis revalider le ${side} si le biais tient.`, true);
   }
   /* 2bis. jamais acheter le sommet, jamais vendre le creux (le contretemps = la source n°1 de pertes) */
   if (v.dirUp && (v.rsi >= 70 || v.stretch > 2))
     return wait(`acheter maintenant = acheter ${v.rsi >= 70 ? `suracheté (RSI ${v.rsi.toFixed(0)})` : `un prix étiré à +${v.stretch.toFixed(1)}σ au-dessus du VWAP`}.`,
       "C'est LE piège qui donne l'impression que « tout est à l'envers » : entrer après que le mouvement a déjà eu lieu, juste avant la respiration.",
       tfMin, null,
-      `BUY seulement sur repli vers ${fmt(v.vwapNow)} $ (VWAP)${v.sup1 ? ` ou le support ${fmt(v.sup1.p)} $` : ""}, avec rejet.`);
+      `BUY seulement sur repli vers ${fmt(v.vwapNow)} $ (VWAP)${v.sup1 ? ` ou le support ${fmt(v.sup1.p)} $` : ""}, avec rejet.`, true);
   if (!v.dirUp && (v.rsi <= 30 || v.stretch < -2))
     return wait(`vendre maintenant = vendre ${v.rsi <= 30 ? `survendu (RSI ${v.rsi.toFixed(0)})` : `un prix étiré à ${v.stretch.toFixed(1)}σ sous le VWAP`}.`,
       "Vendre le creux après la chute, c'est offrir son stop au rebond technique.",
       tfMin, null,
-      `SELL seulement sur remontée vers ${fmt(v.vwapNow)} $ (VWAP)${v.res1 ? ` ou la résistance ${fmt(v.res1.p)} $` : ""}, avec rejet.`);
+      `SELL seulement sur remontée vers ${fmt(v.vwapNow)} $ (VWAP)${v.res1 ? ` ou la résistance ${fmt(v.res1.p)} $` : ""}, avec rejet.`, true);
   /* 2ter. confirmation H1/H4 OBLIGATOIRE (audit données réelles : M15 seul ≈ 51 %, avec H1 ≈ 56 %) */
   if (!v.htfOk)
     return wait(`le signal M15 n'est pas confirmé par les horizons H1/H4.`,
       "Vérifié sur 40 jours de données réelles : le M15 seul a raison ~51 % du temps (pile ou face). Avec H1 aligné : ~56 % et espérance positive. Aucun ordre d'entrée sans cette confirmation.",
       2 * tfMin, null,
-      `${side} dès que H1 s'aligne dans le même sens — je re-vérifie toutes les 30 s.`);
+      `${side} dès que H1 s'aligne dans le même sens — je re-vérifie toutes les 30 s.`, true);
   /* 2quater. vent de face dollar (corrélation inverse or/DXY) */
   const dxy = ((radarData && radarData.assets) || []).find(a => (a.name || "").includes("DXY"));
   if (dxy && v.dirUp && dxy.chg1h >= 0.25)
     return wait(`le dollar charge en face (DXY +${dxy.chg1h} %/1h) — acheter l'or contre un dollar qui monte, c'est ramer à contre-courant.`,
       "Or et dollar évoluent en sens inverse : un DXY en forte hausse écrase la plupart des tentatives haussières de l'or.",
-      30, null, `BUY quand le DXY se calme (< +0,25 %/1h), ou si l'or casse sa résistance malgré lui, avec volume.`);
+      30, null, `BUY quand le DXY se calme (< +0,25 %/1h), ou si l'or casse sa résistance malgré lui, avec volume.`, true);
   if (dxy && !v.dirUp && dxy.chg1h <= -0.25)
     return wait(`le dollar plonge en face (DXY ${dxy.chg1h} %/1h) — vendre l'or pendant que le dollar chute, c'est contre le courant.`,
       "Un DXY en forte baisse porte l'or : la plupart des SELL échouent dans ces conditions.",
-      30, null, `SELL quand le DXY se stabilise (> −0,25 %/1h).`);
+      30, null, `SELL quand le DXY se stabilise (> −0,25 %/1h).`, true);
   /* 3. pas d'avantage exploitable */
   if (Math.abs(v.score) < 2) {
     return wait("le score est trop faible (zone neutre), aucun avantage statistique.",
       "Trader sans edge, c'est du pile ou face payant le spread. Le score doit dépasser ±3,5 avec des horizons alignés.",
       2 * tfMin, null,
-      `Attendre ${2} bougies ${TF.toUpperCase()} (~${fmtEta(2 * tfMin).replace("≈ ", "")}) qu'une impulsion claire se forme. Je réévalue toutes les 90 s.`);
+      `Attendre ${2} bougies ${TF.toUpperCase()} (~${fmtEta(2 * tfMin).replace("≈ ", "")}) qu'une impulsion claire se forme. Je réévalue toutes les 90 s.`, true);
   }
   /* 4. le prix bute sur un niveau contre nous → attendre la cassure ou le rejet */
   if (v.dirUp && v.res1 && v.res1.p - v.price < 0.8 * v.atrv) {
@@ -1187,7 +1190,7 @@ function renderDecision(d, setups = []) {
      Le badge, la vision, le tableau et le bouton doivent TOUS parler du MÊME trade.
      Un setup n'est armé que s'il va dans le sens de la décision (d.side) : sinon le badge
      annonçait « SELL en approche » au-dessus d'un plan BUY, et le bouton enregistrait le SELL. */
-  const armed = d.action === "WAIT" && setups.length && marketStatus().open
+  const armed = d.action === "WAIT" && !d.hard && setups.length && marketStatus().open
     ? setups.find(s => s.side === d.side && s.ready >= 70 && (!sigLock || Date.now() - sigLock.at > SIG_LOCK_MS || s.side === sigLock.side)) || null
     : null;
   /* P = LE plan affiché : une seule vérité pour tout le panneau */
@@ -1252,6 +1255,7 @@ function renderDecision(d, setups = []) {
   } else {
     el.innerHTML = `
       <div class="badge wait">⏳ N'ENTRE PAS MAINTENANT — ATTENDS</div>
+      ${d.hard ? `<div class="dec-line" style="background:rgba(239,83,80,.10);border:1px solid var(--down);border-radius:8px;padding:8px 10px;margin:8px 0;font-size:12.5px">🔒 <b>Blocage de sécurité actif</b> — tant qu'il tient, je n'arme <b>aucun</b> setup, même à 95 % prêt, et aucun bouton d'entrée ne s'affichera. Le radar plus bas reste informatif : <b>ne le trade pas</b>.</div>` : ""}
       ${openNote}
       ${vision}
       <div class="dec-line"><b class="k">Pourquoi</b> ${d.whyShort}</div>
@@ -1785,6 +1789,17 @@ function journalAdd(d) {
     ctx: lastCtx || null }); // contexte complet : pour comprendre POURQUOI ça a gagné ou perdu
   saveJournal(); renderJournal();
 }
+/* Un trade RÉELLEMENT pris entre aussi au journal. Sans ça, l'auto-analyse n'apprenait
+   que des signaux stricts de l'app — jamais des trades pris au déclencheur — et la règle
+   « 2 stops = journée terminée » ne voyait donc jamais tes vraies pertes. */
+function journalTake(t) {
+  const proche = journal.find(e => e.type === "sig" && e.status === "open" && e.side === t.side &&
+    Date.now() - e.t < 15 * 60000); // le signal de l'app vient d'être journalisé : on le marque au lieu de doublonner
+  if (proche) { proche.taken = true; proche.entry = t.entry; proche.sl = t.sl; proche.tp1 = t.tp1; proche.tp2 = t.tp2; proche.lot = t.lot; }
+  else journal.push({ type: "sig", t: Date.now(), side: t.side, entry: t.entry, sl: t.sl, tp1: t.tp1, tp2: t.tp2,
+    lot: t.lot, ratio: gRatio, status: "open", r: null, taken: true, source: "pris", ctx: lastCtx || null });
+  saveJournal(); renderJournal();
+}
 /* ---- apprentissage : winrate par contexte → leçons + ajustements automatiques ---- */
 function bucketStats(pick) {
   const res = journal.filter(e => e.type === "sig" && e.ctx && (e.status === "sl" || e.status === "tp1" || e.status === "tp2"));
@@ -2030,7 +2045,7 @@ function renderJournal() {
   const rows = journal.filter(e => e.type === "sig").slice(-8).reverse().map(e => {
     const col = e.status === "tp1" || e.status === "tp2" ? "var(--up)" : e.status === "sl" ? "var(--down)" : "var(--dim)";
     const pmLbl = { timing: " · ⏱ stop trop serré", direction: " · 🧭 mauvaise direction", spike: " · ⚡ bougie de news", tp2: " · a filé à TP2", clean: "" }[e.pm] || "";
-    const lbl = ({ open: "⏳ en cours", tp1: "✅ TP1 (+1,5R)", tp2: "✅ TP2", sl: "❌ SL (−1R)", expired: "◻︎ expiré" }[e.status] || e.status) + pmLbl;
+    const lbl = ({ open: "⏳ en cours", tp1: "✅ TP1 (+1,5R)", tp2: "✅ TP2", sl: "❌ SL (−1R)", expired: "◻︎ expiré" }[e.status] || e.status) + pmLbl + (e.taken ? " · 📥 pris" : "");
     return `<tr><td>${new Date(e.t).toLocaleString("fr-FR", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" })}</td><td><span class="tag ${e.side === "BUY" ? "up" : "down"}">${e.side}</span></td><td>${fmt(e.entry)}</td><td style="color:${col}">${lbl}</td></tr>`;
   }).join("");
   el.innerHTML = `
@@ -2051,6 +2066,7 @@ window.takeTrade = function () {
   const pl = window._plan; if (!pl) return;
   myTrade = { side: pl.side, entry: D ? D.price : pl.entry, sl: pl.sl, tp1: pl.tp1, tp2: pl.tp2, lot: pl.lot || MIN_LOT, t0: Date.now(), be: false, tp1done: false };
   localStorage.setItem(TRADE_KEY, JSON.stringify(myTrade));
+  journalTake(myTrade);
   renderTrade(myTrade.entry);
   beep(1);
 };
@@ -2072,6 +2088,7 @@ window.declareTrade = function () {
   myTrade = { side, entry, sl, tp1: tp1 || entry + dirn * 1.5 * risk, tp2: tp2 || entry + dirn * 2.5 * risk,
     lot, t0: Date.now(), be: false, tp1done: false, declared: true };
   localStorage.setItem(TRADE_KEY, JSON.stringify(myTrade));
+  journalTake(myTrade);
   renderTrade(D ? D.price : entry);
   document.getElementById("tradeCard").scrollIntoView({ block: "center" });
   beep(1);
