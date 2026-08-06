@@ -172,3 +172,102 @@ bloque la décision pour un motif distinct, tracé comme tel.
 
 **Conséquences.** Les deux causes d'abstention restent séparables a posteriori dans l'audit,
 ce qui permet de régler leurs seuils indépendamment.
+
+---
+
+## ADR-010 — Le contrat principal est défini par la liquidité, pas par l'échéance
+
+**Statut** : figé (étape 2.2)
+
+**Contexte.** Sur l'or COMEX, la liquidité se concentre sur un sous-ensemble d'échéances.
+L'échéance listée la plus proche est régulièrement un mois sériel peu traité : carnet vide,
+spread large, microstructure inexploitable.
+
+**Décision.** Le contrat principal est déterminé par le volume et l'open interest observés,
+jamais par la distance à l'expiration. Le rang de liquidité est recalculé quotidiennement et
+stocké avec sa date d'effet, pour qu'un rejeu retrouve le contrat principal *de l'époque*.
+
+**Conséquences.** La notion de « front month » devient une donnée calculée et versionnée du
+système, pas une convention implicite. MGC est exclu des sources de signal de prix : c'est un
+marché dérivé de GC, et l'observer revient à lire le reflet plutôt que l'objet — sa divergence
+avec GC reste en revanche un indicateur de stress de liquidité.
+
+---
+
+## ADR-011 — Trois séries continues coexistantes, à usage typé
+
+**Statut** : figé (étape 2.2)
+
+**Contexte.** L'or cote structurellement en report : raccorder deux échéances crée un saut qui
+n'a jamais eu lieu. Les trois traitements possibles préservent chacun une grandeur différente
+et en détruisent une autre — aucun n'est universellement correct.
+
+**Décision.** Le système maintient simultanément la série **brute par contrat** (niveaux
+réels), la série **ajustée en différence** (écarts en dollars) et la série **ajustée en ratio**
+(rendements). Chaque fonction consommant des prix déclare la série dont elle a besoin.
+Fournir la mauvaise est une erreur de type. En particulier : toute détection de structure
+(niveaux, zones d'imbalance, FVG) s'exécute sur la série brute d'un contrat unique, et un
+niveau ne franchit une frontière de roll qu'après traduction par le spread calendaire.
+
+**Conséquences.** Coût de stockage et de complexité triplé sur les séries de prix, accepté.
+En échange, les trois symptômes visés — faux gaps, faux imbalances, fausse volatilité —
+deviennent structurellement impossibles plutôt que corrigés au cas par cas.
+
+---
+
+## ADR-012 — Les facteurs d'ajustement de roll sont bitemporels
+
+**Statut** : figé (étape 2.2)
+
+**Contexte.** Une série ajustée réécrit tout son passé à chaque roll : l'historique ajusté tel
+qu'il existe aujourd'hui n'est pas celui qu'un observateur voyait il y a six mois. Entraîner ou
+calibrer dessus utilise une transformation qui n'existait pas encore. La fuite est invisible et
+**améliore** les résultats de backtest, donc rien ne la signale.
+
+**Décision.** Chaque facteur d'ajustement est stocké avec sa date d'effet. Le système sait
+reconstruire la série telle qu'elle apparaissait à un instant donné, et tout backtest ou
+mesure de calibration consomme cette reconstruction datée — jamais la série courante.
+
+**Conséquences.** Extension de l'ADR-004 : ce n'est plus seulement la donnée qui est
+bitemporelle, mais aussi la transformation qui lui est appliquée. Le rejeu d'une décision
+ancienne exige de restaurer l'état des facteurs à cette date.
+
+---
+
+## ADR-013 — L'open interest est une donnée quotidienne différée
+
+**Statut** : figé (étape 2.2)
+
+**Contexte.** Le volume est temps réel, l'open interest est publié une fois par jour, en
+préliminaire puis en définitif. La plupart des sources l'affichent sans sa date de
+publication, ce qui invite à le traiter comme une série temps réel — et à consommer à
+l'instant `t` un chiffre publié le lendemain.
+
+**Décision.** L'open interest entre dans le feature store avec une date de disponibilité égale
+à sa publication et en deux versions distinctes (préliminaire, définitif), le passage de
+l'une à l'autre étant un événement daté. Toute règle de décision doit rester calculable avec
+l'open interest de la veille. Corollaire : la détection de rollover est pilotée par le volume,
+l'open interest ne servant que de confirmation différée.
+
+**Conséquences.** Aucune règle du système ne peut dépendre d'un open interest intraday. Les
+stratégies qui en auraient besoin sont écartées d'emblée plutôt que découvertes fausses en
+production.
+
+---
+
+## ADR-014 — La distribution implicite des options est un a priori, jamais la probabilité finale
+
+**Statut** : figé (étape 2.2)
+
+**Contexte.** La surface d'options fournit la seule distribution de probabilité réellement
+cotée par le marché. Elle est cependant *risque-neutre* : elle incorpore une prime de risque et
+diffère systématiquement de la probabilité du monde réel.
+
+**Décision.** La distribution implicite alimente le moteur de scénarios comme a priori et sert
+de référence de comparaison à la fusion probabiliste. Elle n'est jamais publiée ni utilisée
+comme probabilité calibrée. L'ajustement de prime de risque reliant les deux est un paramètre
+estimé et versionné.
+
+**Conséquences.** L'écart entre distribution implicite et distribution estimée par le système
+devient lui-même une feature exploitable. Le système ne peut pas se contenter de relayer le
+marché : il doit produire sa propre estimation et assumer l'écart.
