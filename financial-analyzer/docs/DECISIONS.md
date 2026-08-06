@@ -813,3 +813,86 @@ porte une fraîcheur et un compteur de retests.
 **Conséquences.** Le moteur reste utile même si son pouvoir prédictif directionnel se révèle
 faible — hypothèse prudente retenue par défaut. Le test décisif devient : un stop placé sur la
 zone fait-il mieux qu'un stop de volatilité équivalente ?
+
+---
+
+## ADR-041 — Absorption et épuisement se séparent par les dérivées, pas par l'image
+
+**Statut** : figé (étape 3.4)
+
+**Contexte.** « Quelqu'un bloque » et « les attaquants s'essoufflent » sont deux causes
+distinctes qui produisent exactement la même observation : volume agressif élevé et absence de
+progression du prix. Un détecteur construit sur l'instantané produit une étiquette choisie par
+l'analyste, pas par la donnée — et les deux motifs ont des suites différentes.
+
+**Décision.** La séparation se fait sur les dérivées : dans l'absorption le côté passif est
+**fort** (réapprovisionnement soutenu et régulier) ; dans l'épuisement le côté agressif est
+**faible** (pente d'agressivité décroissante). La diminution de l'agressivité n'est pas un
+symptôme parmi d'autres, c'est le critère définitionnel. Privé du carnet, le moteur déclare
+« stagnation de cause indéterminée » au lieu de trancher arbitrairement.
+
+**Conséquences.** Séparer correctement les deux motifs améliore le taux de base des **deux**,
+donc la calibration, même sans apporter de signal supplémentaire. C'est la justification
+principale de ce moteur.
+
+---
+
+## ADR-042 — L'épuisement n'existe qu'ancré sur une impulsion et relativement à sa saisonnalité
+
+**Statut** : figé (étape 3.4)
+
+**Contexte.** Un motif défini par une diminution se heurte à deux fréquences parasites.
+D'abord, l'agressivité décroît en permanence : la fréquence inconditionnelle de « l'agressivité
+baisse » est énorme. Ensuite, elle décroît **systématiquement** aux transitions de séance —
+clôture de Londres, fin de séance new-yorkaise, approche de la coupure, creux asiatique — de
+sorte qu'un détecteur naïf produit un signal quotidien parfaitement régulier et parfaitement
+vide.
+
+**Décision.** Trois conditions d'ancrage obligatoires : une impulsion directionnelle préalable
+qualifiée, un contexte de niveau, une fenêtre bornée rattachée à l'impulsion. Et la
+décroissance d'agressivité est évaluée **relativement à la décroissance normale de la tranche de
+session** (ADR-007, ADR-021), jamais en absolu.
+
+**Conséquences.** Même remède que `ABSENT_PAR_CONCEPTION` (ADR-024) : une baisse attendue n'est
+pas un signal. La définition d'impulsion devient un objet partagé et versionné, à définir une
+seule fois pour tous les moteurs qui l'utiliseront.
+
+---
+
+## ADR-043 — L'épuisement tue une hypothèse, il n'en crée pas
+
+**Statut** : figé (étape 3.4)
+
+**Contexte.** Que les attaquants perdent leur force signifie que le mouvement s'arrête, pas
+qu'il s'inverse. L'issue modale d'un épuisement est une **consolidation**, éventuellement suivie
+d'une reprise dans le même sens. Traiter l'épuisement comme un signal de retournement revient à
+parier sur l'issue la moins probable des trois, avec un stop nécessairement large puisque le
+mouvement initial vient de démontrer sa puissance.
+
+**Décision.** L'épuisement retire de la masse de probabilité à la continuation immédiate, en
+transfère l'essentiel vers la consolidation et marginalement vers le retournement. La sortie du
+moteur ne comporte **aucun champ de direction proposée** — absence délibérée. Son usage
+principal est le veto sur entrée tardive, fonction d'abstention alignée sur I4.
+
+**Conséquences.** La valeur économique du moteur passe par les entrées évitées plutôt que par
+les entrées produites. Les entrées tardives sur mouvement épuisé cumulant mauvais prix et stop
+éloigné, c'est la population dont l'espérance nette est la plus négative.
+
+---
+
+## ADR-044 — Le climax est un motif distinct de l'épuisement progressif
+
+**Statut** : figé (étape 3.4)
+
+**Contexte.** « Accélération suivie d'un rejet » n'est pas un essoufflement graduel : c'est une
+poussée qui échoue d'un coup. Signature, horizon et mécanisme diffèrent. Fusionner les deux dans
+un détecteur unique mélange deux populations dont les issues se compensent et rend le taux de
+base illisible.
+
+**Décision.** Détecteur séparé, avec sa propre signature — pic de vitesse, effondrement de la
+profondeur, élargissement du spread, retour rapide d'une part importante du mouvement,
+déclenchement fréquent juste au-delà d'un niveau visible. Comme l'absorption, le climax est
+ancré sur un niveau et produit une invalidation exploitable.
+
+**Conséquences.** Le dernier trait est mesurable et devient un test : la proportion de climax
+survenant juste au-delà d'un niveau visible, et l'écart d'issue entre ceux-là et les autres.
