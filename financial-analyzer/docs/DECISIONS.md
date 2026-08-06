@@ -355,3 +355,87 @@ le contrôle d'ancrage numérique de l'ADR-002.
 **Conséquences.** La frontière de sortie devient un point de contrôle unique portant deux
 garanties : aucun chiffre inventé, aucun chiffre non redistribuable. Le coût est une contrainte
 de provenance à propager sur toute la chaîne de features.
+
+---
+
+## ADR-019 — Observations en UTC, horaires en heure locale et fuseau
+
+**Statut** : figé (étape 2.4)
+
+**Contexte.** Les marchés et les publications sont définis en heure locale, avec des règles de
+changement d'heure qui diffèrent entre juridictions. La conversion vers UTC n'est pas un
+décalage constant mais une fonction discontinue du temps. L'Union européenne et les États-Unis
+ne basculant pas aux mêmes dates, l'écart Londres ↔ New York diffère de l'usuel pendant environ
+un mois par an — en pleine saison de publications macro.
+
+**Décision.** Les observations (ticks, transactions, événements) sont stockées en UTC à
+résolution native. Les **règles** — ouvertures, coupures, fixings, publications programmées —
+sont stockées en heure locale avec leur identifiant de fuseau et converties à la lecture par
+une base de fuseaux tenue à jour. Figer un horaire de marché en UTC est un défaut. Le fuseau de
+l'opérateur est un fuseau de présentation : il n'entre dans aucun calcul, aucun seuil, aucune
+agrégation.
+
+**Conséquences.** Aucune conversion de fuseau écrite à la main dans le code. Le défaut visé ne
+se manifestant que deux fois par an, il ne peut pas être détecté par les tests ordinaires : la
+contrainte doit être structurelle.
+
+---
+
+## ADR-020 — Ordonnancement par séquence, durées sur horloge monotone
+
+**Statut** : figé (étape 2.4)
+
+**Contexte.** Deux événements peuvent porter le même horodatage. Par ailleurs l'horloge murale
+peut reculer — correction de synchronisation, seconde intercalaire, lissage — ce qui produit
+des durées négatives ou aberrantes.
+
+**Décision.** L'ordre des événements est défini par `(horodatage, numéro de séquence, index
+d'arrivée)`, jamais par l'horodatage seul. Toute mesure de durée, de latence ou de fraîcheur
+s'appuie sur une horloge monotone locale ; l'horloge murale ne sert qu'à l'enregistrement.
+Aucune troncature de résolution à l'ingestion.
+
+**Conséquences.** La reconstruction du carnet devient déterministe, donc rejouable (I2). Un tri
+instable sur des ticks produirait sinon un carnet différent à chaque exécution.
+
+---
+
+## ADR-021 — Calendriers et base de fuseaux : bitemporels et versionnés
+
+**Statut** : figé (étape 2.4)
+
+**Contexte.** Jours fériés, demi-séances et horaires sont annoncés à l'avance et parfois
+modifiés. Les règles de changement d'heure sont modifiées par les États, parfois
+rétroactivement, et la base de fuseaux est mise à jour plusieurs fois par an.
+
+**Décision.** Le calendrier de marché, le calendrier macro et la version de la base de fuseaux
+sont des artefacts versionnés, enregistrés dans chaque enregistrement de décision. Rejouer une
+décision exige le calendrier et les règles de conversion **tels qu'ils étaient connus à
+l'époque**. Les jours fériés sont suivis par marché — une place peut être fermée pendant qu'une
+autre cote, produisant des séances partiellement ouvertes légitimes. Fermeture programmée et
+interruption subie restent des états distincts.
+
+**Conséquences.** Quatrième application du même principe : après la donnée (ADR-004), la
+transformation (ADR-012) et la connaissance (ADR-015), c'est la **règle de conversion** qui
+devient datée. Effet secondaire important : sans les fériés par marché, le contrôle qualité
+signale un flux périmé à chaque jour férié britannique, et le système apprend à ignorer ses
+propres alarmes.
+
+---
+
+## ADR-022 — La frontière de journée est un paramètre déclaré de toute agrégation
+
+**Statut** : figé (étape 2.4)
+
+**Contexte.** La séance du listé et la journée du spot OTC ne commencent pas au même moment, et
+le rollover des brokers s'exprime dans un fuseau serveur qui suit un changement d'heure ne
+correspondant ni à Londres ni à New York. Deux conventions produisent donc des bougies
+journalières différentes — donc des plus hauts et plus bas différents — et un décalage d'une
+heure redécoupe silencieusement les bougies deux fois par an.
+
+**Décision.** La frontière de journée et de semaine est un paramètre déclaré et versionné de
+toute agrégation. Deux séries agrégées selon des conventions différentes ne sont ni comparées
+ni fusionnées. Tout niveau extrait d'une bougie transporte la convention dont il est issu.
+
+**Conséquences.** Un plus-haut journalier cesse d'être traité comme un fait de marché : c'est
+un fait relatif à une frontière de journée. Même famille de défaut que les faux niveaux de
+rollover (ADR-011), et même remède — typer la série plutôt que corriger après coup.
