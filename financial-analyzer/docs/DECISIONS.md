@@ -543,3 +543,103 @@ détecteur de cette dimension qui est corrigé.
 **Conséquences.** Aucun poids de pénalité n'est fixé a priori dans la spécification. Le
 contrôle qualité devient lui-même un objet mesuré, soumis aux mêmes exigences de preuve que
 les agents.
+
+---
+
+## ADR-028 — Déséquilibre de flux normalisé par la profondeur, jamais brut
+
+**Statut** : figé (étape 3.1)
+
+**Contexte.** Un même déséquilibre déplace violemment un carnet mince et se fait absorber par un
+carnet épais. L'amplitude brute de l'OFI suit donc principalement l'heure de la journée : un
+seuil posé dessus mesure la session, pas la pression.
+
+**Décision.** Le déséquilibre est toujours rapporté à la profondeur prévalente, et conditionné
+par tranche de session, régime de volatilité et phase de rollover (ADR-007, ADR-013). Les
+déséquilibres par niveau de carnet sont conservés séparés et jamais pré-additionnés : leur
+combinaison est apprise à l'étage 7, où elle peut dépendre du régime.
+
+**Conséquences.** Les seuils deviennent estimables et comparables dans le temps. Coût : la
+mesure dépend de la qualité de la profondeur, donc du marquage de liquidité implicite.
+
+---
+
+## ADR-029 — Toute évaluation intègre un décalage égal à la latence réelle
+
+**Statut** : figé (étape 3.1)
+
+**Contexte.** La relation entre déséquilibre de flux et variation de prix **sur la même
+fenêtre** est forte — mais c'est en grande partie une identité comptable : les ordres qui ont
+consommé la file *sont* le mécanisme par lequel le prix a bougé. Une régression contemporaine
+affiche donc un pouvoir explicatif impressionnant qui n'est pas une capacité de prédiction. La
+capacité prédictive réelle est d'un ordre de grandeur inférieure et décroît en quelques
+secondes.
+
+**Décision.** Fenêtre de mesure et fenêtre de rendement strictement disjointes, séparées par un
+décalage égal à la **latence de bout en bout réelle** — jusqu'à l'accusé de réception du
+broker, pas jusqu'à la fin du calcul. Tout résultat obtenu sans ce décalage est déclaré non
+exploitable, quelle que soit sa qualité statistique.
+
+**Conséquences.** Beaucoup de résultats spectaculaires disparaissent, ce qui est l'effet
+recherché. La latence de bout en bout devient un paramètre de premier ordre du système, à
+mesurer avant tout travail de modélisation.
+
+---
+
+## ADR-030 — Le rôle du moteur de microstructure est fixé par sa demi-vie mesurée
+
+**Statut** : figé (étape 3.1)
+
+**Contexte.** Un signal dont la demi-vie est inférieure à la latence d'exécution est inutilisable
+pour déclencher une entrée, même s'il est réel. Le contexte pousse vers ce cas : la
+microstructure est observée sur le listé alors que l'exécution se fait sur le spot, donc le
+signal doit traverser la base avant d'être exploitable.
+
+**Décision.** Le champ `rôle_autorisé` de la sortie de l'agent — `DÉCLENCHEUR`, `CALAGE` ou
+`VETO` — est renseigné par la mesure de demi-vie confrontée à la latence réelle, et limite
+mécaniquement l'usage que l'étage 9 peut en faire. **Valeur par défaut : `VETO`**, tant que la
+mesure n'a pas été faite.
+
+**Conséquences.** Application de I4 au niveau d'un agent : le moteur commence par sa capacité à
+empêcher et ne gagne le droit de déclencher que sur preuve. Veto et calage d'exécution
+conservent une valeur économique réelle, puisqu'ils agissent sur l'espérance nette de frais.
+
+---
+
+## ADR-031 — Le déséquilibre n'est jamais publié seul
+
+**Statut** : figé (étape 3.1)
+
+**Contexte.** Un déséquilibre fortement acheteur accompagné d'une absence de progression du prix
+signifie qu'un vendeur passif absorbe tout le flux sans céder de terrain. Lire ce cas comme
+haussier revient à acheter face à celui qui absorbe. Le signe du signal naïf est alors faux.
+
+**Décision.** Le déséquilibre est systématiquement apparié à la progression de prix réalisée
+sur la même fenêtre, et c'est le **couple** qui constitue la feature. Quatre régimes sont
+qualifiés explicitement : continuation, absorption, fragilité, équilibre. Un moteur qui sortirait
+un déséquilibre nu produirait un signal ambigu et parfois inversé. S'y ajoutent impact réalisé,
+résilience et vitesse de reconstitution, seul triplet capable de distinguer une réévaluation
+réelle d'une secousse de liquidité.
+
+**Conséquences.** La sortie de l'agent est structurellement plus riche qu'un scalaire signé, ce
+qui complique la fusion mais supprime une inversion de signe systématique dans les phases
+d'absorption — c'est-à-dire aux points de retournement, là où l'erreur coûte le plus.
+
+---
+
+## ADR-032 — Échantillonnage en temps-événement
+
+**Statut** : figé (étape 3.1)
+
+**Contexte.** Une seconde de recouvrement Londres–New York et une seconde de creux asiatique ne
+contiennent pas le même nombre d'événements. Échantillonner en temps d'horloge mélange donc des
+populations sans rapport et rend les distributions instables.
+
+**Décision.** Les features de microstructure sont échantillonnées en temps-événement — par
+nombre d'événements, de transactions ou de volume écoulé. La datation en temps d'horloge est
+conservée pour l'audit et la rejouabilité : c'est le pas d'échantillonnage qui change, pas
+l'horodatage.
+
+**Conséquences.** Les distributions conditionnelles de l'ADR-007 deviennent estimables sur ce
+moteur. Coût : les fenêtres n'ont plus une durée constante, ce dont l'appariement avec les
+rendements futurs doit tenir compte.
