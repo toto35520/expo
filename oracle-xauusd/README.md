@@ -170,3 +170,47 @@ l'objet serait donc resté sur l'ancien sens : la bannière pouvait annoncer
 `ACHÈTE` au-dessus d'un signal `SELL` reconduit — exactement la famille de bug
 du premier correctif. Le verbe est maintenant dérivé du plan affiché (`P`) au
 moment du rendu, jamais stocké. Couvert par un test de régression.
+
+## Ajout — marchés liés, confluence technique, order blocks
+
+Version `2026.08.06-n`.
+
+### Marchés liés à l'or
+
+`/api/radar` renvoyait déjà cinq marchés (VIX, taux US 10 ans, pétrole WTI,
+dollar, Bitcoin) mais un seul — le dollar — entrait dans la décision ; les
+quatre autres étaient affichés puis ignorés.
+
+`crossMarket()` les lit tous avec leur relation réelle à l'or et un seuil de
+bruit par actif : sous le seuil, l'actif ne pèse rien (sinon cinq micro-
+variations s'additionnaient en un biais inexistant). Score borné à ±10,
+affiché en tête de la carte radar avec le détail marché par marché, et ajouté
+comme 14ᵉ contrôle avant entrée.
+
+### Confluence technique
+
+Les contrôles disent si le trade est *autorisé* ; `confluence()` dit s'il est
+*bon*. Treize figures vérifiées une par une dans le sens du trade : order
+block, FVG non comblé, balayage de liquidité, trendline, Fibonacci 61,8 %,
+structure de marché, empilement des EMA, position vs VWAP, profil de volume,
+figure de bougie, divergence RSI, support/résistance d'appui, figure double.
+
+Ces points ne bloquent pas — ils notent la qualité (HAUT VOL ≥ 9, CORRECTE ≥ 6,
+FAIBLE en dessous). Un feu vert sous 6/13 affiche un avertissement explicite.
+
+### Order blocks
+
+`orderBlocks()` n'existait pas : la dernière bougie opposée avant une impulsion
+qui casse la structure, filtrée des blocs déjà entièrement traversés.
+
+### Bruit géopolitique écarté
+
+Le flux donnait le poids maximal (3) au nucléaire **civil** — réacteurs,
+déchets, radio-isotopes médicaux — et comptait des faits divers sportifs comme
+tensions géopolitiques. Ces titres saturaient à eux seuls le score de
+« géopolitique chaude ». `geoW()` écarte désormais le nucléaire civil, le sport
+et les faits divers, et exige qu'un titre nomme une menace réelle (missile,
+frappe, guerre, sanctions, blocus, escalade…) pour compter comme chaud.
+
+Mesuré sur le flux réel : **11 titres « chauds » avant, 4 après** — les quatre
+restants portant tous sur l'Iran, l'Ukraine ou une offensive russe.

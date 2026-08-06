@@ -251,7 +251,7 @@
   </div>
 </div>
 
-<footer>Outil d'analyse — aucune exécution d'ordre. Ceci n'est pas un conseil financier. · <b>version 2026.08.06-l</b></footer>
+<footer>Outil d'analyse — aucune exécution d'ordre. Ceci n'est pas un conseil financier. · <b>version 2026.08.06-n</b></footer>
 
 <script>
 "use strict";
@@ -463,6 +463,29 @@ function fibLevels(c) {
 }
 
 /* ---- fair value gaps (déséquilibres) non comblés ---- */
+/* ---- order blocks : la dernière bougie opposée avant une impulsion qui casse la
+   structure. C'est la zone où les institutionnels ont chargé — le prix y revient
+   souvent chercher de la liquidité avant de repartir. ---- */
+function orderBlocks(c, atrv) {
+  const out = [];
+  for (let i = Math.max(10, c.length - 60); i < c.length - 3; i++) {
+    const k = c[i], suite = c[i + 3];
+    const move = suite.c - k.c;
+    const prev = c.slice(i - 10, i);
+    if (!prev.length) continue;
+    if (k.c < k.o && move > 1.2 * atrv && suite.c > Math.max(...prev.map(x => x.h)))
+      out.push({ i, bull: true, top: Math.max(k.o, k.c), bot: k.l, t: k.t });   // dernière rouge avant l'impulsion haussière
+    if (k.c > k.o && -move > 1.2 * atrv && suite.c < Math.min(...prev.map(x => x.l)))
+      out.push({ i, bull: false, top: k.h, bot: Math.min(k.o, k.c), t: k.t });  // dernière verte avant l'impulsion baissière
+  }
+  /* un OB est consommé si le prix l'a entièrement traversé depuis */
+  return out.filter(z => {
+    for (let j = z.i + 4; j < c.length; j++)
+      if (z.bull ? c[j].c < z.bot : c[j].c > z.top) return false;
+    return true;
+  }).slice(-4);
+}
+
 function fvgZones(c, atrv) {
   const zones = [];
   for (let i = Math.max(2, c.length - 80); i < c.length; i++) {
@@ -709,12 +732,13 @@ async function analyze(fullNarration = true) {
   const fvg = fvgZones(c, atrv);
   const liq = liquidity(c, atrv);
   const dbls = doublePatterns(c, atrv);
+  const ob = orderBlocks(c, atrv);
   const vwap = vwapArr(c, (TF_MIN[TF] || 15) <= 60); // session sur M5/M15/H1, ancré sur H4/D1
   const prof = volumeProfile(c);
   const m1 = m1Snapshot(c1m);
 
   if (seq !== analysisSeq) return; // une analyse plus récente a pris la main
-  D = { c, ind, sr, piv, patterns, price, atrv, tls, fib, fvg, liq, dbls, vwap, prof };
+  D = { c, ind, sr, piv, patterns, price, atrv, tls, fib, fvg, liq, dbls, vwap, prof, ob, st };
   document.getElementById("px").textContent = fmt(price) + " $"; // en attendant le premier tick WebSocket
   view = { count: Math.min(view.count, c.length), end: c.length - 1 };
   draw();
@@ -1073,6 +1097,131 @@ function renderSetups(setups) {
     </div>`).join("");
 }
 
+/* ================= 🌐 MARCHÉS LIÉS À L'OR =================
+   Le radar récupérait déjà 5 marchés, mais un seul (le dollar) entrait dans la
+   décision : VIX, taux US 10 ans, pétrole et Bitcoin étaient affichés puis
+   ignorés. On les lit tous ici, avec leur vraie relation à l'or.
+   Le seuil est le mouvement horaire à partir duquel l'actif dit quelque chose :
+   en dessous, c'est du bruit et il ne compte pas. */
+const LIENS = [
+  { cle: "DXY", sens: -1, poids: 3, seuil: 0.15, nom: "Dollar (DXY)",
+    pourquoi: "l'or se paie en dollars : dollar fort = or plus cher pour le reste du monde, donc moins acheté" },
+  { cle: "10 ans", sens: -1, poids: 3, seuil: 0.50, nom: "Taux US 10 ans",
+    pourquoi: "l'or ne verse aucun intérêt : quand les taux montent, le garder coûte plus cher que de prêter" },
+  { cle: "VIX", sens: 1, poids: 2, seuil: 2.00, nom: "VIX (peur)",
+    pourquoi: "quand la peur monte, l'argent fuit vers les refuges — l'or est le premier d'entre eux" },
+  { cle: "Pétrole", sens: 1, poids: 1.5, seuil: 0.60, nom: "Pétrole WTI",
+    pourquoi: "pétrole cher = inflation attendue, et l'or sert justement à s'en protéger" },
+  { cle: "Bitcoin", sens: 1, poids: 0.5, seuil: 0.80, nom: "Bitcoin",
+    pourquoi: "concurrent de l'or comme réserve de valeur — lien réel mais instable, donc faible poids" },
+];
+function crossMarket() {
+  if (!radarData || !radarData.assets) return null;
+  const lignes = []; let score = 0; let manquants = 0;
+  for (const L of LIENS) {
+    const a = radarData.assets.find(x => (x.name || "").includes(L.cle));
+    if (!a || a.chg1h == null || isNaN(a.chg1h)) {
+      manquants++; lignes.push({ nom: L.nom, chg: null, effet: 0, pourquoi: L.pourquoi, txt: "donnée indisponible — je ne l'utilise pas" });
+      continue;
+    }
+    /* sous le seuil = bruit : l'actif ne dit rien, il ne pèse rien (sinon cinq
+       micro-variations s'additionnaient en un biais qui n'existe pas) */
+    const norm = Math.abs(a.chg1h) < L.seuil ? 0 : Math.max(-2, Math.min(2, a.chg1h / L.seuil));
+    const effet = L.sens * L.poids * norm;
+    score += effet;
+    lignes.push({ nom: L.nom, chg: a.chg1h, effet, pourquoi: L.pourquoi,
+      txt: Math.abs(a.chg1h) < L.seuil
+        ? `${a.chg1h >= 0 ? "+" : ""}${a.chg1h} %/1h — stable, sans effet notable`
+        : `${a.chg1h >= 0 ? "+" : ""}${a.chg1h} %/1h → pousse l'or à la <b>${effet > 0 ? "HAUSSE" : "BAISSE"}</b>` });
+  }
+  score = Math.max(-10, Math.min(10, score)); // même échelle que le score technique
+  const bias = score > 1.5 ? 1 : score < -1.5 ? -1 : 0;
+  return { score: +score.toFixed(1), bias, lignes, manquants,
+    resume: bias > 0 ? "les marchés liés poussent l'or à la HAUSSE"
+          : bias < 0 ? "les marchés liés poussent l'or à la BAISSE"
+          : "les marchés liés ne penchent d'aucun côté" };
+}
+
+/* ================= 🧱 CONFLUENCE TECHNIQUE =================
+   Les contrôles de sécurité disent si le trade est AUTORISÉ. Ceux-ci disent
+   s'il est BON : chaque figure du graphique va-t-elle dans le sens du trade ?
+   Ils ne bloquent pas — ils mesurent la qualité, élément par élément. */
+function confluence(dirUp, vwapNow) {
+  if (!D) return null;
+  const p = D.price, a = D.atrv || 1, dirn = dirUp ? 1 : -1;
+  const proche = x => x != null && Math.abs(x - p) < 1.2 * a;
+  const pts = [];
+  const add = (ok, nom, txt) => pts.push({ ok, nom, txt });
+
+  const ob = (D.ob || []).filter(z => z.bull === dirUp && (proche(z.top) || proche(z.bot) || (p <= z.top && p >= z.bot)));
+  add(!!ob.length, "Order block", ob.length
+    ? `bloc ${dirUp ? "haussier" : "baissier"} ${fmt(ob[ob.length - 1].bot)}–${fmt(ob[ob.length - 1].top)} $ à portée — zone de chargement institutionnel`
+    : (D.ob || []).length ? "order blocks présents mais trop loin du prix" : "aucun order block dans le sens");
+
+  const fvNear = (D.fvg || []).filter(z => z.bull === dirUp && (proche(z.top) || proche(z.bot)));
+  add(!!fvNear.length, "Déséquilibre (FVG)", fvNear.length
+    ? `FVG ${dirUp ? "haussier" : "baissier"} ${fmt(fvNear[fvNear.length - 1].bot)}–${fmt(fvNear[fvNear.length - 1].top)} $ non comblé à portée`
+    : "aucun FVG exploitable dans le sens à proximité");
+
+  const sw = ((D.liq && D.liq.sweeps) || []).filter(x => x.dir === dirn && D.c.length - 1 - x.i <= 5);
+  add(!!sw.length, "Balayage de liquidité", sw.length
+    ? `stops ${dirUp ? "sous les plus bas" : "au-dessus des plus hauts"} ramassés à ${fmt(sw[sw.length - 1].p)} $ — les pros entrent après le balayage`
+    : "pas de chasse aux stops récente dans le sens");
+
+  const tl = (D.tls || []).filter(t => t.isLow === dirUp && proche(t.now));
+  add(!!tl.length, "Trendline", tl.length
+    ? `oblique ${dirUp ? "haussière" : "baissière"} à ${tl[0].touches} touches, testée à ${fmt(tl[0].now)} $`
+    : "aucune oblique testée en ce moment");
+
+  const gz = D.fib && D.fib.levels && D.fib.levels.find(l => l.r === 0.618);
+  add(!!(gz && D.fib.up === dirUp && proche(gz.p)), "Fibonacci 61,8 %", gz
+    ? (D.fib.up !== dirUp ? "le retracement en cours va dans l'autre sens"
+      : proche(gz.p) ? `golden zone ${fmt(gz.p)} $ — le prix y est` : `golden zone ${fmt(gz.p)} $, encore loin`)
+    : "pas de retracement exploitable");
+
+  const st = D.st || { dir: 0, label: "indéterminée" };
+  add(st.dir === dirn, "Structure de marché", `${st.label}${st.dir === dirn ? "" : " — pas dans le sens du trade"}`);
+
+  const e20 = last(D.ind.e20), e50 = last(D.ind.e50), e200 = last(D.ind.e200);
+  const emaOk = dirUp ? (e20 > e50 && e50 > e200) : (e20 < e50 && e50 < e200);
+  add(emaOk, "Empilement des moyennes", emaOk
+    ? `EMA 20/50/200 empilées dans le sens ${dirUp ? "haussier" : "baissier"}`
+    : `EMA non empilées (20 ${e20 > e50 ? ">" : "<"} 50 ${e50 > e200 ? ">" : "<"} 200)`);
+
+  const vwOk = vwapNow == null ? false : (dirUp ? p > vwapNow : p < vwapNow);
+  add(vwOk, "Position vs VWAP", vwapNow == null ? "VWAP indisponible"
+    : `prix ${p > vwapNow ? "au-dessus" : "en dessous"} du VWAP ${fmt(vwapNow)} $ — ${vwOk ? "les acheteurs" : "les vendeurs"} ${vwOk ? "" : "ne "}contrôlent la séance${vwOk ? "" : " dans ton sens"}`);
+
+  const pr = D.prof;
+  const profOk = pr ? (dirUp ? p > pr.poc : p < pr.poc) : false;
+  add(profOk, "Profil de volume", pr
+    ? `prix ${p > pr.poc ? "au-dessus" : "sous"} le POC ${fmt(pr.poc)} $ (zone la plus échangée)`
+    : "profil indisponible");
+
+  const pat = (D.patterns || []).filter(x => x.dir === dirn && D.c.length - 1 - x.i <= 3);
+  add(!!pat.length, "Figure de bougie", pat.length
+    ? `${pat[pat.length - 1].name} ${ago(D.c, pat[pat.length - 1].i)}`
+    : "aucune figure de confirmation récente");
+
+  const dv = detectDivergence(D.c, D.ind.rsi);
+  add(dv === dirn, "Divergence RSI", dv === 0 ? "aucune divergence détectée"
+    : dv === dirn ? `divergence ${dv > 0 ? "haussière" : "baissière"} — l'essoufflement joue pour toi`
+    : "divergence en sens CONTRAIRE — attention");
+
+  const srAppui = (D.sr || []).filter(l => dirUp ? (l.p < p && p - l.p < 1.5 * a) : (l.p > p && l.p - p < 1.5 * a));
+  add(!!srAppui.length, dirUp ? "Support sous le prix" : "Résistance au-dessus", srAppui.length
+    ? `${dirUp ? "support" : "résistance"} ${fmt(srAppui[0].p)} $ (${srAppui[0].n} touches) pour protéger l'entrée`
+    : `aucun ${dirUp ? "support" : "résistance"} proche pour t'appuyer`);
+
+  const db = (D.dbls || []).filter(x => x.dir === dirn);
+  add(!!db.length, "Figure double", db.length
+    ? `${db[db.length - 1].name} ${db[db.length - 1].done ? "confirmé" : "en formation"} — ligne de cou ${fmt(db[db.length - 1].trigger)} $`
+    : "aucun double top / double bottom dans le sens");
+
+  const n = pts.filter(x => x.ok).length;
+  return { pts, n, total: pts.length, pct: Math.round(n / pts.length * 100) };
+}
+
 /* ================= moteur de décision ================= */
 function decideTrade(v) {
   const tfMin = TF_MIN[TF] || 15;
@@ -1121,6 +1270,8 @@ function decideTrade(v) {
   const colleNiveau = v.dirUp ? !!(v.res1 && v.res1.p - v.price < 0.8 * v.atrv)
                               : !!(v.sup1 && v.price - v.sup1.p < 0.8 * v.atrv);
   const nSL = slToday(), evtProche = !!(v.evt && v.evt.impact === "High" && v.evt.inMin <= 45);
+  const XM = crossMarket();                        // dollar, taux, VIX, pétrole, Bitcoin
+  const CF = confluence(v.dirUp, v.vwapNow);       // order blocks, FVG, liquidité, structure…
   const checks = [
     { ok: m.open, lbl: "Marché de l'or ouvert chez ton broker", ko: m.why },
     { ok: nSL < 2, lbl: "Moins de 2 stops encaissés aujourd'hui", ko: `${nSL} stops aujourd'hui — journée terminée` },
@@ -1135,9 +1286,12 @@ function decideTrade(v) {
     { ok: patConfirm || v.agree, lbl: "Figure de bougie confirmée ou 3 horizons alignés", ko: "ni figure de confirmation ni alignement des horizons" },
     { ok: v.microOk, lbl: "Timing M5 aligné (micro-vague dans le sens)", ko: "micro-vague M5 contraire — tu entrerais à contretemps" },
     { ok: !lotInfo.tooWide, lbl: `Trade jouable avec ton capital (lot ${lotInfo.lot.toFixed(2)})`, ko: "stop trop large : même 0,01 lot dépasse tes 2 % de risque" },
+    { ok: !XM || XM.bias === 0 || (XM.bias > 0) === v.dirUp,
+      lbl: XM ? `Marchés liés à l'or cohérents (score ${XM.score >= 0 ? "+" : ""}${XM.score})` : "Radar inter-marchés indisponible",
+      ko: XM ? `${XM.resume} — c'est l'inverse de ton ${side}` : "radar indisponible" },
   ];
 
-  const base = { entry, sl, slLabel, tp1, tp2, rr, rr2, slDist, lotInfo, side, planShort, dirUp: v.dirUp, conf: v.conf, score: v.score, checks };
+  const base = { entry, sl, slLabel, tp1, tp2, rr, rr2, slDist, lotInfo, side, planShort, dirUp: v.dirUp, conf: v.conf, score: v.score, checks, conf13: CF };
   /* hard = blocage de SÉCURITÉ : tant qu'il tient, aucun setup ne peut être armé.
      Sans ce drapeau, la carte proposait un trade prêt à cliquer juste sous
      « journée terminée après 2 stops » ou « NFP dans 20 min ». */
@@ -1306,12 +1460,23 @@ function renderDecision(d, setups = []) {
       <summary>🔎 Contrôle avant entrée — <b>${nOk}/${CK.length}</b> vérifiés${ko.length ? ` · <b style="color:var(--down)">${ko.length} bloquant(s)</b>` : ` · <b style="color:var(--up)">tout est au vert</b>`}</summary>
       ${CK.map(c => `<div class="ctrl-l">${c.ok ? `✅ <span style="color:var(--dim)">${c.lbl}</span>` : `❌ <b>${c.lbl}</b><br><span style="color:var(--down);padding-left:20px">${c.ko}</span>`}</div>`).join("")}
     </details>` : "";
+  /* confluence technique : la QUALITÉ du trade, figure par figure */
+  const CF = d.conf13;
+  const qual = !CF ? null : CF.n >= 9 ? { t: "HAUT VOL", c: "var(--up)" }
+    : CF.n >= 6 ? { t: "CORRECTE", c: "var(--gold)" } : { t: "FAIBLE", c: "var(--down)" };
+  const conflist = CF ? `
+    <details class="ctrl">
+      <summary>🧱 Confluence technique — <b>${CF.n}/${CF.total}</b> figures dans le sens · qualité <b style="color:${qual.c}">${qual.t}</b></summary>
+      ${CF.pts.map(x => `<div class="ctrl-l">${x.ok ? "✅" : "⚪"} <b style="color:${x.ok ? "var(--txt)" : "var(--dim)"}">${x.nom}</b><br><span style="color:var(--dim);padding-left:20px">${x.txt}</span></div>`).join("")}
+    </details>` : "";
+
   /* la phrase sans ambiguïté : y aller ou pas, et dans quel sens.
      Le verbe est dérivé du plan AFFICHÉ (P) — jamais stocké — pour qu'il ne
      puisse pas rester sur l'ancien sens quand un signal persistant le réécrit. */
   const verbe = P.dirUp ? "ACHÈTE" : "VENDS";
+  const qualTxt = CF ? ` · confluence ${CF.n}/${CF.total} (${qual.t})` : "";
   const verdictGo = d.action !== "WAIT" && !ko.length
-    ? `<div class="go oui">✅ VAS-Y — ${verbe} MAINTENANT · les ${CK.length} contrôles sont au vert</div>`
+    ? `<div class="go oui">✅ VAS-Y — ${verbe} MAINTENANT · les ${CK.length} contrôles sont au vert${qualTxt}</div>${CF && CF.n < 6 ? `<div class="dec-line" style="color:var(--gold);font-size:12.5px;margin-top:4px">⚠️ Rien ne bloque, mais seules ${CF.n} figures sur ${CF.total} vont dans ton sens : c'est un trade autorisé, pas un trade de qualité. Demi-lot ou passe ton tour.</div>` : ""}`
     : d.action !== "WAIT"
       ? `<div class="go non">⚠️ ${verbe} — mais ${ko.length} contrôle(s) au rouge : lis-les avant de cliquer</div>`
       : `<div class="go non">⛔ N'ENTRE PAS ENCORE — ${ko.length} contrôle(s) au rouge${armed ? `, je te préviens dès que c'est bon pour ${verbe.toLowerCase()}` : ""}</div>`;
@@ -1327,7 +1492,7 @@ function renderDecision(d, setups = []) {
       ${vision}
       ${d.reasons.map(r => `<div class="dec-line">✔️ ${r}</div>`).join("")}
       ${plan}${lotRow}
-      ${verdictGo}${checklist}
+      ${verdictGo}${checklist}${conflist}
       <div class="dec-line" style="color:var(--dim);font-size:12px;margin-top:6px">Valable tant que l'analyse ne change pas (réévaluation 30 s). Si le prix a déjà bougé de plus de 0,3 ATR, attends le retour.</div>
       ${takeBtn("✅ J'ai pris ce trade — suis-le pour moi")}`;
   } else if (armed) {
@@ -1339,7 +1504,7 @@ function renderDecision(d, setups = []) {
       <div class="dec-line"><b class="k">Déclencheur</b> <b>${fmt(armed.trigger)} $</b> (le prix en est à ${fmt(armed.dist)} $) · estimation ${fmtEta(armed.etaMin)} — je re-vérifie toutes les 30 s, le badge passe en ${armed.side} si ça se confirme.</div>
       <div class="dec-line"><b class="k">Pourquoi pas tout de suite</b> ${d.whyShort}</div>
       ${plan}${lotRow}
-      ${verdictGo}${checklist}
+      ${verdictGo}${checklist}${conflist}
       ${takeBtn("✅ J'ai pris ce trade au déclencheur — suis-le pour moi")}`;
   } else {
     el.innerHTML = `
@@ -1352,7 +1517,7 @@ function renderDecision(d, setups = []) {
       <div class="dec-line"><b class="k">Dans combien de temps</b> <b>${d.etaTxt}</b> — je réanalyse toutes les 30 s, ce panneau changera de couleur dès que ce sera jouable.</div>
       <div class="dec-line"><b class="k">Condition d'entrée</b> ${d.condition}</div>
       ${plan}${lotRow}
-      ${verdictGo}${checklist}`;
+      ${verdictGo}${checklist}${conflist}`;
   }
   lastAction = d.action;
 }
@@ -1377,8 +1542,20 @@ function percentileBW(boll, closes) {
 /* ================= rendus ================= */
 const fmt = (x, d = 2) => x == null ? "—" : x.toLocaleString("fr-FR", { minimumFractionDigits: d, maximumFractionDigits: d });
 /* faits divers qui matchent les mots-clés géo ("home invasion", fusillades…) : pas des événements de marché */
-const GEO_NOISE = /\b(home invasion|robbery|police|murder|homicide|stabbing|shooting|shooter|carjack|burglar|kidnap|manhunt|crime scene)\b/i;
-const geoW = h => GEO_NOISE.test(h.title) ? 0 : h.w;
+const GEO_NOISE = /\b(home invasion|robbery|police|murder|homicide|stabbing|shooting|shooter|carjack|burglar|kidnap|manhunt|crime scene|beaten to death|gang attack|assaulted)\b/i;
+const SPORT_NOISE = /\b(football|soccer|fifa|world cup|premier league|liverpool|striker|midfielder|olympic|nba|nfl|tennis|transfer deal)\b/i;
+/* nucléaire CIVIL : réacteurs, déchets, radio-isotopes médicaux. Le flux leur donnait
+   le poids maximal (3) alors qu'ils n'ont aucun effet sur l'or — ils saturaient à eux
+   seuls le score « géopolitique chaude ». */
+const CIVIL_NUKE = /\b(nuclear (power|plant|plants|reactor|reactors|waste|energy|medicine|fuel|industry|regulator|principles)|radioisotope|small modular reactor)\b/i;
+/* une vraie menace pour les marchés : sans un de ces mots, un titre ne peut pas être « chaud » */
+const MENACE = /\b(missile|strike|strikes|airstrike|war|invasion|invaded|troops|sanction|sanctions|blockade|hormuz|escalat|attack|attacks|drone|drones|retaliat|offensive|ceasefire|hostage|conflict|nuclear (weapon|weapons|test|threat|arsenal|warhead))\b/i;
+const geoW = h => {
+  const t = h.title || "";
+  if (GEO_NOISE.test(t) || SPORT_NOISE.test(t)) return 0;
+  if (CIVIL_NUKE.test(t) && !MENACE.test(t)) return 0;
+  return h.w >= 2 && !MENACE.test(t) ? 1 : h.w; // « chaud » exige une menace nommée
+};
 const lbl = s => s >= 2 ? "🟢 haussier" : s <= -2 ? "🔴 baissier" : "⚪ neutre";
 function ago(c, i) {
   const n = c.length - 1 - i;
@@ -1461,7 +1638,14 @@ function renderNews() {
 function renderRadar() {
   const el = document.getElementById("radar");
   if (!radarData?.assets) { el.innerHTML = `<span class="err">radar indisponible (API non joignable)</span>`; return; }
-  el.innerHTML = radarData.assets.map(a => {
+  const X = crossMarket();
+  const entete = X ? `<div style="background:var(--card2);border:1px solid ${X.bias > 0 ? "var(--up)" : X.bias < 0 ? "var(--down)" : "var(--border)"};border-radius:9px;padding:8px 10px;margin-bottom:9px">
+      <b style="color:${X.bias > 0 ? "var(--up)" : X.bias < 0 ? "var(--down)" : "var(--txt)"}">${X.bias > 0 ? "▲" : X.bias < 0 ? "▼" : "▬"} ${X.resume}</b>
+      <span style="color:var(--dim);font-size:12px"> · score ${X.score >= 0 ? "+" : ""}${X.score}</span>
+      <details class="ctrl" style="margin-top:6px"><summary>voir le détail marché par marché</summary>
+        ${X.lignes.map(l => `<div class="ctrl-l">${l.chg == null ? "◻︎" : l.effet > 0 ? "🟢" : l.effet < 0 ? "🔴" : "⚪"} <b>${l.nom}</b> ${l.txt}<div style="color:var(--dim);padding-left:20px">${l.pourquoi}</div></div>`).join("")}
+      </details></div>` : "";
+  el.innerHTML = entete + radarData.assets.map(a => {
     const v = (a.chg1h == null || isNaN(a.chg1h)) ? null : a.chg1h; // donnée manquante → pas de "null%"
     const c1 = v > 0 ? "up" : v < 0 ? "down" : "";
     const chgTxt = v == null ? "—" : `${v > 0 ? "+" : ""}${v}% /1h`;
@@ -2653,6 +2837,25 @@ function rFlux() {
   return t;
 }
 
+/* ---- toutes les figures du graphique, une par une ---- */
+function rConfluence() {
+  const CF = AI && AI.dec && AI.dec.conf13;
+  if (!CF) return PAS_ENCORE;
+  const q = CF.n >= 9 ? "HAUT VOL" : CF.n >= 6 ? "CORRECTE" : "FAIBLE";
+  return `Confluence technique : <b>${CF.n}/${CF.total}</b> figures vont dans le sens du trade — qualité <b>${q}</b>.<br>`
+    + CF.pts.map(x => `${x.ok ? "✅" : "⚪"} <b>${x.nom}</b> — <span style="color:var(--dim)">${x.txt}</span>`).join("<br>")
+    + `<br><span style="color:var(--dim)">Ces points ne bloquent pas le trade : les 14 contrôles de sécurité s'en chargent. Eux mesurent la <b>qualité</b>. En dessous de 6/13, je te conseille le demi-lot ou rien.</span>`;
+}
+
+/* ---- les marchés qui font bouger l'or ---- */
+function rMarches() {
+  const X = crossMarket();
+  if (!X) return `Le radar inter-marchés n'est pas joignable pour l'instant — je ne peux pas te dire ce que font le dollar, les taux, le pétrole, le VIX et le Bitcoin.`;
+  return `<b>${X.resume}</b> — score ${X.score >= 0 ? "+" : ""}${X.score} sur ±10.<br>`
+    + X.lignes.map(l => `${l.chg == null ? "◻︎" : l.effet > 0 ? "🟢" : l.effet < 0 ? "🔴" : "⚪"} <b>${l.nom}</b> ${l.txt}<br><span style="color:var(--dim)">${l.pourquoi}</span>`).join("<br>")
+    + (X.manquants ? `<br><span style="color:var(--dim)">${X.manquants} marché(s) sans donnée horaire : je ne les compte pas plutôt que de deviner.</span>` : "");
+}
+
 function rAide() {
   return `Je réponds avec les chiffres de l'analyse en cours. Essaie :<br>
     • « <b>je fais quoi sur mon trade ?</b> » · « <b>je sors ?</b> »<br>
@@ -2661,6 +2864,7 @@ function rAide() {
     • « <b>mon stop est bon ?</b> » · « <b>combien je risque ?</b> »<br>
     • « <b>où sont les niveaux ?</b> » · « <b>c'est quoi la tendance ?</b> »<br>
     • « <b>pourquoi ça a bougé ?</b> » · « <b>tu es bien en direct ?</b> »<br>
+    • « <b>la confluence ?</b> » (order blocks, FVG, structure…) · « <b>les autres marchés ?</b> »<br>
     • « <b>mes stats ?</b> » · « <b>des news ?</b> » · « <b>le prix ?</b> »`;
 }
 
@@ -2672,6 +2876,8 @@ function repondre(q) {
     "pourquoi cette baisse", "pourquoi cette hausse", "baisse brutale", "hausse brutale", "mouvement brutal",
     "chute", "spike", "ca s est envole", "ca a plonge", "ca a decolle", "pourquoi ca bouge autant")) return rSpike();
   if (hit(t, "direct", "temps reel", "flux", "a jour", "connexion", "tu suis", "ca marche encore", "tu es la", "fige")) return rFlux();
+  if (hit(t, "confluence", "order block", "orderblock", "ob ", "fvg", "figures", "qualite", "tout est verifie", "tout verifie", "les controles", "checklist")) return rConfluence();
+  if (hit(t, "petrole", "wti", "vix", "taux", "10 ans", "bitcoin", "dollar", "dxy", "autres marches", "marches lies", "correlation", "macro")) return rMarches();
   if (hit(t, "mon trade", "ma position", "je sors", "je sort", "sortir", "je garde", "avis", "je fais quoi", "que faire", "je coupe", "couper", "ca vaut le coup de garder")) return rTrade();
   if (hit(t, "stat", "winrate", "win rate", "bilan", "journal", "comment je vais", "resultat", "performance")) return rStats();
   if (hit(t, "stop", "sl ", " sl", "break even", "breakeven", "serre")) return rStop();
@@ -2696,7 +2902,7 @@ document.getElementById("chatSend").addEventListener("click", () => {
 document.getElementById("chatIn").addEventListener("keydown", e => {
   if (e.key === "Enter") { chatAsk(e.target.value); e.target.value = ""; }
 });
-const CHIPS = ["je fais quoi sur mon trade ?", "pourquoi ça a bougé ?", "je peux entrer maintenant ?", "tu es bien en direct ?", "pourquoi tu attends ?", "mon stop est bon ?", "combien je risque ?", "les niveaux ?", "mes stats ?"];
+const CHIPS = ["je fais quoi sur mon trade ?", "la confluence ?", "les autres marchés ?", "pourquoi ça a bougé ?", "je peux entrer maintenant ?", "tu es bien en direct ?", "pourquoi tu attends ?", "mon stop est bon ?", "combien je risque ?", "les niveaux ?", "mes stats ?"];
 document.getElementById("chatChips").innerHTML = CHIPS.map(c => `<button type="button">${c}</button>`).join("");
 document.getElementById("chatChips").addEventListener("click", e => { const b = e.target.closest("button"); if (b) chatAsk(b.textContent); });
 
