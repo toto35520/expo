@@ -12,13 +12,14 @@ latence et rareté des occurrences.
 | --- | --- |
 | `docs/` | spécification, journal de décisions (`DECISIONS.md`), registre des questions (`QUESTIONS.md`) |
 | `feasibility/` | **code exécutable** : les deux phases 0 et leur intersection |
-| `tests/` | 99 tests, un par garde-fou |
+| `tests/` | 134 tests, un par garde-fou |
+| `calendar-sources/` | dossier de preuve : sources normatives du calendrier |
 
 ## Exécuter
 
 ```bash
 cd financial-analyzer
-python3 -m pytest tests/ -q       # 99 tests
+python3 -m pytest tests/ -q       # 134 tests
 python3 -m feasibility.report     # carte de faisabilité (données synthétiques)
 ```
 
@@ -36,6 +37,15 @@ partir des données observées.
 
 Un calendrier par source et par marché d'exécution. Une lacune est segmentée exactement, puis
 classée par l'intégralité de son contenu — jamais par ses extrémités.
+
+`feasibility/calendar_sources.py` complète le moteur par sa **chaîne de preuve** : le calendrier
+ne contient jamais une règle nue mais une affirmation documentée, et le compilateur refuse de
+produire un calendrier lorsqu'une assertion critique n'a pas de preuve, qu'un conflit normatif
+reste ouvert, ou qu'un fuseau ou une date d'effet est ambigu.
+
+```
+source → instantané → assertion → revue → manifest → compilation → calendrier → rapport
+```
 
 ## Ce que produit `feasibility`
 

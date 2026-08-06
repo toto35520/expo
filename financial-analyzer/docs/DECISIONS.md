@@ -2664,3 +2664,151 @@ provisoire.
 **Conséquences.** Les trois chantiers avancent indépendamment : collecte de cotations (Q50),
 journalisation d'exécution (Q51) et classification temporelle (Q52). Aucun n'attend les deux
 autres. Q52 bloque l'interprétation finale, pas la collecte.
+
+---
+
+## ADR-139 — Une règle de calendrier est une assertion atomique liée à une preuve conservée
+
+**Statut** : figé et implémenté (Q53)
+
+**Contexte.** Une règle nue — « XAU/USD ferme à 22 h » — ne permet de répondre à aucune des
+questions qui décident de sa validité : qui l'affirme, quand elle a été récupérée, à quelle
+période elle s'applique, si elle est officielle ou inférée, quel document la prouve.
+
+**Décision.** L'unité de contenu est l'assertion atomique, indissociable de son instantané de
+source. Une page indiquant plusieurs horaires produit plusieurs assertions — ce qui permet d'en
+superseder une sans toucher aux autres.
+
+---
+
+## ADR-140 — L'autorité d'une source dépend de la portée de l'assertion
+
+**Statut** : figé et implémenté (Q53)
+
+**Décision.** Il n'existe pas de hiérarchie globale. Place, fournisseur, courtier, compte et
+symbole possèdent chacun leur source normative dans leur domaine. Une source secondaire ne
+remplace pas la place lorsqu'elle décrit les horaires de la place, et l'observation ne devient
+jamais normative automatiquement.
+
+**Conséquences.** Chaque assertion déclare sa portée — courtier, serveur, type de compte,
+symbole, marché, source de données, juridiction — avec les champs non applicables
+**explicitement nuls**. Un champ nul est un joker ; un champ renseigné doit correspondre
+exactement, ce qui empêche mécaniquement d'appliquer une règle de compte de démonstration à un
+compte réel.
+
+---
+
+## ADR-141 — La spécification du symbole et du compte prime sur la documentation générale
+
+**Statut** : figé et implémenté (Q53)
+
+**Décision.** Pour le marché d'exécution, l'arbitrage suit `spécificité de portée → autorité de
+source → récence`. La spécificité est comptée comme le nombre de dimensions contraintes, de
+sorte qu'une fiche de symbole du compte l'emporte sur une page générique du courtier — même
+plus récente.
+
+**Conséquences.** Un test vérifie explicitement qu'une assertion ancienne et spécifique
+l'emporte sur une assertion récente et générale.
+
+---
+
+## ADR-142 — Toute contradiction produit un conflit explicite
+
+**Statut** : figé et implémenté (Q53)
+
+**Décision.** Aucune résolution silencieuse par récence ou priorité implicite. Deux sources
+normatives de **même spécificité** qui se contredisent **bloquent la compilation**. Des
+spécificités différentes produisent un conflit enregistré mais informatif, tranché par la
+règle de l'ADR-141.
+
+**Conséquences.** La récence n'est qu'un attribut : une page récente peut décrire une autre
+période, un autre produit ou un autre serveur.
+
+---
+
+## ADR-143 — Chaque récupération produit un instantané immuable et une empreinte
+
+**Statut** : figé et implémenté (Q53)
+
+**Décision.** La chaîne `source → assertion → manifest → calendrier → rapport` est vérifiable
+par empreintes à chaque maillon. Quand le contenu ne peut être conservé intégralement,
+l'empreinte, les métadonnées, l'extrait utilisé et la provenance suffisent — leur absence, elle,
+invalide la preuve.
+
+**Conséquences.** L'empreinte du manifest porte sur le **contenu** — empreintes sémantiques des
+assertions et empreintes des sources, triées, plus la version du compilateur — et non sur les
+identifiants seuls. Deux compilations du même manifest produisent le même identifiant de
+calendrier.
+
+---
+
+## ADR-144 — Une extraction automatique reste non normative jusqu'à validation
+
+**Statut** : figé et implémenté (Q53)
+
+**Décision.** Une extraction naît `PARSED_UNREVIEWED`. Les règles **critiques** — fermeture
+quotidienne, jour férié, maintenance, portage multiplié, heure de rollover, fuseau serveur —
+exigent une source normative, une preuve conservée et une revue humaine. Sans l'une des trois,
+la compilation échoue.
+
+**Conséquences.** Ces règles sont critiques parce qu'elles modifient fortement la censure ou les
+coûts : une erreur y déplace le verdict de faisabilité sans laisser de trace dans les données.
+
+---
+
+## ADR-145 — Dates de récupération, d'effet et de connaissance sont distinctes et obligatoires
+
+**Statut** : figé et implémenté (Q53)
+
+**Décision.** Chaque assertion porte sa date de récupération, sa période de validité avec la
+base qui la fonde (`EXPLICIT_IN_SOURCE`, `INFERRED_FROM_PUBLICATION_DATE`,
+`INFERRED_FROM_OBSERVATION`, `UNKNOWN`) et sa période de connaissance. Une date d'effet
+`UNKNOWN` bloque la compilation : l'appliquer rétroactivement reviendrait à supposer que la
+règle a toujours été vraie.
+
+**Conséquences.** Même traitement pour le fuseau. « GMT+2 » interprété comme décalage fixe
+alors qu'il s'agit d'une heure locale saisonnière décale toutes les sessions d'une heure la
+moitié de l'année, sans qu'aucun test temporel ne le signale — d'où le blocage sur
+`timezone_interpretation = AMBIGUOUS`.
+
+---
+
+## ADR-146 — Les observations produisent des divergences et des propositions, jamais des règles
+
+**Statut** : figé et implémenté (Q53) · confirme l'ADR-136
+
+**Décision.** Les données de collecte comparent le calendrier à la réalité et produisent des
+divergences typées. Au-delà d'un seuil préenregistré, une proposition de révision est créée,
+portant un drapeau de validation explicite obligatoire. La publication reste manuelle.
+
+---
+
+## ADR-147 — Chaque version est compilée depuis un manifest immuable
+
+**Statut** : figé et implémenté (Q53)
+
+**Décision.** Le manifest contient assertions, sources, conflits non résolus et éléments
+provisoires. Deux constructions indépendantes du même manifest produisent la même empreinte ;
+un manifest dépendant d'informations non conservées est invalide. Une correction crée une
+nouvelle version et identifie les rapports affectés — `NO_MATERIAL_IMPACT`,
+`RECOMPUTE_RECOMMENDED`, `RECOMPUTE_REQUIRED`, `VERDICT_INVALIDATED` — **sans jamais les
+réécrire**.
+
+**Conséquences.** L'impact est mesuré par échantillonnage d'états sur les intervalles
+effectivement publiés, non par comparaison de règles : deux jeux de règles différents peuvent
+produire le même comportement là où les rapports portaient.
+
+---
+
+## ADR-148 — Un calendrier non vérifié ne produit aucun verdict final
+
+**Statut** : figé et implémenté (Q53)
+
+**Décision.** Le statut du contenu — `CONFLICTING`, `PROVISIONAL`, `STALE`, `VERIFIED` — est
+calculé à la compilation. Tout ce qui n'est pas `VERIFIED` place le moteur de Q52 en mode
+provisoire : toutes les lacunes redeviennent inconnues et aucun verdict définitif n'est
+prononçable sur les intervalles concernés.
+
+**Conséquences.** Le lien entre chaîne de preuve et classification temporelle devient mécanique
+plutôt que déclaratif. Une assertion périmée n'est pas nécessairement fausse, mais elle ne peut
+plus soutenir silencieusement un verdict.
