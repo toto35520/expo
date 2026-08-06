@@ -730,3 +730,86 @@ plutôt que fourni, la valeur est marquée `DÉRIVÉ` et son incertitude propag�
 **Conséquences.** Même famille que l'ADR-022 sur la frontière de journée : une grandeur qui
 paraît objective est en réalité relative à une convention, et la convention doit voyager avec la
 donnée.
+
+---
+
+## ADR-037 — Pas de pourcentage sans calibration ; détection et prédiction séparées
+
+**Statut** : figé (étape 3.3)
+
+**Contexte.** Un champ unique nommé « confiance » recouvre trois questions sans rapport : le
+motif est-il présent, le prix va-t-il suivre, et le motif est-il net selon un barème interne.
+Une absorption peut être certainement présente et n'annoncer presque rien. Par ailleurs un
+pourcentage issu d'un barème de points a l'apparence d'une probabilité sans en avoir le contenu
+fréquentiel.
+
+**Décision.** Probabilité de détection, probabilité prédictive et score interne sont des champs
+distincts, jamais fusionnés. Une grandeur n'est exprimée en pourcentage que si elle a été
+confrontée à la fréquence réalisée — sinon elle porte un score sur une échelle explicitement
+nommée non probabiliste.
+
+**Conséquences.** Troisième face du même principe, après l'ADR-002 (le modèle de langage
+n'invente pas de nombres) et l'ADR-025 (la couche de données non plus) : **aucun étage ne
+produit de nombre d'apparence probabiliste sans contenu fréquentiel**. Un seul champ mal typé
+corromprait la calibration de toute la fusion.
+
+---
+
+## ADR-038 — Un motif est émis avant son issue, et ses échecs sont comptés
+
+**Statut** : figé (étape 3.3)
+
+**Contexte.** La description d'un motif inclut spontanément sa réussite — « puis une reprise de
+structure apparaît ». Si cette clause entre dans la détection, le motif n'est détecté que
+lorsqu'il a fonctionné, et son taux de réussite vaut 100 % par construction.
+
+**Décision.** Le motif est émis à partir des seuls éléments disponibles à l'instant de la
+détection, dans l'état `EN_ATTENTE`. Son issue est un événement ultérieur daté, rattaché à
+l'émission, avec au moins trois issues possibles : aboutie, submergée, expirée. Les échecs sont
+conservés et comptés.
+
+**Conséquences.** C'est la condition d'existence d'un taux de base, donc de toute probabilité
+calibrée. Règle générale applicable à tous les motifs du système, pas seulement à l'absorption.
+En marché directionnel, les absorptions submergées sont majoritaires : les omettre inverserait
+la statistique.
+
+---
+
+## ADR-039 — La nature de l'absorbeur est déclarée, y compris quand elle est indéterminée
+
+**Statut** : figé (étape 3.3)
+
+**Contexte.** Un participant qui absorbe sans céder de terrain peut être un acheteur informé, un
+teneur de marché qui va se déboucler, ou un algorithme d'exécution suivant un calendrier. Dans
+le dernier cas le soutien est parfaitement régulier puis disparaît instantanément à la fin du
+programme : l'absorbeur n'avait aucune vue sur le prix, il avait un volume à exécuter.
+
+**Décision.** La sortie porte un champ de nature d'absorbeur, alimenté par des signatures
+mesurables — régularité des réapprovisionnements, signature d'ordre iceberg, réaction à
+l'intensification de la pression, contexte horaire. Tant que ces signatures ne sont pas
+validées, la valeur reste `INDÉTERMINÉE`, ce qui est une information honnête et non une lacune.
+
+**Conséquences.** Le moteur cesse de supposer une intention directionnelle derrière un
+comportement qui peut être purement mécanique. Impose de mesurer l'écart de résultat entre les
+populations, y compris si elles restent inséparables.
+
+---
+
+## ADR-040 — L'absorption produit d'abord une invalidation, ensuite un signal
+
+**Statut** : figé (étape 3.3)
+
+**Contexte.** L'apport le plus solide de l'absorption n'est pas la direction mais le niveau : si
+l'absorbeur est submergé et que le prix traverse la zone, l'hypothèse est morte — fait
+observable et daté, non opinion.
+
+**Décision.** Le produit principal du moteur est une invalidation structurelle exploitable à
+l'étage 9, fournissant un emplacement de protection fondé sur le comportement réel du marché
+plutôt que sur un pourcentage arbitraire. L'élément directionnel est secondaire. La zone est
+délimitée par la répartition du volume absorbé et non par les extrêmes de l'épisode, établie sur
+la série brute d'un contrat unique (ADR-011), traduite par la base si utilisée sur le spot, et
+porte une fraîcheur et un compteur de retests.
+
+**Conséquences.** Le moteur reste utile même si son pouvoir prédictif directionnel se révèle
+faible — hypothèse prudente retenue par défaut. Le test décisif devient : un stop placé sur la
+zone fait-il mieux qu'un stop de volatilité équivalente ?
