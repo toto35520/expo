@@ -439,3 +439,107 @@ ni fusionnées. Tout niveau extrait d'une bougie transporte la convention dont i
 **Conséquences.** Un plus-haut journalier cesse d'être traité comme un fait de marché : c'est
 un fait relatif à une frontière de journée. Même famille de défaut que les faux niveaux de
 rollover (ADR-011), et même remède — typer la série plutôt que corriger après coup.
+
+---
+
+## ADR-023 — Portes dures et score de qualité sont deux objets séparés
+
+**Statut** : figé (étape 2.5)
+
+**Contexte.** Un score agrégé de 0 à 100 confond des défaillances non substituables : 60 peut
+signifier « tout légèrement dégradé » ou « un flux critique mort ». Pire, associé à un seuil, il
+autorise la **compensation** — un spread excellent annule un flux périmé, et le système décide
+sur des données mortes parce que la moyenne reste bonne. C'est une violation directe de I4 et I5.
+
+**Décision.** Deux objets aux pouvoirs distincts. Les **portes dures** sont des conditions
+booléennes non compensables qui décident seules de l'admissibilité : une seule qui tombe
+interdit. Le **score** est continu et ne peut que dégrader — il réduit conviction et taille,
+n'autorise jamais rien. Sa construction est multiplicative (non compensatoire), monotone, et
+toujours publiée avec sa décomposition ; un score nu est inexploitable.
+
+**Conséquences.** Le score devient un modulateur de prudence, jamais une autorisation. Aucun
+réglage de seuil sur le score ne peut ouvrir une porte fermée.
+
+---
+
+## ADR-024 — Statut multi-axes, avec absence par conception
+
+**Statut** : figé (étape 2.5)
+
+**Contexte.** La liste de statuts de l'étape 2.5 mélange des dimensions orthogonales : une
+donnée peut être valide **et** non redistribuable, ou reconstruite **et** saine. Les rendre
+mutuellement exclusifs rend ces états inexprimables. Par ailleurs aucune valeur ne distingue
+« absent parce que le marché est fermé » de « absent parce que le flux est tombé ».
+
+**Décision.** Le statut porte quatre axes indépendants — fraîcheur, intégrité, provenance,
+diffusion. `CORROMPU` est ajouté sur l'axe intégrité pour les invalidités structurelles (trou
+de séquence, carnet croisé, échec de réconciliation), qui s'écartent au lieu de se pondérer.
+`ABSENT_PAR_CONCEPTION` est ajouté sur l'axe provenance, déterminé par le calendrier
+(ADR-021), et n'entraîne **aucune pénalité de score**.
+
+**Conséquences.** Les fériés et coupures cessent de dégrader le score et de déclencher des
+alarmes — sans quoi le système apprend à ignorer ses propres alertes. Restriction de diffusion
+et reconstruction deviennent compatibles avec un état sain.
+
+---
+
+## ADR-025 — Interdiction d'imputer sur le chemin de décision, propagation au pire des entrées
+
+**Statut** : figé (étape 2.5)
+
+**Contexte.** Deux mécanismes fabriquent silencieusement de la donnée : le remplissage des
+trous, et le blanchiment par agrégation — une série périmée entre dans un indicateur, qui en
+ressort sans aucune marque.
+
+**Décision.** L'imputation est autorisée pour l'affichage et la surveillance, **interdite pour
+toute valeur entrant dans une décision** : un trou reste un trou et conduit à l'abstention.
+Toute valeur dérivée hérite du **pire statut de ses entrées**, axe par axe ; la provenance
+s'accumule au lieu de se remplacer.
+
+**Conséquences.** Symétrie exacte avec l'ADR-002 : ce dernier interdit au modèle de langage de
+produire des nombres qu'il n'a pas calculés, celui-ci interdit à la couche de données de
+produire des nombres qu'elle n'a pas observés. Le statut voyage jusqu'à l'enregistrement de
+décision, qui répond sans reconstruction à « sur quelle qualité de données ceci a-t-il été
+décidé ? ».
+
+---
+
+## ADR-026 — Admissibilité par consommateur ; un agent absent élargit l'incertitude
+
+**Statut** : figé (étape 2.5)
+
+**Contexte.** La criticité d'une donnée n'existe pas dans l'absolu : le carnet est vital pour un
+agent de microstructure et sans objet pour un agent macro. Mais une admissibilité fine ouvre un
+piège — si un agent indisponible disparaît simplement de la fusion, celle-ci conclut avec la
+même assurance qu'avant, alors que l'agent manquant aurait pu contredire les autres.
+
+**Décision.** Chaque consommateur déclare ses entrées requises et le statut minimal qu'il
+accepte ; l'admissibilité est évaluée par consommateur, pas globalement. En contrepartie, une
+indisponibilité **élargit l'incertitude** en aval : l'étage 7 reçoit la liste des agents
+absents et leur poids habituel, et traite leur silence comme de l'ignorance, jamais comme un
+accord tacite. En dessous d'un panel minimal, la fusion n'est pas moins fiable — elle est
+illégitime.
+
+**Conséquences.** Extension du quorum de l'ADR-006 des fournisseurs vers les agents. Une
+dégradation partielle du socle réduit le périmètre du système au lieu de l'arrêter, sans jamais
+augmenter faussement sa confiance.
+
+---
+
+## ADR-027 — Le score de qualité doit démontrer son pouvoir prédictif
+
+**Statut** : figé (étape 2.5)
+
+**Contexte.** Un score de qualité encode une hypothèse testable : une qualité de données plus
+faible produit des décisions moins bonnes. Non testée, cette hypothèse devient une cible
+d'optimisation et le score finit par mesurer le réglage de ses propres seuils.
+
+**Décision.** L'étage 12 mesure la relation entre score au moment de la décision et résultat
+réalisé. Si la relation existe, les poids du score sont calibrés sur elle plutôt que choisis à
+la main. Si elle est absente, le score est **retiré du chemin de décision** — le conserver
+donnerait un faux sentiment de contrôle. Si elle s'inverse sur une dimension, c'est le
+détecteur de cette dimension qui est corrigé.
+
+**Conséquences.** Aucun poids de pénalité n'est fixé a priori dans la spécification. Le
+contrôle qualité devient lui-même un objet mesuré, soumis aux mêmes exigences de preuve que
+les agents.
