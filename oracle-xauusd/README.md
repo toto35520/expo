@@ -310,3 +310,45 @@ Trois corrections :
    « ⚖️ SENS NON TRANCHÉ — ne te positionne sur rien », avant tout contenu
    directionnel, et précise que le plan montré est une projection figée et non
    un avis. Hors zone neutre, elle indique depuis combien de temps le sens tient.
+
+## Correctif — les SELL étaient étranglés par la géopolitique
+
+Version `2026.08.06-s`.
+
+`geoPart` mesurait le **niveau absolu** de tension géopolitique, or ce niveau est
+permanent : il y a toujours une guerre dans le flux. Comme `geoPart` est toujours
+positif, `geoConf = ±geoPart × 3` ajoutait en continu jusqu'à +6 points de
+confiance à tout BUY et en retirait autant à tout SELL.
+
+Mesuré sur le flux réel (4 titres chauds, 8 tensions de fond, sentiment presse
+9 pro-or / 0 contre) :
+
+```
+score minimum pour atteindre les 60 % de confiance requis
+   BUY  : 0,40
+   SELL : 3,56     ← 8,9× plus exigeant
+```
+
+À `score 3,5` — le seuil de force de base — un BUY affichait 71 % et passait,
+un SELL 59 % et échouait à un point près.
+
+Le commentaire du code montre que le problème avait déjà été rencontré côté
+*direction* (« la géo pro-or permanente castrait tous les SELL, 0 signal/3 j ») ;
+le chemin de la *confiance* avait gardé le même défaut.
+
+`geoBaseline()` conserve sept jours d'échantillons et en prend la médiane. Le
+modificateur porte désormais sur l'**écart** à cette normale : le bruit de fond
+s'annule, seule une escalade — ou une accalmie — déplace la confiance.
+
+| Situation | BUY | SELL |
+|---|---|---|
+| Tension au niveau habituel | 1,98 | 1,98 (symétrique) |
+| Escalade réelle | 0,40 | 3,56 (l'or refuge favorisé) |
+| Accalmie | 3,29 | 0,66 (le SELL redevient possible) |
+
+## Ajout — diagnostic « pourquoi si peu de signaux »
+
+`logGate()` enregistre à chaque analyse la première condition qui a bloqué, sur
+24 h glissantes. La carte Décision et le chat affichent le classement : quelle
+condition coûte le plus de trades, en pourcentage et en nombre. Le silence
+devient explicable, et un assouplissement éventuel se décide sur des chiffres.
