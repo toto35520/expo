@@ -21,13 +21,12 @@ from .adapter import (
     DensityDiagnostic,
     DensityStatus,
     Gap,
-    GapClass,
-    SessionResolver,
     NormalizedQuotes,
     QuoteQuality,
     classify_gaps,
     density_diagnostic,
 )
+from .calendar import GapClassification, VersionedMarketCalendar
 from .contract import ContractSpecification, CostPolicy, CostScenario
 from .model import Cell, Conventions, PlausibleEdgeBand
 
@@ -62,6 +61,7 @@ class QualityReport:
     censored_fraction: float
     clock_usable: bool
     resolution_sufficient_for_bursts: bool
+    calendar_version: str
     density: dict[int, DensityDiagnostic] = field(default_factory=dict)
     reservations: list[str] = field(default_factory=list)
 
@@ -87,20 +87,21 @@ def assess(
     horizons_ns: tuple[int, ...],
     outage_threshold_ns: int = 60 * NS_PER_SECOND,
     step: int = 41,
-    session_of: "SessionResolver | None" = None,
+    calendar: VersionedMarketCalendar | None = None,
 ) -> QualityReport:
     """Diagnostic complet, à produire **avant** toute carte de faisabilité."""
     usable = quotes.usable_mask
     ts = quotes.arrival_timestamps_ns
     span_days = float((ts[-1] - ts[0]) / (86_400 * NS_PER_SECOND))
 
-    gaps = classify_gaps(ts, quotes.session_ids, outage_threshold_ns, session_of=session_of)
-    gaps_by_class = {c.value: 0 for c in GapClass}
+    gaps = classify_gaps(ts, calendar, outage_threshold_ns)
+    gaps_by_class = {c.value: 0 for c in GapClassification}
     censored_ns = 0
     for g in gaps:
         gaps_by_class[g.classification.value] += 1
-        if g.classification in (GapClass.DATA_OUTAGE, GapClass.UNKNOWN_GAP):
-            censored_ns += g.duration_ns
+        # Seule la part où des cotations étaient attendues est censurée : une fermeture
+        # planifiée ne retire rien de l'échantillon.
+        censored_ns += g.censored_ns
 
     tick_rate_by_session = {
         str(s): float(np.median(quotes.tick_rate_1s[quotes.session_ids == s]))
@@ -129,6 +130,7 @@ def assess(
         censored_fraction=float(censored_ns / max(1, ts[-1] - ts[0])),
         clock_usable=bool(quotes.clock.absolute_latency_usable) if quotes.clock else False,
         resolution_sufficient_for_bursts=quotes.resolution.sufficient_for_bursts,
+        calendar_version=calendar.calendar_version if calendar else "PROVISIONAL_CALENDAR",
     )
 
     for h in horizons_ns:
@@ -136,6 +138,11 @@ def assess(
             ts[usable], quotes.mid[usable], h, contract.tick_size, step=step
         )
 
+    if calendar is None:
+        report.reservations.append(
+            "aucun calendrier versionné : toutes les lacunes restent UNKNOWN_GAP et aucun "
+            "verdict portant sur une fenêtre potentiellement fermée n'est autorisé"
+        )
     if not report.clock_usable:
         report.reservations.append(
             "synchronisation d'horloge insuffisante : latence absolue indisponible, "
@@ -214,6 +221,7 @@ def build_calculation_inputs(
     horizons_ns: tuple[int, ...],
     band: PlausibleEdgeBand,
     cell: Cell,
+    calendar: VersionedMarketCalendar | None = None,
 ) -> BuildResult:
     """Construit les entrées de calcul, ou échoue en expliquant pourquoi.
 
@@ -235,7 +243,7 @@ def build_calculation_inputs(
             f"pas au contrat chargé ({contract.instrument_id})."
         )
 
-    report = assess(quotes, contract, horizons_ns, session_of=SessionResolver())
+    report = assess(quotes, contract, horizons_ns, calendar=calendar)
 
     if not report.measurable_horizons:
         raise AdapterError(
@@ -282,6 +290,7 @@ def print_quality_report(report: QualityReport, horizons_ns: tuple[int, ...]) ->
     print("Lacunes            : "
           + "  ".join(f"{k}={v}" for k, v in report.gaps_by_class.items())
           + f"   — période censurée {report.censored_fraction:.2%}")
+    print(f"Calendrier         : {report.calendar_version}")
     print(f"Horloges           : latence absolue "
           f"{'utilisable' if report.clock_usable else 'INDISPONIBLE'}"
           f"   ·   résolution suffisante en rafale : "

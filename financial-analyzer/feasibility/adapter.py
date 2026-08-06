@@ -16,6 +16,12 @@ from enum import Enum
 
 import numpy as np
 
+from .calendar import (
+    CalendarSegment,
+    GapClassification,
+    IntervalStateSummary,
+    VersionedMarketCalendar,
+)
 from .contract import ContractSpecification
 
 NS_PER_SECOND = 1_000_000_000
@@ -39,13 +45,6 @@ class QuoteQuality(str, Enum):
     VALID_EXTREME = "VALID_EXTREME"
     SUSPECTED_BAD_TICK = "SUSPECTED_BAD_TICK"
     CONFIRMED_BAD_TICK = "CONFIRMED_BAD_TICK"
-
-
-class GapClass(str, Enum):
-    MARKET_CLOSED = "MARKET_CLOSED"
-    EXPECTED_INACTIVITY = "EXPECTED_INACTIVITY"
-    DATA_OUTAGE = "DATA_OUTAGE"
-    UNKNOWN_GAP = "UNKNOWN_GAP"
 
 
 class DensityStatus(str, Enum):
@@ -418,25 +417,39 @@ class Gap:
     duration_ns: int
     preceding_rate: float
     following_rate: float
-    classification: GapClass
+    classification: GapClassification
+    #: Résumé calendaire de l'intervalle : c'est lui qui justifie la classification.
+    summary: IntervalStateSummary | None = None
+
+    @property
+    def segments(self) -> tuple[CalendarSegment, ...]:
+        return self.summary.segments if self.summary else ()
+
+    @property
+    def censored_ns(self) -> int:
+        """Durée réellement censurée : seuls les segments où des cotations étaient
+        attendues comptent. Une fermeture planifiée ne censure rien."""
+        if self.classification is GapClassification.MARKET_CLOSED:
+            return 0
+        if self.summary is None:
+            return self.duration_ns
+        return self.summary.market_time_ns
 
 
 def classify_gaps(
     timestamps_ns: np.ndarray,
-    session_ids: np.ndarray,
+    calendar: VersionedMarketCalendar | None,
     outage_threshold_ns: int,
-    closed_sessions: tuple[str, ...] = ("OFF_HOURS",),
-    session_of: "SessionResolver | None" = None,
+    known_as_of_ns: int | None = None,
 ) -> list[Gap]:
     """Un intervalle sans cotation n'est **jamais** une absence de mouvement.
 
-    Il peut être un marché calme, une fermeture, une coupure de connexion, un trou
-    d'export ou une interruption du fournisseur — cinq causes aux conséquences opposées.
+    L'adaptateur ne décide plus lui-même qu'une lacune est nocturne : il interroge le
+    calendrier versionné du marché qui aurait dû produire les données. L'absence de ticks
+    reste une observation ; la fermeture est une information externe.
 
-    Une lacune se classe par ce qui se passe **pendant** elle, pas à ses extrémités : une
-    coupure nocturne va de la clôture de New York à l'ouverture de Londres, et aucune de
-    ses deux bornes n'est en session fermée. Sans échantillonnage intérieur, toutes les
-    nuits seraient comptées comme des interruptions de données.
+    Sans calendrier, tout est `UNKNOWN_GAP` — mode provisoire explicite, jamais une
+    fermeture supposée.
     """
     if timestamps_ns.size < 2:
         return []
@@ -449,31 +462,23 @@ def classify_gaps(
 
     gaps = []
     for i in idx:
-        in_closed = session_ids[i] in closed_sessions or session_ids[i + 1] in closed_sessions
-        if not in_closed and session_of is not None:
-            interior = np.linspace(
-                timestamps_ns[i], timestamps_ns[i + 1], num=12, dtype=np.int64
-            )[1:-1]
-            inside, _ = session_of(interior)
-            in_closed = bool(np.isin(inside, list(closed_sessions)).any())
-        before, after = float(rate_before[i]), float(rate_after[i + 1])
-        if in_closed:
-            cls = GapClass.MARKET_CLOSED
-        elif before < 0.2 and after < 0.2:
-            cls = GapClass.EXPECTED_INACTIVITY
-        elif before > 1.0 and after > 1.0:
-            # Le flux était actif avant et après : le silence n'est pas du marché.
-            cls = GapClass.DATA_OUTAGE
+        start, end = int(timestamps_ns[i]), int(timestamps_ns[i + 1])
+        if calendar is None:
+            summary, classification = None, GapClassification.UNKNOWN_GAP
         else:
-            cls = GapClass.UNKNOWN_GAP
+            summary = calendar.summarize_interval(
+                start, end, known_as_of_ns, min_open_duration_ns=outage_threshold_ns
+            )
+            classification = summary.classification
         gaps.append(
             Gap(
-                start_ns=int(timestamps_ns[i]),
-                end_ns=int(timestamps_ns[i + 1]),
+                start_ns=start,
+                end_ns=end,
                 duration_ns=int(diffs[i]),
-                preceding_rate=before,
-                following_rate=after,
-                classification=cls,
+                preceding_rate=float(rate_before[i]),
+                following_rate=float(rate_after[i + 1]),
+                classification=classification,
+                summary=summary,
             )
         )
     return gaps

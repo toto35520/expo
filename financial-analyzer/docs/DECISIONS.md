@@ -2515,3 +2515,152 @@ ou si le marché d'exécution de la cellule ne correspond pas au contrat chargé
 **Conséquences.** Le jalon du projet cesse d'être « obtenir la courbe kappa » pour devenir
 « prouver que l'export permet de la mesurer ». Les verdicts économiques ne deviennent
 interprétables qu'après.
+
+---
+
+## ADR-129 — Un calendrier versionné par source et par marché d'exécution
+
+**Statut** : figé et implémenté (Q52)
+
+**Contexte.** Marché de détection et marché d'exécution ne partagent ni horaires, ni
+maintenances, ni jours fériés, ni interruptions, ni fuseau serveur, ni demi-séances, ni
+disponibilité de cotation. Un calendrier « XAU/USD » générique ne décrit ni l'un ni l'autre.
+
+**Décision.** `Calendar(GC) ≠ Calendar(broker XAU/USD)`. Une lacune est évaluée contre le
+calendrier de **la source qui aurait dû produire les données**. Trois niveaux coexistent :
+calendrier de place, calendrier du fournisseur, calendrier du symbole sur le compte réel — ce
+dernier faisant foi pour l'exécution.
+
+**Conséquences.** L'état composite intermarchés devient explicite : un signal détecté sur un
+marché ouvert n'a aucune autorité d'exécution si le marché d'exécution est fermé, et exécuter
+pendant que le marché de détection est fermé est possible mais avec un **contexte dégradé
+déclaré**.
+
+---
+
+## ADR-130 — Une lacune se classe par l'intégralité de son contenu
+
+**Statut** : figé et implémenté (Q52) · généralise l'ADR-125
+
+**Décision.** Le moteur calcule la durée occupée par chaque état sur l'intervalle et classe
+d'après cette répartition. Ni l'état au début, ni l'état à la fin, ni le premier tick après la
+coupure n'entrent dans la décision.
+
+**Conséquences.** Correction apportée à l'implémentation : un seuil exprimé **en fraction** ne
+suffit pas. Une panne d'une heure après réouverture pèse 5 % d'un intervalle de vingt-et-une
+heures et serait avalée par une nuit. La **durée absolue** de la partie ouverte prime donc sur
+sa fraction — c'est exactement le cas qu'une fermeture planifiée ne doit pas masquer.
+
+---
+
+## ADR-131 — Toute lacune traversant plusieurs états est segmentée avant classification
+
+**Statut** : figé et implémenté (Q52)
+
+**Décision.** Les instants de transition sont **énumérés exactement** — bornes de règles
+récurrentes jour par jour dans leur fuseau, bornes d'exceptions, bornes d'overrides — et non
+échantillonnés : un échantillonnage manquerait une maintenance de quelques minutes, qui est
+précisément le cas qu'on cherche à voir. Les segments couvrent l'intervalle exactement, sans
+trou ni recouvrement.
+
+**Conséquences.** La censure ne porte que sur les segments où des cotations étaient attendues :
+une fermeture planifiée ne retire rien de l'échantillon. Sur la démonstration, la part censurée
+passe ainsi de 83 % à 0,02 %.
+
+---
+
+## ADR-132 — Calendrier normatif et disponibilité observée sont deux couches séparées
+
+**Statut** : figé et implémenté (Q52)
+
+**Décision.** Le calendrier dit ce qui devait arriver ; l'observation mesure ce qui s'est
+produit. Une divergence produit un événement auditable — cotations reçues pendant une fermeture
+attendue, silence pendant une période ouverte — sans jamais corriger le calendrier.
+
+---
+
+## ADR-133 — Les règles de calendrier sont bitemporelles
+
+**Statut** : figé et implémenté (Q52)
+
+**Décision.** Chaque règle porte un temps de **validité** (quel était l'état du marché) et un
+temps de **connaissance** (ce que le système pouvait savoir). Une simulation décisionnelle ne
+voit que ce qui était connu à l'instant simulé ; l'audit historique voit l'état réel.
+
+**Conséquences.** Une fermeture annoncée en cours de séance n'apparaît pas dans un backtest
+placé avant l'annonce, tout en restant visible pour le contrôle de qualité.
+
+---
+
+## ADR-134 — Fuseaux IANA obligatoires ; datetimes naïfs et décalages fixes interdits
+
+**Statut** : figé et implémenté (Q52)
+
+**Décision.** Chaque règle est définie dans son fuseau d'origine puis convertie. Un datetime
+naïf est **refusé** aux frontières du moteur. Une heure locale supprimée par le passage à
+l'heure d'été est refusée plutôt que déplacée — la déplacer produirait un horaire d'ouverture
+que personne n'a jamais publié. Une heure répétée au retour à l'heure standard est levée par
+`fold`, les deux occurrences correspondant à deux instants réellement distincts.
+
+**Conséquences.** Les journées de 23 et 25 heures sont traitées correctement. Illustration
+rencontrée à l'exécution : le Royaume-Uni étant resté à UTC+1 toute l'année en 1970, un décalage
+codé en dur aurait décalé d'une heure toutes les sessions du jeu de démonstration sans qu'aucun
+test ne le signale.
+
+---
+
+## ADR-135 — Les exceptions datées priment sur les règles récurrentes
+
+**Statut** : figé et implémenté (Q52)
+
+**Décision.** Deux couches : règles habituelles et exceptions datées. Une exception couvrant un
+instant **remplace** localement les règles récurrentes ; les règles ne sont consultées que si
+aucune exception ne s'applique. Une demi-séance est représentée comme ouverture réduite puis
+clôture anticipée, jamais comme fermeture quotidienne — sinon sa densité, son spread et sa
+volatilité seraient mélangés à ceux d'une séance normale dans les cellules de coûts.
+
+**Conséquences.** La priorité entre états qui se chevauchent est explicite et **ne détruit pas
+les états secondaires** : ils restent dans `contributing_states`, avec la règle de résolution
+appliquée.
+
+---
+
+## ADR-136 — Le calendrier ne s'auto-modifie jamais à partir des observations
+
+**Statut** : figé et implémenté (Q52)
+
+**Décision.** L'absence de ticks est une observation ; la fermeture est une information externe
+versionnée. Les observations ne peuvent produire que des **propositions de révision**, portant
+un drapeau de validation explicite obligatoire.
+
+**Conséquences.** Sans cette barrière, une panne répétée serait progressivement reclassée en
+fermeture normale, et le calendrier finirait par décrire les défaillances du flux plutôt que le
+marché.
+
+---
+
+## ADR-137 — Temps calendaire et temps de marché sont deux horloges distinctes
+
+**Statut** : figé et implémenté (Q52)
+
+**Décision.** Un horizon est déclaré en temps réel ou en temps de marché, jamais implicitement.
+Le moteur publie durée calendaire, durée de cotations attendues et durée observée. Une fenêtre
+traversant une fermeture ne se compare pas directement à une fenêtre entièrement ouverte.
+
+**Conséquences.** S'applique aussi au tampon séparant exploration et jeu réservé : les
+fermetures ne comptent pas comme information de marché active dans sa longueur effective.
+
+---
+
+## ADR-138 — Collecte autorisée sous calendrier provisoire, interprétation non
+
+**Statut** : figé et implémenté (Q52)
+
+**Décision.** Sans calendrier versionné, toutes les lacunes restent `UNKNOWN_GAP` — jamais une
+fermeture supposée — le rapport publie le temps inconnu, conserve toutes les lacunes pour
+reclassification, et interdit toute suppression définitive de données fondée sur le calendrier
+provisoire.
+
+**Conséquences.** Les trois chantiers avancent indépendamment : collecte de cotations (Q50),
+journalisation d'exécution (Q51) et classification temporelle (Q52). Aucun n'attend les deux
+autres. Q52 bloque l'interprétation finale, pas la collecte.

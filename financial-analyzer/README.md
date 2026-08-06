@@ -12,17 +12,30 @@ latence et rareté des occurrences.
 | --- | --- |
 | `docs/` | spécification, journal de décisions (`DECISIONS.md`), registre des questions (`QUESTIONS.md`) |
 | `feasibility/` | **code exécutable** : les deux phases 0 et leur intersection |
-| `tests/` | 39 tests, un par garde-fou |
+| `tests/` | 99 tests, un par garde-fou |
 
 ## Exécuter
 
 ```bash
 cd financial-analyzer
-python3 -m pytest tests/ -q       # suite de tests
+python3 -m pytest tests/ -q       # 99 tests
 python3 -m feasibility.report     # carte de faisabilité (données synthétiques)
 ```
 
 Dépendances : `numpy`, `pytest`.
+
+## Le moteur de calendrier
+
+`feasibility/calendar.py` est un **moteur temporel**, pas une liste d'horaires. Il répond, pour
+tout intervalle sans cotation, à *ce qui était censé s'y passer* — et justifie sa réponse par une
+version, une source et un statut de vérification.
+
+Principe fondateur : **l'absence de ticks est une observation ; la fermeture est une information
+externe versionnée.** Le moteur ne déduit jamais l'une de l'autre, et ne s'auto-modifie jamais à
+partir des données observées.
+
+Un calendrier par source et par marché d'exécution. Une lacune est segmentée exactement, puis
+classée par l'intégralité de son contenu — jamais par ses extrémités.
 
 ## Ce que produit `feasibility`
 

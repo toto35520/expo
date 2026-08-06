@@ -84,7 +84,11 @@ l'avancement de la spécification ; elles bloqueront l'implémentation. Ce fichi
 | **Q49** | **Contribution cible par unité de temps** et coûts fixes journaliers (données, infrastructure, capital immobilisé) : ils déterminent le plancher de fréquence économique, donc peuvent exclure une famille avant tout test prédictif. | 🟠 | Q40 phase 0 §9 |
 | **Q50** | **Export de cotations bid/ask horodatées**, plusieurs journées. Une liste de spreads sans chronologie ne suffit pas : amplitude, densité, rafales et coûts doivent être calculés sur la même timeline (ADR-123). | 🔴 | Adaptateur §1 |
 | **Q51** | **Journalisation immédiate** des horodatages émission / accusé / annulation sur l'infrastructure réelle. Ces données **ne se reconstruisent pas après coup** : chaque journée sans journalisation est perdue pour Q19. | 🔴 | Adaptateur · Q19 §5 |
-| **Q52** | **Calendrier de marché versionné** — fériés, demi-séances, changements d'heure. L'adaptateur utilise un espace réservé ; sans le vrai calendrier, certaines fermetures seront lues comme des interruptions de données (ADR-021, ADR-125). | 🔴 | Adaptateur B7 |
+| **Q52** | **Calendrier de marché versionné** — le **moteur** est implémenté (ADR-129 à 138, 30 tests) ; ce qui manque est le **contenu réel** : horaires, fériés, demi-séances et maintenances du courtier et de la place, avec leurs sources. | 🔴 | Adaptateur B7 · Q52 |
+| **Q53** | **Sources de calendrier** par marché : laquelle est normative, laquelle secondaire, quelle preuve est conservée, à quelle fréquence est-elle rafraîchie ? Une règle inférée de l'observation ne doit jamais être présentée comme un horaire officiel. | 🔴 | Q52 §19 |
+| **Q54** | **Seuil de temps inconnu** : quelle proportion de la période peut rester `UNKNOWN` avant que le rapport soit déclaré non interprétable ? | 🟠 | Q52 §31 |
+| **Q55** | **Horloge des horizons** : temps calendaire ou temps de marché, par famille de labels ? Les deux sont légitimes, les mélanger ne l'est pas (ADR-137). | 🟠 | Q52 §26 |
+| **Q56** | **Gouvernance des overrides** : qui peut créer, valider et retirer un override manuel de calendrier ? Le moteur exige auteur, motif et preuve ; il ne peut pas exiger une autorité. | 🟡 | Q52 §20 |
 
 ---
 

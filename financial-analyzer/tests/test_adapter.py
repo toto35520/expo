@@ -16,7 +16,6 @@ from feasibility.adapter import (
     BurstState,
     ClockSync,
     DensityStatus,
-    GapClass,
     OrderingStatus,
     QuoteQuality,
     RawQuotes,
@@ -26,6 +25,13 @@ from feasibility.adapter import (
     evaluation_delay,
     infer_timestamp_resolution,
     normalize,
+)
+from feasibility.calendar import (
+    GapClassification,
+    MarketState,
+    QuoteExpectation,
+    local_to_ns,
+    synthetic_calendar,
 )
 from feasibility.contract import (
     ContractSpecification,
@@ -273,41 +279,45 @@ def test_clock_sync_gates_absolute_latency():
 # --------------------------------------------------------------------------- lacunes
 
 
-def test_gap_between_active_periods_is_an_outage():
-    """Le flux était actif avant et après : le silence n'est pas du marché."""
-    active = np.arange(0, 300, dtype=np.int64) * (NS_PER_SECOND // 10)
-    later = active[-1] + 600 * NS_PER_SECOND + np.arange(300, dtype=np.int64) * (NS_PER_SECOND // 10)
-    ts = np.concatenate([active, later])
-    sessions = np.full(ts.size, "LONDON", dtype=object)
-    gaps = classify_gaps(ts, sessions, outage_threshold_ns=60 * NS_PER_SECOND)
-    assert len(gaps) == 1
-    assert gaps[0].classification is GapClass.DATA_OUTAGE
+def test_outage_during_an_open_session_is_reported(contract):
+    """Le calendrier dit que des cotations étaient attendues ; il n'y en a aucune."""
+    import datetime as dt
 
-
-def test_gap_in_closed_session_is_not_an_outage():
-    ts = np.array([0, 3_600 * NS_PER_SECOND], dtype=np.int64)
-    sessions = np.array(["OFF_HOURS", "OFF_HOURS"], dtype=object)
-    gaps = classify_gaps(ts, sessions, outage_threshold_ns=60 * NS_PER_SECOND)
-    assert gaps[0].classification is GapClass.MARKET_CLOSED
-
-
-def test_overnight_gap_is_classified_by_its_interior():
-    """Une coupure nocturne va de la clôture de New York à l'ouverture de Londres :
-    **aucune de ses deux bornes n'est en session fermée**. Sans échantillonnage
-    intérieur, toutes les nuits seraient comptées comme des interruptions de données."""
-    hour = 3_600 * NS_PER_SECOND
-    resolver = SessionResolver()
-    ts = np.array([13 * hour, 24 * hour + 9 * hour], dtype=np.int64)  # 13h00 → J+1 09h00
-    sessions, _ = resolver(ts)
-    assert "OFF_HOURS" not in set(sessions)  # les deux bornes sont en session ouverte
-
-    without = classify_gaps(ts, sessions, outage_threshold_ns=60 * NS_PER_SECOND)
-    assert without[0].classification is not GapClass.MARKET_CLOSED
-
-    with_interior = classify_gaps(
-        ts, sessions, outage_threshold_ns=60 * NS_PER_SECOND, session_of=resolver
+    cal = synthetic_calendar(
+        market_id=contract.instrument_id, timezone="UTC",
+        session_start=dt.time(9, 0), session_end=dt.time(13, 0),
     )
-    assert with_interior[0].classification is GapClass.MARKET_CLOSED
+    a = local_to_ns(dt.datetime(2026, 8, 4, 10, 0), "UTC")
+    b = local_to_ns(dt.datetime(2026, 8, 4, 12, 0), "UTC")
+    gaps = classify_gaps(np.array([a, b], dtype=np.int64), cal, 60 * NS_PER_SECOND)
+    assert gaps[0].classification is GapClassification.DATA_OUTAGE
+    assert gaps[0].censored_ns == b - a
+
+
+def test_planned_night_censors_nothing(contract):
+    """Une fermeture planifiée ne retire rien de l'échantillon."""
+    import datetime as dt
+
+    cal = synthetic_calendar(
+        market_id=contract.instrument_id, timezone="UTC",
+        session_start=dt.time(9, 0), session_end=dt.time(13, 0),
+    )
+    a = local_to_ns(dt.datetime(2026, 8, 4, 13, 0), "UTC")
+    b = local_to_ns(dt.datetime(2026, 8, 5, 9, 0), "UTC")
+    gaps = classify_gaps(np.array([a, b], dtype=np.int64), cal, 60 * NS_PER_SECOND)
+    assert gaps[0].classification is GapClassification.MARKET_CLOSED
+    assert gaps[0].censored_ns == 0
+
+
+def test_adapter_delegates_closure_logic_to_the_calendar():
+    """Sans calendrier, l'adaptateur ne suppose jamais une fermeture : tout est inconnu.
+
+    C'est le mode provisoire — la collecte peut commencer, l'interprétation non."""
+    ts = np.array([0, 10_000 * NS_PER_SECOND], dtype=np.int64)
+    gaps = classify_gaps(ts, None, 60 * NS_PER_SECOND)
+    assert gaps[0].classification is GapClassification.UNKNOWN_GAP
+    assert gaps[0].segments == ()
+    assert gaps[0].censored_ns == gaps[0].duration_ns
 
 
 # ----------------------------------------------------------- densité et quantification
@@ -382,7 +392,7 @@ def test_burst_thresholds_are_per_session(normalized):
 
 def test_quality_report_flags_unmeasurable_horizons(normalized, contract):
     horizons = tuple(h * NS_PER_SECOND for h in (1, 60, 3600))
-    report = assess(normalized, contract, horizons)
+    report = assess(normalized, contract, horizons, calendar=None)
     assert report.measurability(horizons[0]) is Measurability.NOT_MEASURABLE
     assert report.measurability(horizons[-1]) is not Measurability.NOT_MEASURABLE
     assert report.span_days > 20

@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import argparse
 from dataclasses import dataclass
+from datetime import time as dt_time
 
 import numpy as np
 
@@ -248,10 +249,21 @@ def run_from_export(
     ne permet pas de savoir si elle est interprétable.
     """
     from .adapter import SessionResolver, normalize
+    from .calendar import synthetic_calendar
     from .contract import CostPolicy, CostScenario
     from .quality import build_calculation_inputs, print_quality_report
 
     quotes = normalize(raw, contract, SessionResolver())
+    # Le générateur produit ses ticks de 09h00 à 13h00 UTC : le calendrier de
+    # démonstration est aligné dessus. Avec un vrai fuseau, l'écart apparaîtrait
+    # immédiatement — le Royaume-Uni était par exemple à UTC+1 toute l'année en 1970,
+    # ce qu'un décalage codé en dur n'aurait jamais montré.
+    calendar = synthetic_calendar(
+        market_id=contract.instrument_id,
+        timezone="UTC",
+        session_start=dt_time(9, 0),
+        session_end=dt_time(13, 0),
+    )
     report = None
 
     for scenario in (CostScenario.OPTIMISTIC, CostScenario.CENTRAL, CostScenario.PRUDENT):
@@ -264,7 +276,7 @@ def run_from_export(
             rationale="bornes de démonstration — à remplacer par une campagne d'exécution (Q42)",
         )
         built = build_calculation_inputs(
-            quotes, contract, policy, conventions, horizons_ns, band, cell
+            quotes, contract, policy, conventions, horizons_ns, band, cell, calendar
         )
 
         if report is None:
