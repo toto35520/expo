@@ -65,6 +65,7 @@ l'avancement de la spécification ; elles bloqueront l'implémentation. Ce fichi
 | ~~**Q27**~~ | ~~Définition partagée d'« impulsion »~~ — **résolue à l'étape 4.1** : une impulsion est une jambe de la décomposition par changement de direction, à un niveau déclaré (ADR-056). | ✅ | 03d §13 |
 | **Q17** | Score de qualité visible en continu ou seulement en cas de dégradation ? Un indicateur permanent est ignoré au bout de quelques jours. | 🟡 | 02e §12 |
 | **Q32** | Combien de niveaux de décomposition θ, et quelles valeurs ? Paramètre le plus porteur de tout l'étage 4 : il redessine blocs d'ordres, déséquilibres et ruptures de structure. | 🟠 | 04a §9 |
+| **Q33** | Rupture **immédiate** ou **retenue** après fenêtre de maintien ? Ce sont deux signaux distincts, avec des taux de base différents ; l'arbitrage entre force du signal et coût du retard en prix d'entrée se calcule, il ne se devine pas. | 🟠 | 04b §6 |
 
 ---
 

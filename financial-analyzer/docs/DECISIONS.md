@@ -1142,3 +1142,91 @@ prix réagit aux niveaux de pivot plus qu'à des niveaux de contrôle de saillan
 **Conséquences.** Résout Q27 : l'impulsion partagée entre moteurs est une jambe de la
 décomposition à un niveau déclaré. Si le test de réaction échoue, toutes les briques ultérieures
 héritent d'une fondation vide — mieux vaut le savoir avant d'écrire cinq moteurs par-dessus.
+
+---
+
+## ADR-057 — La structure de marché est une machine à états, pas trois détecteurs
+
+**Statut** : figé (étape 4.2)
+
+**Contexte.** BOS et CHOCH ont la même géométrie — un franchissement de pivot. Ils ne diffèrent
+que par leur rapport à l'état structurel courant. Les traiter comme deux détecteurs distincts
+laisse subsister une décision de jugement là où il n'y en a pas.
+
+**Décision.** Un état structurel est maintenu par niveau de décomposition. Un franchissement
+dans le sens de l'état est un BOS ; contre l'état, un CHOCH, qui fait entrer dans un état de
+**transition** et jamais directement dans l'état inverse. Le basculement exige une seconde
+rupture dans le nouveau sens ; un retour dans l'ancien sens est un **échec de CHOCH**,
+enregistré comme information et non comme non-événement.
+
+**Conséquences.** « Le CHOCH ne signifie pas automatiquement un retournement » devient mécanique
+plutôt que prudentiel. Le taux de base des deux issues depuis l'état de transition devient
+mesurable, ce qui donne un contenu chiffré à cette prudence.
+
+---
+
+## ADR-058 — Une rupture est une pénétration soutenue, définie sans référence à une clôture
+
+**Statut** : figé (étape 4.2)
+
+**Contexte.** « Clôture au-delà du niveau » et « absence de simple mèche isolée » expriment le
+même besoin : la pénétration doit durer. Mais « clôture » suppose une bougie, donc une convention
+d'agrégation (ADR-022) — la dépendance que l'ADR-054 vient d'éliminer.
+
+**Décision.** Une rupture est définie par deux paramètres : une profondeur δ en unités de
+volatilité et une persistance τ en temps-événement. Une mèche isolée échoue sur τ, un
+effleurement sur δ. Volume et vitesse sont conservés comme **attributs de corroboration**, jamais
+comme conditions d'existence — sans quoi la détection dépendrait de la disponibilité du volume et
+différerait entre le listé et le spot.
+
+**Conséquences.** Deux paramètres explicitement calibrables remplacent une convention implicite.
+Propriété garantie : à θ fixé, la suite des états est déterministe et ne se repeint pas. Test
+d'acceptation associé — un rejeu incrémental doit produire exactement la même suite d'états
+qu'un calcul en une passe sur l'historique complet.
+
+---
+
+## ADR-059 — Le MSS est un score continu, pas une conjonction binaire
+
+**Statut** : figé (étape 4.2)
+
+**Contexte.** Exiger simultanément cinq conditions binaires cumule trois défauts : cinq seuils à
+régler (multiplicité maximale, ADR-034), rareté de la conjonction donc intervalle de confiance du
+taux de base plus large que l'effet cherché, et dérive de calibration — face à un détecteur qui
+ne se déclenche presque jamais, on assouplit les seuils jusqu'à obtenir « assez » de signaux,
+ajustant les paramètres à une fréquence désirée plutôt qu'aux données.
+
+**Décision.** Les cinq éléments deviennent des attributs mesurés en continu et attachés à toute
+rupture ; le MSS est le haut de ce continuum, découpé par quantile. Le critère « maintien après
+rupture » étant une issue et non une entrée (ADR-038), deux produits distincts coexistent : la
+rupture immédiate et la rupture retenue après fenêtre de maintien, avec des taux de base
+différents à mesurer séparément.
+
+**Conséquences.** Le taux de base devient estimable sur toute l'échelle plutôt que sur quelques
+spécimens parfaits, les attributs manquants dégradent le score au lieu d'annuler la détection, et
+il devient possible de mesurer **lequel des cinq attributs porte l'information** — question
+qu'une conjonction binaire interdit de poser.
+
+---
+
+## ADR-060 — Les échelles sont emboîtées et publient leur rapport signal/bruit
+
+**Statut** : figé (étape 4.2)
+
+**Contexte.** La structure exprimée en unités de temps réintroduirait la dépendance aux
+conventions d'agrégation que l'ADR-054 a supprimée. Par ailleurs les échelles sont emboîtées par
+construction : une rupture au niveau large implique des ruptures aux niveaux fins, donc « quatre
+échelles concordent » n'est pas quatre confirmations mais souvent une information vue quatre
+fois. Enfin, « bruit élevé » n'est pas une direction : c'est un constat de qualité de signal.
+
+**Décision.** La structure est calculée par niveau de décomposition θ, les étiquettes temporelles
+n'étant qu'une correspondance d'affichage versionnée. Le recouvrement entre échelles est déclaré
+(ADR-035). Chaque niveau publie une mesure de rapport signal/bruit et retourne `INDÉTERMINÉ` en
+dessous d'un seuil calibré, au lieu d'une direction. Les grandeurs exploitables sont
+l'alignement entre niveaux et le niveau le plus proche du basculement, pas les états pris
+isolément.
+
+**Conséquences.** Le bruit cesse d'être un cas particulier de l'échelle la plus fine : c'est une
+propriété mesurée partout, qui frappe notamment lors des transitions de volatilité. Test associé,
+posé tôt car il peut invalider l'étape : le BOS apporte-t-il quelque chose **conditionnellement à
+une mesure de tendance simple**, ou n'est-il qu'un habillage du momentum ?
