@@ -2403,3 +2403,115 @@ de l'échantillon.
 **Conséquences.** Après correction, la part consommée à l'horizon d'une seconde passe de 18 % à
 71 % et le verdict redevient conclusif — *il n'y a littéralement plus rien à capturer au moment
 où l'on peut enfin agir*.
+
+---
+
+## ADR-123 — Les calculs réels partent des cotations bid/ask, jamais des seules bougies
+
+**Statut** : figé (adaptateur courtier)
+
+**Contexte.** Les données OHLC ne permettent de connaître ni le spread au moment du
+déclenchement, ni la densité réelle de cotations, ni les changements intrabar, ni les séquences
+bid/ask, ni les rafales, ni les arrivées tardives.
+
+**Décision.** L'entrée de tout calcul de phase 0 est une série de cotations bid/ask horodatées.
+Les bougies sont des vues dérivées, produites ensuite et jamais en amont.
+
+**Conséquences.** Une liste historique de spreads ne suffit pas : amplitude, densité, rafales et
+coûts doivent être calculés sur la **même chronologie**, et un spread sans son instant n'est
+rattachable à rien.
+
+---
+
+## ADR-124 — Les unités économiques sont portées par la valeur
+
+**Statut** : figé (adaptateur courtier) · décision issue de l'implémentation
+
+**Contexte.** Sur XAU/USD, confondre « par once » et « par lot » est un facteur cent. L'erreur
+est silencieuse — les deux nombres restent plausibles — et traverse ensuite tout le calcul de
+coût. Une convention documentée ne protège de rien.
+
+**Décision.** Chaque grandeur porte son unité ; additionner une unité de cotation et une monnaie
+de compte lève une erreur. La seule conversion autorisée passe par la spécification de contrat,
+laquelle porte sa source et sa date de relevé et refuse tout calcul de portage tant que la
+politique de portage multiplié n'a pas été vérifiée auprès du courtier.
+
+**Conséquences.** Le mode d'échec le plus coûteux de la couche économique devient un état
+inaccessible plutôt qu'une consigne.
+
+---
+
+## ADR-125 — Une lacune se classe par ce qui se passe pendant, pas à ses bornes
+
+**Statut** : figé (adaptateur courtier) · décision issue de l'implémentation
+
+**Contexte.** Défaut relevé par le rapport lui-même : sur vingt-cinq journées, **vingt-quatre
+coupures nocturnes étaient classées comme interruptions de données** et 83 % de la période
+déclarée censurée. La cause tient à la géométrie du problème — une coupure nocturne va de la
+clôture de New York à l'ouverture de Londres, et **aucune de ses deux bornes n'est en session
+fermée**. Tester les extrémités ne pouvait donc jamais reconnaître une nuit.
+
+Second défaut, trouvé par un test : la cadence « après la lacune » était calculée sur la fenêtre
+**précédant** chaque cotation, si bien que le premier tick suivant une lacune affichait une
+cadence nulle — la lacune elle-même — et qu'une vraie coupure entre deux périodes actives était
+classée inconnue au lieu d'interruption.
+
+**Décision.** La classification échantillonne l'intérieur de la lacune et compare une cadence
+rétrospective à une cadence **prospective** distincte.
+
+**Conséquences.** Après correction, les vingt-quatre lacunes deviennent des fermetures de marché
+et la part censurée tombe à zéro. Sans cette correction, tout export réel aurait été déclaré
+inexploitable — la nuit représente la majorité du temps calendaire.
+
+---
+
+## ADR-126 — La résolution d'horodatage est mesurée et comparée à l'inter-arrivée en rafale
+
+**Statut** : figé (adaptateur courtier) · décision issue de l'implémentation
+
+**Contexte.** Une résolution à la milliseconde suffit à quinze cotations par seconde et perd
+tout l'ordre interne d'une rafale à cinq cents. Or la rafale est précisément le régime qui
+gouverne la latence conditionnelle (ADR-102).
+
+**Décision.** La granularité effective est inférée du plus petit écart non nul réellement
+observé, puis comparée à l'inter-arrivée en rafale. Insuffisante, elle produit une réserve
+explicite : la mesure de coût reste possible, l'ordre interne des rafales ne l'est pas.
+Symétriquement, sans synchronisation d'horloge fiable la latence **absolue** est déclarée
+indisponible, l'ordre temporel local restant utilisable.
+
+---
+
+## ADR-127 — Les coûts non mesurés sont traités par scénarios, jamais fixés à zéro
+
+**Statut** : figé (adaptateur courtier)
+
+**Contexte.** Glissement agressif, impact et sélection adverse ne sont mesurables que par une
+campagne d'exécution. Les omettre revient à les poser à zéro, ce qui produit une carte de
+faisabilité optimiste présentée comme neutre.
+
+**Décision.** Trois cartes sont produites : optimiste (coûts certains seuls), centrale, prudente
+(bornes supérieures déclarées sur les termes non mesurés). Chaque borne porte sa justification ;
+une borne sans justification est refusée.
+
+**Conséquences.** L'écart entre carte optimiste et carte prudente **mesure directement ce que
+l'absence de campagne d'exécution coûte en certitude** — c'est-à-dire ce que vaut Q42.
+
+---
+
+## ADR-128 — La carte de faisabilité n'est jamais publiée sans son rapport de qualité
+
+**Statut** : figé (adaptateur courtier)
+
+**Contexte.** Une carte affichée seule ne permet pas de savoir si elle est interprétable. Un
+horizon dominé par la quantification produit des verdicts qui ne sont que des artefacts de
+discrétisation.
+
+**Décision.** Le rapport de qualité précède toujours la carte et porte son propre verdict, distinct
+de tout verdict économique : `MEASURABLE`, `MEASURABLE_WITH_RESERVATIONS`, `NOT_MEASURABLE` par
+horizon. La construction des entrées de calcul **échoue explicitement** si aucun horizon n'est
+mesurable, si le contrat n'est pas versionné, si la bande d'avantages n'est pas préenregistrée,
+ou si le marché d'exécution de la cellule ne correspond pas au contrat chargé.
+
+**Conséquences.** Le jalon du projet cesse d'être « obtenir la courbe kappa » pour devenir
+« prouver que l'export permet de la mesurer ». Les verdicts économiques ne deviennent
+interprétables qu'après.

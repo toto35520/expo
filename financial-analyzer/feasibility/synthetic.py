@@ -29,6 +29,7 @@ def generate(
     days: int = 25,
     ticks_per_session: int = 40_000,
     session_seconds: int = 4 * 3_600,
+    session_start_hour: int = 9,
     start_price: float = 4_000.0,
     tick_size: float = 0.01,
     base_volatility: float = 0.012,
@@ -52,7 +53,7 @@ def generate(
     price = start_price
 
     for d in range(days):
-        day_start = d * NS_PER_DAY
+        day_start = d * NS_PER_DAY + session_start_hour * 3_600 * NS_PER_SECOND
         # Progression irrégulière du temps : les ticks n'arrivent pas à cadence fixe.
         gaps = rng.exponential(session_ns / ticks_per_session, size=ticks_per_session)
         day_ts = day_start + np.cumsum(gaps).astype(np.int64)

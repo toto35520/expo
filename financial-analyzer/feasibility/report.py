@@ -59,7 +59,9 @@ def _fmt(x: float, width: int = 8, digits: int = 3) -> str:
     return "—".rjust(width) if not np.isfinite(x) else f"{x:{width}.{digits}f}"
 
 
-def run(inp: ReportInputs) -> list[CellEnvelope]:
+def run(inp: ReportInputs, horizons_ns: tuple[int, ...] | None = None) -> list[CellEnvelope]:
+    grid = horizons_ns or tuple(h * NS_PER_SECOND for h in HORIZON_GRID_SECONDS)
+
     provenance = Provenance(
         conventions_digest=inp.conventions.digest(),
         protocol_version=inp.conventions.protocol_version,
@@ -108,14 +110,14 @@ def run(inp: ReportInputs) -> list[CellEnvelope]:
     print("-" * 96)
 
     phase0_by_horizon = {}
-    for h_s in HORIZON_GRID_SECONDS:
-        h = h_s * NS_PER_SECOND
+    for h in grid:
+        h_s = h / NS_PER_SECOND
         res = phase0_residual(
             inp.timestamps_ns, inp.mid, inp.cluster_ids, starts, signs,
             inp.latency_burst_ns, h, round_trip_cost_p95, min_clusters=20,
         )
         phase0_by_horizon[h] = res
-        print(f"{h_s:>8}s {res.consumed_fraction_p50:>12.0%} "
+        print(f"{h_s:>8.0f}s {res.consumed_fraction_p50:>12.0%} "
               f"{_fmt(res.residual_p50, 13, 4)} {_fmt(res.residual_net_p50, 10, 4)}  {res.verdict.value}")
 
     # ---- courbe kappa -----------------------------------------------------------------
@@ -127,8 +129,8 @@ def run(inp: ReportInputs) -> list[CellEnvelope]:
 
     kappa_results = []
     scale_estimates = []
-    for h_s in HORIZON_GRID_SECONDS:
-        h = h_s * NS_PER_SECOND
+    for h in grid:
+        h_s = h / NS_PER_SECOND
         disp, disp_clusters = displacement_sample(
             inp.timestamps_ns, inp.mid, h, inp.cluster_ids, step=inp.step
         )
@@ -141,7 +143,7 @@ def run(inp: ReportInputs) -> list[CellEnvelope]:
         r = kappa_with_ci(cost, disp, disp_clusters, h, inp.band, n_bootstrap=200, min_clusters=20)
         kappa_results.append(r)
         ci = f"[{_fmt(r.confidence_lower, 6)},{_fmt(r.confidence_upper, 7)}]"
-        print(f"{h_s:>8}s {_fmt(r.scale, 11, 4)} {_fmt(r.kappa_p50, 11)} {_fmt(r.kappa_p95, 11)} "
+        print(f"{h_s:>8.0f}s {_fmt(r.scale, 11, 4)} {_fmt(r.kappa_p50, 11)} {_fmt(r.kappa_p95, 11)} "
               f"{ci:>19} {r.sample.independent_clusters:>6}  {r.verdict.value}")
 
     h_min = minimum_cost_horizon(kappa_results, inp.band)
@@ -229,14 +231,129 @@ def synthetic_inputs() -> ReportInputs:
     )
 
 
+def run_from_export(
+    raw,
+    contract,
+    conventions: Conventions,
+    band: PlausibleEdgeBand,
+    cell: Cell,
+    latency_burst_ns: np.ndarray,
+    latency_quiet_ns: np.ndarray,
+    horizons_ns: tuple[int, ...],
+    volume_lots: float = 0.05,
+) -> None:
+    """Chemin réel : export courtier → diagnostic de qualité → carte, en trois scénarios.
+
+    L'ordre est imposé. Une carte de faisabilité affichée sans le diagnostic qui la précède
+    ne permet pas de savoir si elle est interprétable.
+    """
+    from .adapter import SessionResolver, normalize
+    from .contract import CostPolicy, CostScenario
+    from .quality import build_calculation_inputs, print_quality_report
+
+    quotes = normalize(raw, contract, SessionResolver())
+    report = None
+
+    for scenario in (CostScenario.OPTIMISTIC, CostScenario.CENTRAL, CostScenario.PRUDENT):
+        policy = CostPolicy(
+            scenario=scenario,
+            volume_lots=volume_lots,
+            unmeasured_slippage_bound=0.05,
+            unmeasured_impact_bound=0.02,
+            unmeasured_adverse_selection_bound=0.03,
+            rationale="bornes de démonstration — à remplacer par une campagne d'exécution (Q42)",
+        )
+        built = build_calculation_inputs(
+            quotes, contract, policy, conventions, horizons_ns, band, cell
+        )
+
+        if report is None:
+            report = built.report
+            print_quality_report(report, horizons_ns)
+
+        measurable = tuple(h for h in horizons_ns if h in report.measurable_horizons)
+        print()
+        print(f"┌── SCÉNARIO {scenario.value} — {len(measurable)} horizons mesurables sur "
+              f"{len(horizons_ns)}")
+        print(f"│   Les coûts non mesurés sont traités par scénario, jamais fixés à zéro :")
+        print(f"│   provision retenue {policy.unmeasured_allowance():.4f} par aller-retour")
+        print("└" + "─" * 90)
+
+        run(
+            ReportInputs(
+                timestamps_ns=built.timestamps_ns,
+                mid=built.mid,
+                spread=built.spread_cost,
+                cluster_ids=built.cluster_ids,
+                latency_quiet_ns=latency_quiet_ns,
+                latency_burst_ns=latency_burst_ns,
+                commission_round_trip=built.commission_round_trip_quote,
+                band=band,
+                cell=cell,
+                conventions=conventions,
+            ),
+            horizons_ns=measurable,
+        )
+
+
+def synthetic_export():
+    """Reconstruit un export courtier plausible à partir du générateur synthétique."""
+    from .adapter import RawQuotes
+    from .contract import ContractSpecification, ExecutionMode
+
+    ticks = generate()
+    half = ticks.spread / 2.0
+    raw = RawQuotes(
+        receive_timestamps_ns=ticks.timestamps_ns,
+        bid=ticks.mid - half,
+        ask=ticks.mid + half,
+        source="SYNTHETIC_EXPORT",
+    )
+    contract = ContractSpecification(
+        broker="BROKER_DEMO", account_type="RAW", symbol="XAUUSD",
+        underlying="XAU", quote_currency="USD",
+        contract_size=100.0, tick_size=0.01, tick_value=1.0,
+        minimum_volume=0.01, volume_step=0.01,
+        commission_per_side_per_lot=3.5,
+        swap_long_per_lot_per_day=-12.0, swap_short_per_lot_per_day=4.0,
+        triple_swap_weekday=2, triple_swap_verified=True,
+        execution_mode=ExecutionMode.MARKET,
+        source="valeurs de démonstration — à remplacer par la fiche du compte réel (Q44)",
+        retrieved_at="2026-08-06", version="DEMO_1.0",
+    )
+    return raw, contract
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.parse_args()
+    parser.add_argument(
+        "--raw-arrays", action="store_true",
+        help="chemin direct sans adaptateur (diagnostic de qualité omis)",
+    )
+    args = parser.parse_args()
+
     print()
     print("⚠  DONNÉES SYNTHÈTIQUES — aucune valeur ci-dessous ne décrit un marché réel.")
     print("   Le rapport démontre que la chaîne s'exécute ; les chiffres décrivent le générateur.")
     print()
-    run(synthetic_inputs())
+
+    if args.raw_arrays:
+        run(synthetic_inputs())
+        return
+
+    raw, contract = synthetic_export()
+    quiet, burst = latency_samples()
+    inp = synthetic_inputs()
+    run_from_export(
+        raw=raw,
+        contract=contract,
+        conventions=inp.conventions,
+        band=inp.band,
+        cell=Cell("XAUUSD", "SYNTHETIC", contract.instrument_id, "MARKET", "ALL", 0.05, "NORMAL"),
+        latency_burst_ns=burst,
+        latency_quiet_ns=quiet,
+        horizons_ns=tuple(h * NS_PER_SECOND for h in HORIZON_GRID_SECONDS),
+    )
 
 
 if __name__ == "__main__":

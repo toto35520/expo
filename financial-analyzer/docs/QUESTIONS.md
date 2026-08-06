@@ -82,6 +82,9 @@ l'avancement de la spécification ; elles bloqueront l'implémentation. Ce fichi
 | **Q47** | **Fiscalité applicable** aux résultats. Hors périmètre technique, mais elle affecte l'espérance nette finale et doit venir d'une source compétente plutôt que d'une supposition. | 🟡 | Q40 §10 |
 | **Q48** | **Grille d'horizons** à figer avant lecture des résultats, et **densité de ticks** disponible à chaque horizon. Un horizon dont l'amplitude sature sur le pas de cotation mesure la discrétisation et non le marché (ADR-121). | 🔴 | Q40 phase 0 · B1 |
 | **Q49** | **Contribution cible par unité de temps** et coûts fixes journaliers (données, infrastructure, capital immobilisé) : ils déterminent le plancher de fréquence économique, donc peuvent exclure une famille avant tout test prédictif. | 🟠 | Q40 phase 0 §9 |
+| **Q50** | **Export de cotations bid/ask horodatées**, plusieurs journées. Une liste de spreads sans chronologie ne suffit pas : amplitude, densité, rafales et coûts doivent être calculés sur la même timeline (ADR-123). | 🔴 | Adaptateur §1 |
+| **Q51** | **Journalisation immédiate** des horodatages émission / accusé / annulation sur l'infrastructure réelle. Ces données **ne se reconstruisent pas après coup** : chaque journée sans journalisation est perdue pour Q19. | 🔴 | Adaptateur · Q19 §5 |
+| **Q52** | **Calendrier de marché versionné** — fériés, demi-séances, changements d'heure. L'adaptateur utilise un espace réservé ; sans le vrai calendrier, certaines fermetures seront lues comme des interruptions de données (ADR-021, ADR-125). | 🔴 | Adaptateur B7 |
 
 ---
 
