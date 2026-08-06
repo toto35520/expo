@@ -1057,3 +1057,88 @@ l'intention (ADR-046).
 **Conséquences.** Ce motif recouvre largement le climax (ADR-044), dont il est le mécanisme le
 plus fréquent : les deux détecteurs sont réconciliés plutôt que juxtaposés, pour qu'un même
 événement ne soit pas compté deux fois par la fusion (ADR-035).
+
+---
+
+## ADR-053 — Un pivot porte deux horodatages ; sa disponibilité est sa confirmation
+
+**Statut** : figé (étape 4.1)
+
+**Contexte.** Une définition « N bougies à droite » rend un sommet identifiable seulement N
+bougies après sa formation. Le graphique l'affiche pourtant à sa date de formation, comme s'il
+avait été connu à ce moment. Toute analyse construite sur cette illusion produit des résultats de
+backtest excellents et inatteignables.
+
+**Décision.** Chaque pivot porte `instant_formation` et `instant_confirmation`. L'instant de
+disponibilité au sens de I1 est la **confirmation**, jamais la formation. La latence de
+confirmation est mesurée et publiée dans la sortie, pour que l'étage 9 sache si un pivot est
+arrivé trop tard pour être exploitable.
+
+**Conséquences.** Le compromis latence / fiabilité devient explicite : plus un pivot est
+significatif, plus il est confirmé tard. Ce n'est pas un défaut d'implémentation mais une
+propriété de la définition, à mesurer plutôt qu'à contourner.
+
+---
+
+## ADR-054 — Les pivots sont définis sur le chemin de prix, pas sur les bougies
+
+**Statut** : figé (étape 4.1)
+
+**Contexte.** Une détection fondée sur des bougies hérite des conventions d'agrégation et de
+frontière de journée (ADR-022) : deux conventions produisent deux ensembles de pivots différents
+sur les mêmes prix, et un décalage d'une heure redécoupe tout deux fois par an. « N bougies à
+droite » mesure par ailleurs une durée qui dépend du pas choisi, pas une propriété du marché.
+
+**Décision.** Un extrême est confirmé lorsque le prix s'en écarte de plus d'un seuil θ dans le
+sens opposé ; tant que ce retournement n'a pas eu lieu, l'extrême reste `PROVISOIRE` et peut
+s'étendre. Un extrême provisoire ne peut jamais être utilisé comme s'il était confirmé — version
+structurelle de l'interdiction d'imputer (ADR-025). La méthode par bougies reste implémentée
+comme point de comparaison, pour mesurer la divergence entre approches.
+
+**Conséquences.** θ est exprimable en unités de volatilité, l'instant de confirmation devient
+mécanique, et la méthode est naturellement multi-échelle. Réserve à traiter : la normalisation
+par ATR est biaisée aux transitions de régime, l'ATR n'ayant pas rattrapé le nouveau niveau
+— d'où une normalisation complémentaire par la volatilité réalisée sur la durée propre du
+mouvement.
+
+---
+
+## ADR-055 — La hiérarchie des pivots est relationnelle, pas un découpage par seuils
+
+**Statut** : figé (étape 4.1)
+
+**Contexte.** Cinq classes définies par seuils indépendants ne forment pas une hiérarchie
+cohérente : rien n'empêche un pivot d'être classé « intermédiaire » sans être contenu dans une
+structure supérieure, ni deux critères de se contredire — forte amplitude et faible durée.
+
+**Décision.** Plusieurs seuils croissants appliqués au même chemin produisent une décomposition
+**emboîtée par construction** : tout pivot d'un niveau supérieur est pivot de tous les niveaux
+inférieurs. La classe découle de cette position, et chaque pivot porte son parent. À cela
+s'ajoute une **significativité continue** — amplitude, durée, volume, contexte — qui n'est pas
+la classe mais une mesure indépendante. Volume, durée et importance temporelle deviennent des
+attributs, jamais des critères de détection.
+
+**Conséquences.** La cohérence de la hiérarchie est structurelle et non vérifiée après coup. La
+séparation détection / attributs préserve le déterminisme : sans volume, la détection reste
+identique et seule la significativité est incomplète.
+
+---
+
+## ADR-056 — Définition de pivot unique, versionnée, et sensibilité mesurée en aval
+
+**Statut** : figé (étape 4.1)
+
+**Contexte.** Blocs d'ordres, déséquilibres de prix, ruptures de structure et changements de
+caractère se définissent tous par référence aux pivots. Une modification de θ ne change pas un
+détail : elle redessine toute la structure aval.
+
+**Décision.** La définition de pivot est unique et versionnée pour l'ensemble du système ; aucun
+moteur ne la redéfinit localement. La sensibilité de chaque conclusion aval à θ est mesurée et
+publiée. Critère d'acceptation du moteur : **deux implémentations écrites séparément à partir de
+la spécification doivent produire exactement le même ensemble de pivots** — seul test réellement
+contraignant de l'exigence « définition mathématique ». Prérequis de l'étape 4 : vérifier que le
+prix réagit aux niveaux de pivot plus qu'à des niveaux de contrôle de saillance comparable.
+
+**Conséquences.** Résout Q27 : l'impulsion partagée entre moteurs est une jambe de la
+décomposition à un niveau déclaré. Si le test de réaction échoue, toutes les briques ultérieures
+héritent d'une fondation vide — mieux vaut le savoir avant d'écrire cinq moteurs par-dessus.
