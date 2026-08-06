@@ -1773,3 +1773,135 @@ mais aucun poids ne leur est accordé avant que leur fondation ait passé son pr
 plus vite que le nombre de sources d'information réellement distinctes, lequel n'a pas augmenté
 depuis l'étape 4.1. À budget fini, ce coût mérite d'être comparé à celui de la résolution des
 questions bloquantes du registre, qui conditionnent la valeur de tout ce qui a été spécifié.
+
+---
+
+## ADR-087 — Gel de la spécification structurelle et validation séquentielle par gates
+
+**Statut** : figé (interlude 4)
+
+**Contexte.** Quatre moteurs structurels sont spécifiés — pivots, ruptures, déséquilibre,
+inversion — sans qu'aucun n'ait été validé. Ils dérivent d'une même famille causale, de sorte que
+la complexité descriptive croît nettement plus vite que le nombre de sources d'information
+indépendantes. Engager l'étape 4.5 ajouterait un étage sur une fondation non testée.
+
+**Décision.** La spécification structurelle est gelée après `04d`. Quatre gates sont définis :
+résolution des dépendances (Q1, Q19, Q36), implémentation des primitifs communs seulement, puis
+tests séquentiels des pivots, du déséquilibre et de l'inversion. Chaque gate a une hypothèse
+nulle, une population, des contrôles appariés, des mesures et une condition de passage. L'échec
+d'un gate ramène à zéro le poids prédictif de son étage, les étages dérivés restant explorables
+sous marquage `FOUNDATION_FAILED` et `EXPLORATORY_ONLY`. La reprise de 4.5 exige une condition
+scientifique, d'ingénierie plafonnée, ou stratégique explicite.
+
+**Conséquences.** Répond à Q39. Le projet passe d'un mode d'accumulation à un mode d'élimination.
+Les moteurs déjà spécifiés conservent leur valeur de reproductibilité mais aucun poids de
+production tant que leur gate n'est pas franchi.
+
+---
+
+## ADR-088 — Propagation de validité : les données se propagent, la prédiction non
+
+**Statut** : figé (interlude 4)
+
+**Contexte.** Un objet dérivé référence une source. Deux invalidations très différentes peuvent
+frapper cette source : une invalidation **de données** (donnée corrompue, révisée, discontinuité
+d'instrument) et une invalidation **prédictive** du rôle d'origine.
+
+**Décision.** Une invalidation de données se propage nécessairement : l'objet dérivé passe en
+`dependency_state = INVALID_SOURCE` et `validity_state = SUSPENDED`, sans suppression, puis le
+moteur détermine s'il est reproductible, reconstructible, à remplacer par une version, ou
+définitivement invalide. Une invalidation prédictive **ne se propage pas** : elle peut être
+précisément la condition de naissance de l'objet dérivé.
+
+**Conséquences.** Un objet dérivé ne survit jamais à la corruption de ce dont il dérive, mais
+survit à l'échec prédictif de son parent. Sans cette asymétrie, la création même d'une inversion
+serait contradictoire.
+
+---
+
+## ADR-089 — Perte de qualité analytique et invalidation économique sont deux événements
+
+**Statut** : figé (interlude 4)
+
+**Contexte.** Lorsque l'incertitude de traduction intermarchés dépasse son seuil alors qu'une
+position est ouverte, deux réactions opposées sont tentantes : ignorer la dégradation, ou clôturer
+automatiquement.
+
+**Décision.** Sans position : entrées interdites, ordres conditionnels suspendus ou annulés,
+renforts interdits, signal marqué non exécutable. Avec position ouverte : les protections déjà
+placées sont **maintenues**, le risque est évalué sur le marché réel d'exécution, les renforts sont
+interdits, aucun déplacement de stop dépendant de la zone traduite n'est autorisé, la dégradation
+est signalée, et la politique de Q18 s'applique. **Le système ne clôture pas automatiquement au
+seul motif que la traduction est devenue incertaine.**
+
+**Conséquences.** Cohérent avec le mode dégradé de `02e` §10 : ne pas augmenter, ne pas élargir
+les protections, traiter la dégradation comme motif de réduction — mais sans confondre la perte
+d'un outil d'analyse avec la mort d'une position.
+
+---
+
+## ADR-090 — Analyse de puissance et test d'équivalence obligatoires avant chaque gate
+
+**Statut** : figé (interlude 4) · décision ajoutée
+
+**Contexte.** Un test de puissance insuffisante rend « aucun effet » quelle que soit la réalité. Or
+le verdict le plus lourd du protocole — `FOUNDATION_FAILED`, qui ramène à zéro le poids de trois
+moteurs — pourrait être prononcé sur un échantillon simplement trop petit. Absence de preuve et
+preuve d'absence sont indiscernables sans cette analyse.
+
+**Décision.** Avant chaque gate : (1) déclarer la **taille d'effet minimale économiquement utile**,
+dérivée des coûts réels — spread, commissions, glissement, base — donc dépendante de Q36 ; (2)
+calculer la puissance disponible pour cette taille sur l'échantillon réel, en tenant compte de
+l'autocorrélation et du regroupement par événement, faute de quoi la puissance est largement
+surestimée ; (3) si la puissance est insuffisante, le déclarer **avant** le test, le verdict
+possible devenant `INDÉTERMINÉ` et jamais `ÉCHEC`. Conclure « n'apporte rien » exige un **test
+d'équivalence** montrant que l'effet est inférieur à la plus petite taille utile, non l'échec d'un
+test de significativité.
+
+**Conséquences.** Le Cas E de la hiérarchie des conclusions n'est fondé que sous cette condition.
+La plus petite taille d'effet utile est une ancre rare : elle se calcule à partir des coûts et ne
+dépend d'aucune croyance sur le marché.
+
+---
+
+## ADR-091 — Contrôle négatif du protocole avant tout test réel
+
+**Statut** : figé (interlude 4) · décision ajoutée
+
+**Contexte.** Le composant qui décide de tout n'est aucun moteur, mais l'échantillonneur de
+contrôles appariés. Un appariement défaillant fabrique des différences inexistantes ou en masque.
+Aucun gate n'a de valeur si cet instrument est faux, et rien dans le protocole ne le vérifie.
+
+**Décision.** La chaîne complète — échantillonnage, appariement, estimation par risques
+concurrents, mesure d'apport incrémental — est d'abord exécutée sur une **étiquette connue pour ne
+porter aucune information** : pivots réattribués au hasard parmi des instants comparables, ou
+labels permutés en préservant la structure temporelle. Résultat nul ⇒ instrument étalonné, les
+gates peuvent commencer. Effet détecté ⇒ **le protocole est cassé**, tout résultat positif
+ultérieur est sans valeur, et la cause est corrigée avant toute autre chose.
+
+**Conséquences.** Version expérimentale de la règle de `02e` §11 : un instrument qu'on n'a jamais
+vu rendre un zéro correct n'est pas un instrument.
+
+---
+
+## ADR-092 — Politique d'usage de l'échantillon réservé à travers les gates
+
+**Statut** : figé (interlude 4) · décision ajoutée
+
+**Contexte.** L'ADR-034 réserve une fraction d'historique pour la validation finale. Le protocole
+enchaîne trois gates ; si chacun y puise, il n'en reste rien au troisième — et le résultat le plus
+structurant serait prononcé sur des données déjà vues.
+
+**Décision.** Contrôle négatif, conduite des trois gates et analyse de puissance se font sur le
+**jeu d'exploration** uniquement. Le **jeu réservé est ouvert une seule fois**, pour le verdict
+final sur la chaîne entière. Toute consultation est enregistrée avec sa date et son motif ; une
+seconde ouverture n'est pas interdite mais **dégrade explicitement la confiance**, et cette
+dégradation est publiée avec le verdict.
+
+**Conséquences.** Deux précisions de méthode associées. Le balayage du seuil d'acceptation est
+jugé comme **une courbe unique** — régularité, monotonie, cohérence — et non comme une série de
+tests indépendants, sans quoi il recrée le problème de multiplicité qu'il cherche à éviter. Et un
+résultat « déséquilibre positif, pivots négatifs » n'est pas incohérent : le déséquilibre ne
+dépend pas des pivots, et ce cas signifierait que les **événements de déplacement** portent une
+information que les **niveaux** ne portent pas — conclusion plausible qui réorienterait la
+pondération du système.

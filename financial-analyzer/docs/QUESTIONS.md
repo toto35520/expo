@@ -71,7 +71,9 @@ l'avancement de la spécification ; elles bloqueront l'implémentation. Ce fichi
 | **Q36** | Politique d'invalidation et **horizons opérationnels officiellement supportés**. Sans cette décision : fenêtre d'acceptation, expiration, barrière temporelle de réaction, profondeur d'invalidation, distance de réinitialisation et définition d'un retest distinct restent tous non fixables. | 🔴 | 04c §11 · 04d |
 | **Q37** | L'intensité d'acceptation : formule déterministe, modèle calibré, ou les deux ? *Recommandation retenue* : vecteur brut obligatoire + score déterministe reproductible + probabilité calibrée facultative — le déterministe garantit le test de double implémentation, le calibré est seul autorisé à s'exprimer en pourcentage (ADR-037). | 🟠 | 04d |
 | **Q38** | Quelle fraction de la largeur d'une zone l'incertitude de traduction peut-elle représenter avant suspension ? À tester par horizon et par largeur de zone. | 🟠 | 04d §12 |
-| **Q39** | **Séquencement du projet** : consacrer le budget aux moteurs dérivés suivants, ou à la résolution de Q1/Q19/Q36 ? Le nombre de sources d'information réellement distinctes n'a pas augmenté depuis l'étape 4.1, alors que le coût de construction croît à chaque étape. | 🔴 | 04d C9 |
+| ~~**Q39**~~ | ~~Séquencement du projet~~ — **résolue à l'interlude 4** : gel de 4.5, priorité à Q1 → Q19 → Q36 → primitifs communs → validation séquentielle (ADR-087). | ✅ | 04d C9 |
+| **Q40** | **Taille d'effet minimale économiquement utile**, dérivée des coûts réels — c'est elle qui rend l'analyse de puissance calculable, donc qui distingue « n'apporte rien » de « je n'ai pas les moyens de le savoir ». Dépend de Q36 et du modèle de coûts. | 🔴 | Interlude 4 · C1 |
+| **Q41** | L'échantillon disponible a-t-il la **puissance** de détecter cette taille d'effet, une fois pris en compte l'autocorrélation et le regroupement par événement ? Si non, les gates rendent `INDÉTERMINÉ` et non `ÉCHEC` (ADR-090). | 🔴 | Interlude 4 · C1 |
 
 ---
 
