@@ -1,0 +1,2198 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Analyste XAU/USD — outil d'analyse graphique</title>
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Analyste OR">
+<meta name="theme-color" content="#0b0e14">
+<link rel="apple-touch-icon" href="icon-or.png">
+<link rel="icon" href="icon-or.png">
+<style>
+  :root {
+    --bg: #0b0e14; --card: #12161f; --card2: #171c27; --border: #232a38;
+    --txt: #d8dee9; --dim: #7b8496; --gold: #f0b90b; --gold2: #d4a017;
+    --up: #26a69a; --down: #ef5350; --blue: #4f8ff7; --purple: #b07cf7;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { background: var(--bg); color: var(--txt); font: 14px/1.45 -apple-system, "Segoe UI", Roboto, sans-serif; padding: 12px; }
+  h1 { font-size: 17px; } h2 { font-size: 13px; text-transform: uppercase; letter-spacing: .08em; color: var(--dim); margin-bottom: 8px; }
+  .card { background: var(--card); border: 1px solid var(--border); border-radius: 12px; padding: 12px; }
+
+  /* ---- header ---- */
+  header { display: flex; align-items: center; gap: 16px; flex-wrap: wrap; margin-bottom: 12px; }
+  .price-big { font-size: 30px; font-weight: 700; font-variant-numeric: tabular-nums; }
+  .chg { font-weight: 600; font-variant-numeric: tabular-nums; }
+  .chg.up { color: var(--up); } .chg.down { color: var(--down); }
+  .tfs { display: flex; gap: 4px; margin-left: auto; }
+  .tfs button, #rerun, #bell, #capBtn {
+    background: var(--card2); color: var(--txt); border: 1px solid var(--border);
+    border-radius: 8px; padding: 6px 12px; cursor: pointer; font-weight: 600; font-size: 13px;
+  }
+  .tfs button.on { background: var(--gold); color: #000; border-color: var(--gold); }
+  .tfs button:hover:not(.on) { border-color: var(--gold2); }
+  #rerun:hover { border-color: var(--gold2); }
+  #countdown { color: var(--dim); font-size: 12px; min-width: 130px; }
+  .src-note { color: var(--dim); font-size: 11px; }
+  .live-dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: var(--up); margin-right: 5px; animation: pulse 1.6s infinite; }
+  @keyframes pulse { 0%,100% { opacity: 1 } 50% { opacity: .25 } }
+
+  /* ---- layout ---- */
+  .grid { display: grid; grid-template-columns: minmax(0, 2fr) minmax(320px, 1fr); gap: 12px; align-items: start; }
+  @media (max-width: 1000px) { .grid { grid-template-columns: 1fr; } }
+  .col { display: flex; flex-direction: column; gap: 12px; min-width: 0; }
+
+  /* ---- chart ---- */
+  #chartWrap { position: relative; }
+  #chart { width: 100%; height: 560px; display: block; cursor: crosshair; border-radius: 8px; }
+  @media (max-width: 700px) { #chart { height: 66vh; min-height: 460px; } body { padding: 8px; } header { gap: 10px; } .price-big { font-size: 26px; } }
+  #ohlc { position: absolute; top: 8px; left: 10px; font-size: 12px; color: var(--dim); font-variant-numeric: tabular-nums; pointer-events: none; white-space: nowrap; }
+  .legend { display: flex; gap: 14px; flex-wrap: wrap; font-size: 11px; color: var(--dim); margin-top: 6px; }
+  .legend .sw { display: inline-block; width: 14px; height: 3px; border-radius: 2px; vertical-align: middle; margin-right: 4px; }
+
+  /* ---- cerveau ---- */
+  #brain { max-height: 480px; overflow-y: auto; display: flex; flex-direction: column; gap: 5px; font-size: 13px; scroll-behavior: smooth; }
+  .step { display: flex; gap: 8px; padding: 5px 8px; border-radius: 8px; background: var(--card2); animation: fadein .3s; align-items: baseline; }
+  @keyframes fadein { from { opacity: 0; transform: translateY(4px) } to { opacity: 1 } }
+  .step .ic { flex: 0 0 auto; }
+  .step.good { border-left: 3px solid var(--up); }
+  .step.bad { border-left: 3px solid var(--down); }
+  .step.info { border-left: 3px solid var(--blue); }
+  .step.warn { border-left: 3px solid var(--gold); }
+  .step.head { background: none; color: var(--gold); font-weight: 700; border: none; padding-top: 10px; }
+  .thinking { color: var(--dim); font-style: italic; padding: 4px 8px; }
+  .thinking::after { content: "▋"; animation: pulse 1s infinite; }
+
+  /* ---- verdict ---- */
+  #verdict .dir { font-size: 21px; font-weight: 800; }
+  .gauge { height: 12px; border-radius: 6px; background: linear-gradient(90deg, var(--down), #666 50%, var(--up)); position: relative; margin: 10px 0 4px; }
+  .gauge .needle { position: absolute; top: -4px; width: 4px; height: 20px; background: #fff; border-radius: 2px; box-shadow: 0 0 6px #000; transition: left .8s; }
+  .gauge-lbl { display: flex; justify-content: space-between; font-size: 10px; color: var(--dim); margin-bottom: 10px; }
+  .scen { background: var(--card2); border-radius: 8px; padding: 9px 10px; margin-top: 8px; font-size: 13px; }
+  .scen b.pc { font-size: 16px; }
+  .scen .bar { height: 5px; border-radius: 3px; background: #2a3242; margin-top: 6px; overflow: hidden; }
+  .scen .bar i { display: block; height: 100%; border-radius: 3px; }
+  table { width: 100%; border-collapse: collapse; font-size: 12.5px; font-variant-numeric: tabular-nums; }
+  th { color: var(--dim); text-align: left; font-weight: 600; padding: 4px 6px; border-bottom: 1px solid var(--border); }
+  td { padding: 4px 6px; border-bottom: 1px solid var(--border); }
+  tr:last-child td { border-bottom: none; }
+  .tag { padding: 1px 7px; border-radius: 10px; font-size: 11px; font-weight: 700; }
+  .tag.up { background: rgba(38,166,154,.18); color: var(--up); }
+  .tag.down { background: rgba(239,83,80,.18); color: var(--down); }
+  .tag.flat { background: rgba(160,160,160,.15); color: #aaa; }
+
+  /* ---- décision de trade ---- */
+  .badge { display: block; text-align: center; font-size: 19px; font-weight: 800; padding: 12px; border-radius: 10px; margin-bottom: 10px; }
+  .badge.buy { background: rgba(38,166,154,.16); color: var(--up); border: 1px solid var(--up); }
+  .badge.sell { background: rgba(239,83,80,.16); color: var(--down); border: 1px solid var(--down); }
+  .badge.wait { background: rgba(240,185,11,.1); color: var(--gold); border: 1px solid var(--gold2); }
+  .badge.arm { background: rgba(255,152,0,.12); color: #ff9800; border: 1px solid #ff9800; }
+  .takeBtn { display: block; width: 100%; margin-top: 8px; background: rgba(38,166,154,.15); color: var(--up); border: 1px solid var(--up); border-radius: 8px; padding: 8px; font-weight: 700; cursor: pointer; font-size: 13px; }
+  .takeBtn:hover { background: rgba(38,166,154,.3); }
+  .dec-line { padding: 5px 0; font-size: 13.5px; }
+  .dec-line b.k { color: var(--dim); font-weight: 600; margin-right: 6px; }
+  .risk-warn { background: rgba(239,83,80,.12); border: 1px solid var(--down); border-radius: 8px; padding: 8px 10px; font-size: 12.5px; margin-top: 8px; }
+  .setup { background: var(--card2); border-radius: 8px; padding: 8px 10px; margin-bottom: 7px; }
+
+  /* ---- géo / news ---- */
+  #news { max-height: 300px; overflow-y: auto; display: flex; flex-direction: column; gap: 6px; }
+  .headline { font-size: 12.5px; padding: 6px 8px; background: var(--card2); border-radius: 8px; }
+  .headline .meta { color: var(--dim); font-size: 11px; margin-top: 2px; }
+  .geo3 { border-left: 3px solid var(--down); } .geo2 { border-left: 3px solid #ff9800; } .geo1 { border-left: 3px solid var(--gold); }
+  .radar-row { display: flex; justify-content: space-between; padding: 4px 2px; font-variant-numeric: tabular-nums; font-size: 13px; }
+  .riskoff { text-align: center; font-weight: 700; padding: 7px; border-radius: 8px; margin-top: 8px; background: var(--card2); }
+  footer { color: var(--dim); font-size: 11px; text-align: center; margin-top: 14px; }
+  .err { color: var(--down); font-size: 12px; }
+</style>
+</head>
+<body>
+
+<header>
+  <div>
+    <h1>🔮 Analyste XAU/USD</h1>
+    <span class="src-note">bougies PAXG Binance · recalées spot XAU réel · <a href="btc.html" style="color:var(--gold)">₿ voir le BTC</a></span>
+  </div>
+  <div>
+    <div class="price-big" id="px">— </div>
+    <span class="chg" id="chg"></span> <span class="src-note" id="liveTag"></span>
+    <span class="chg" id="move1m" style="font-size:12px;margin-left:8px"></span>
+  </div>
+  <div class="tfs" id="tfs">
+    <button data-tf="5m">M5</button>
+    <button data-tf="15m" class="on">M15</button>
+    <button data-tf="1h">H1</button>
+    <button data-tf="4h">H4</button>
+    <button data-tf="1d">D1</button>
+  </div>
+  <button id="rerun">⟳ Relancer l'analyse</button>
+  <button id="bell" title="Bip sonore quand un trade se déclenche ou qu'un mouvement brutal survient">🔕</button>
+  <button id="capBtn" title="Mon capital — tous les lots et montants sont calculés dessus (risque 2 %/trade)">💰</button>
+  <span id="countdown"></span>
+</header>
+
+<div id="spikeBanner" style="display:none;border:1px solid var(--gold);background:var(--card);border-radius:10px;padding:8px 12px;margin-bottom:10px;font-weight:700;text-align:center"></div>
+
+<div class="grid">
+  <div class="col">
+    <div class="card" id="chartWrap">
+      <canvas id="chart"></canvas>
+      <div id="ohlc"></div>
+      <div class="legend">
+        <span><span class="sw" style="background:var(--gold)"></span>EMA 20</span>
+        <span><span class="sw" style="background:var(--blue)"></span>EMA 50</span>
+        <span><span class="sw" style="background:var(--purple)"></span>EMA 200</span>
+        <span><span class="sw" style="background:rgba(79,143,247,.5)"></span>Bollinger 20</span>
+        <span><span class="sw" style="background:#888"></span>Supports / Résistances (épaisseur = nb de touches)</span>
+        <span><span class="sw" style="background:rgba(38,166,154,.85)"></span>Trendlines (TL n✓ = touches)</span>
+        <span><span class="sw" style="background:rgba(240,185,11,.5)"></span>Fibonacci</span>
+        <span><span class="sw" style="background:#22d3ee"></span>VWAP ±1σ</span>
+        <span><span class="sw" style="background:rgba(148,163,184,.5)"></span>Profil de volume (POC/VAH/VAL)</span>
+        <span>▦ FVG · 💧 liquidité · ⚡ sweep · 🔺🔻 figures · molette = zoom · glisser = déplacer</span>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2>💼 Décision — je trade maintenant ou plus tard ?</h2>
+      <div id="decision"><span class="thinking">analyse en cours</span></div>
+    </div>
+
+    <div class="card" id="tradeCard" style="display:none">
+      <h2>📈 Mon trade en cours — suivi tick par tick</h2>
+      <div id="tradeBody"></div>
+    </div>
+
+    <div class="card">
+      <h2>📊 Auto-analyse — je vérifie mes propres trades</h2>
+      <div id="journal"></div>
+      <button onclick="declareTrade()" class="takeBtn" style="margin-top:8px">📥 J'ai DÉJÀ un trade en cours — le déclarer ici</button>
+      <div style="display:flex;gap:6px;margin-top:8px;flex-wrap:wrap">
+        <button onclick="sauverMemoire()" style="flex:1;min-width:150px;background:rgba(240,185,11,.12);color:var(--gold);border:1px solid var(--gold2);border-radius:8px;padding:8px;cursor:pointer;font-weight:700;font-size:12.5px">💾 Sauvegarder ma mémoire</button>
+        <button onclick="restaurerMemoire()" style="flex:1;min-width:150px;background:var(--card2);color:var(--txt);border:1px solid var(--border);border-radius:8px;padding:8px;cursor:pointer;font-size:12.5px">♻️ Restaurer ma mémoire</button>
+      </div>
+      <div class="dec-line" style="font-size:11.5px;color:var(--dim);margin-top:4px">La mémoire (journal, capital, trade) vit sur CE téléphone. Sauvegarde-la sur Telegram avant de vider le cache ou de changer d'appareil.</div>
+      <button onclick="resetJournal()" style="margin-top:8px;background:var(--card2);color:var(--dim);border:1px solid var(--border);border-radius:8px;padding:6px 10px;cursor:pointer;font-size:12px">🗑 Remise à zéro — nouveau départ démo</button>
+    </div>
+
+    <div class="card">
+      <h2>🎯 Radar d'opportunités — ⚡ scalps & 🌊 swings, chaque trade avec son plan</h2>
+      <div id="setups"><span class="thinking">analyse en cours</span></div>
+    </div>
+
+    <div class="card" id="verdict">
+      <h2>Verdict — ce que je pense qu'il va se passer</h2>
+      <div id="verdictBody"><span class="thinking">analyse en cours</span></div>
+    </div>
+
+    <div class="card">
+      <h2>Vue multi-timeframes</h2>
+      <table id="mtf"><thead><tr><th>TF</th><th>Tendance</th><th>RSI</th><th>MACD</th><th>Structure</th><th>Lecture</th></tr></thead><tbody></tbody></table>
+    </div>
+  </div>
+
+  <div class="col">
+    <div class="card">
+      <h2>🧠 Cerveau d'analyse <span style="float:right;color:var(--dim);font-weight:400" id="brainClock"></span></h2>
+      <div id="brain"></div>
+    </div>
+
+    <div class="card">
+      <h2>📡 Radar risk-off (les marchés qui bougent avant l'or)</h2>
+      <div id="radar"><span class="thinking">chargement</span></div>
+    </div>
+
+    <div class="card">
+      <h2>🌍 Géopolitique & actualité (impact or)</h2>
+      <div id="calBox" style="margin-bottom:8px"></div>
+      <div id="news"><span class="thinking">chargement</span></div>
+    </div>
+  </div>
+</div>
+
+<footer>Outil d'analyse — aucune exécution d'ordre. Ceci n'est pas un conseil financier. · <b>version 2026.08.06-h</b></footer>
+
+<script>
+"use strict";
+/* ================= sources de données ================= */
+const BINANCE_HOSTS = ["https://api.binance.com", "https://data-api.binance.vision"];
+const GOLD_API = "https://api.gold-api.com/price/XAU";
+const API_BASES = ["", "https://oracle-xauusd.vercel.app"]; // relatif en prod, secours = prod déployée (CORS ouvert)
+
+async function klines(interval, limit, startTime) {
+  for (const h of BINANCE_HOSTS) {
+    try {
+      const r = await fetch(`${h}/api/v3/klines?symbol=PAXGUSDT&interval=${interval}&limit=${limit}${startTime ? "&startTime=" + startTime : ""}`);
+      if (!r.ok) continue;
+      const raw = await r.json();
+      return raw.map(k => ({ t: k[0], o: +k[1], h: +k[2], l: +k[3], c: +k[4], v: +k[5] }));
+    } catch {}
+  }
+  throw new Error("Binance indisponible");
+}
+async function spotXAU() {
+  try { const j = await fetch(GOLD_API).then(r => r.json()); return j.price || null; } catch { return null; }
+}
+async function apiGet(path) {
+  for (const b of API_BASES) {
+    try { const r = await fetch(b + path); if (r.ok) return await r.json(); } catch {}
+  }
+  return null;
+}
+
+/* ================= indicateurs ================= */
+const last = a => a[a.length - 1];
+function ema(vals, p) { const k = 2 / (p + 1); let e; return vals.map((v, i) => e = i ? v * k + e * (1 - k) : v); }
+function sma(vals, p) { const out = []; let s = 0; for (let i = 0; i < vals.length; i++) { s += vals[i]; if (i >= p) s -= vals[i - p]; out.push(i >= p - 1 ? s / p : null); } return out; }
+function rsiArr(closes, p = 14) {
+  const out = [null]; let g = 0, l = 0;
+  for (let i = 1; i < closes.length; i++) {
+    const d = closes[i] - closes[i - 1], up = Math.max(d, 0), dn = Math.max(-d, 0);
+    if (i <= p) { g += up / p; l += dn / p; out.push(null); if (i === p) out[i] = 100 - 100 / (1 + g / (l || 1e-9)); }
+    else { g = (g * (p - 1) + up) / p; l = (l * (p - 1) + dn) / p; out.push(100 - 100 / (1 + g / (l || 1e-9))); }
+  }
+  return out;
+}
+function macdArr(closes) {
+  const e12 = ema(closes, 12), e26 = ema(closes, 26);
+  const line = closes.map((_, i) => e12[i] - e26[i]);
+  const sig = ema(line, 9);
+  return { line, sig, hist: line.map((v, i) => v - sig[i]) };
+}
+function atrArr(c, p = 14) {
+  const tr = c.map((k, i) => i ? Math.max(k.h - k.l, Math.abs(k.h - c[i - 1].c), Math.abs(k.l - c[i - 1].c)) : k.h - k.l);
+  return ema(tr, p);
+}
+function bollArr(closes, p = 20, m = 2) {
+  const mid = sma(closes, p), up = [], lo = [];
+  for (let i = 0; i < closes.length; i++) {
+    if (mid[i] == null) { up.push(null); lo.push(null); continue; }
+    let s = 0; for (let j = i - p + 1; j <= i; j++) s += (closes[j] - mid[i]) ** 2;
+    const sd = Math.sqrt(s / p); up.push(mid[i] + m * sd); lo.push(mid[i] - m * sd);
+  }
+  return { mid, up, lo };
+}
+
+/* ---- VWAP : prix moyen pondéré par le volume (le prix des institutionnels) ---- */
+/* daily=true : reset chaque jour UTC (session) ; false : ancré sur tout l'historique (H4/D1) */
+function vwapArr(c, daily) {
+  const line = [], up = [], dn = [];
+  let day = null, pv = 0, vv = 0, pv2 = 0;
+  for (const k of c) {
+    const d = Math.floor(k.t / 86400000);
+    if (daily && d !== day) { day = d; pv = 0; vv = 0; pv2 = 0; }
+    const tp = (k.h + k.l + k.c) / 3;
+    pv += tp * k.v; vv += k.v; pv2 += tp * tp * k.v;
+    const w = vv ? pv / vv : tp;
+    const sd = vv ? Math.sqrt(Math.max(0, pv2 / vv - w * w)) : 0;
+    line.push(w); up.push(w + sd); dn.push(w - sd);
+  }
+  return { line, up, dn };
+}
+
+/* ---- profil de volume : où l'argent a réellement échangé (POC + value area 70 %) ---- */
+function volumeProfile(c, nb = 40) {
+  let lo = Infinity, hi = -Infinity;
+  for (const k of c) { lo = Math.min(lo, k.l); hi = Math.max(hi, k.h); }
+  const step = (hi - lo) / nb || 1;
+  const bins = new Array(nb).fill(0);
+  for (const k of c) {
+    const b0 = Math.max(0, Math.min(nb - 1, Math.floor((k.l - lo) / step)));
+    const b1 = Math.max(0, Math.min(nb - 1, Math.floor((k.h - lo) / step)));
+    const share = k.v / (b1 - b0 + 1); // volume réparti sur les prix traversés
+    for (let b = b0; b <= b1; b++) bins[b] += share;
+  }
+  const total = bins.reduce((a, b) => a + b, 0) || 1;
+  const pocI = bins.indexOf(Math.max(...bins));
+  let vol = bins[pocI], loI = pocI, hiI = pocI;   // value area = 70 % du volume autour du POC
+  while (vol < total * 0.7 && (loI > 0 || hiI < nb - 1)) {
+    const dLo = loI > 0 ? bins[loI - 1] : -1, dHi = hiI < nb - 1 ? bins[hiI + 1] : -1;
+    if (dHi >= dLo) { hiI++; vol += bins[hiI]; } else { loI--; vol += bins[loI]; }
+  }
+  const P = i => lo + (i + 0.5) * step;
+  return { bins, lo, step, max: Math.max(...bins), poc: P(pocI), vah: P(hiI), val: P(loI) };
+}
+
+/* ---- agrégation M1 → M5 : pour la porte de timing d'entrée ---- */
+function aggM5(c1) {
+  const map = new Map();
+  for (const k of c1) {
+    const b = Math.floor(k.t / 300000);
+    const cur = map.get(b);
+    if (!cur) map.set(b, { t: b * 300000, o: k.o, h: k.h, l: k.l, c: k.c });
+    else { cur.h = Math.max(cur.h, k.h); cur.l = Math.min(cur.l, k.l); cur.c = k.c; }
+  }
+  return [...map.values()];
+}
+
+/* ---- micro-lecture M1 : pour détecter aussi les PETITES opportunités (scalps) ---- */
+function m1Snapshot(c1) {
+  const closes = c1.map(k => k.c);
+  const e20 = last(ema(closes, 20)), e50 = last(ema(closes, 50));
+  const atr1 = last(atrArr(c1));
+  const seg = c1.slice(-15);
+  const hi = Math.max(...seg.map(k => k.h)), lo = Math.min(...seg.map(k => k.l));
+  // micro-sweep : mèche au-delà des extrêmes des 20 dernières minutes puis reclôture de l'autre côté
+  const base = c1.slice(-22, -2);
+  const bLo = Math.min(...base.map(k => k.l)), bHi = Math.max(...base.map(k => k.h));
+  const last2 = c1.slice(-2);
+  const sweepUp = last2.some(k => k.l < bLo && k.c > bLo);
+  const sweepDn = last2.some(k => k.h > bHi && k.c < bHi);
+  return { e20, e50, atr1, hi, lo, sweepUp, sweepDn };
+}
+
+/* ---- points pivots journaliers (méthode classique) ---- */
+function dailyPivots(d1) {
+  const y = d1[d1.length - 2]; // journée précédente clôturée
+  const P = (y.h + y.l + y.c) / 3;
+  return { P, R1: 2 * P - y.l, S1: 2 * P - y.h, R2: P + (y.h - y.l), S2: P - (y.h - y.l) };
+}
+
+/* ---- swings fractals + regroupement en niveaux S/R ---- */
+function swings(c, look = 3) {
+  const pts = [];
+  for (let i = look; i < c.length - look; i++) {
+    let hi = true, lo = true;
+    for (let j = 1; j <= look; j++) {
+      if (c[i].h < c[i - j].h || c[i].h < c[i + j].h) hi = false;
+      if (c[i].l > c[i - j].l || c[i].l > c[i + j].l) lo = false;
+    }
+    if (hi) pts.push({ i, p: c[i].h, hi: true });
+    if (lo) pts.push({ i, p: c[i].l, hi: false });
+  }
+  return pts;
+}
+function srLevels(c, atrv) {
+  const pts = swings(c).sort((a, b) => a.p - b.p);
+  const tol = atrv * 0.5, out = [];
+  let grp = [];
+  const flush = () => { if (grp.length) out.push({ p: grp.reduce((s, x) => s + x.p, 0) / grp.length, n: grp.length, lastI: Math.max(...grp.map(x => x.i)) }); grp = []; };
+  for (const pt of pts) {
+    if (grp.length && pt.p - grp[0].p > tol) flush();
+    grp.push(pt);
+  }
+  flush();
+  return out.filter(l => l.n >= 2).sort((a, b) => b.n - a.n).slice(0, 7);
+}
+/* ---- structure : HH/HL vs LH/LL sur les derniers swings ---- */
+function structure(c) {
+  const pts = swings(c);
+  const highs = pts.filter(p => p.hi).slice(-3), lows = pts.filter(p => !p.hi).slice(-3);
+  if (highs.length < 2 || lows.length < 2) return { label: "indéterminée", dir: 0 };
+  const hh = highs[highs.length - 1].p > highs[highs.length - 2].p;
+  const hl = lows[lows.length - 1].p > lows[lows.length - 2].p;
+  if (hh && hl) return { label: "HH + HL (impulsion haussière)", dir: 1 };
+  if (!hh && !hl) return { label: "LH + LL (impulsion baissière)", dir: -1 };
+  return { label: hh ? "HH mais LL — élargissement" : "range / compression", dir: 0 };
+}
+
+/* ---- lignes de tendance obliques : meilleure droite passant par 2 swings, validée par les touches ---- */
+function trendlines(c, atrv) {
+  const pts = swings(c, 3);
+  const mk = (arr, isLow) => {
+    let best = null;
+    for (let a = 0; a < arr.length - 1; a++) for (let b = a + 1; b < arr.length; b++) {
+      const p1 = arr[a], p2 = arr[b];
+      if (p2.i - p1.i < 8) continue;
+      const slope = (p2.p - p1.p) / (p2.i - p1.i);
+      let ok = true, touches = 0;
+      for (let i = p1.i; i < c.length; i++) {
+        const lv = p1.p + slope * (i - p1.i);
+        if ((isLow ? c[i].c - lv : lv - c[i].c) < -0.5 * atrv) { ok = false; break; } // clôture qui traverse = ligne morte
+        if (Math.abs((isLow ? c[i].l : c[i].h) - lv) < 0.2 * atrv) touches++;
+      }
+      if (ok && touches >= 3 && (!best || touches > best.touches)) best = { i0: p1.i, p0: p1.p, slope, touches, isLow };
+    }
+    return best;
+  };
+  const out = [mk(pts.filter(p => !p.hi).slice(-9), true), mk(pts.filter(p => p.hi).slice(-9), false)].filter(Boolean);
+  out.forEach(t => t.now = t.p0 + t.slope * (c.length - 1 - t.i0)); // valeur de la ligne sur la bougie actuelle
+  return out;
+}
+
+/* ---- retracement de Fibonacci sur la dernière impulsion majeure (120 bougies) ---- */
+function fibLevels(c) {
+  const seg = c.slice(-120), off = c.length - seg.length;
+  let loI = 0, hiI = 0;
+  seg.forEach((k, i) => { if (k.l < seg[loI].l) loI = i; if (k.h > seg[hiI].h) hiI = i; });
+  const up = loI < hiI, lo = seg[loI].l, hi = seg[hiI].h;
+  if (hi - lo <= 0) return null;
+  const levels = [0.382, 0.5, 0.618, 0.786].map(r => ({ r, p: up ? hi - (hi - lo) * r : lo + (hi - lo) * r }));
+  return { up, lo, hi, levels, i0: off + Math.min(loI, hiI) };
+}
+
+/* ---- fair value gaps (déséquilibres) non comblés ---- */
+function fvgZones(c, atrv) {
+  const zones = [];
+  for (let i = Math.max(2, c.length - 80); i < c.length; i++) {
+    if (c[i - 2].h < c[i].l) zones.push({ i: i - 1, top: c[i].l, bot: c[i - 2].h, bull: true });
+    if (c[i - 2].l > c[i].h) zones.push({ i: i - 1, top: c[i - 2].l, bot: c[i].h, bull: false });
+  }
+  return zones.filter(z => {
+    if (z.top - z.bot < 0.3 * atrv) return false;
+    for (let j = z.i + 2; j < c.length; j++) {         // comblé si le prix a retraversé la zone
+      if (z.bull && c[j].l <= z.bot) return false;
+      if (!z.bull && c[j].h >= z.top) return false;
+    }
+    return true;
+  }).slice(-4);
+}
+
+/* ---- liquidité : highs/lows égaux (pools de stops) + sweeps récents (chasse aux stops) ---- */
+function liquidity(c, atrv) {
+  const pts = swings(c, 3);
+  let pools = [];
+  const grp = (arr, hi) => {
+    for (let a = 0; a < arr.length - 1; a++) for (let b = a + 1; b < arr.length; b++)
+      if (Math.abs(arr[a].p - arr[b].p) < 0.2 * atrv && arr[b].i - arr[a].i >= 5)
+        pools.push({ p: (arr[a].p + arr[b].p) / 2, hi, i: arr[b].i });
+  };
+  grp(pts.filter(p => p.hi).slice(-6), true);
+  grp(pts.filter(p => !p.hi).slice(-6), false);
+  pools.sort((a, b) => a.p - b.p);
+  pools = pools.filter((p, i) => !i || p.p - pools[i - 1].p > 0.3 * atrv); // dédoublonnage
+  const sweeps = [];
+  for (const pool of pools)
+    for (let i = Math.max(pool.i + 1, c.length - 6); i < c.length; i++) {
+      if (pool.hi && c[i].h > pool.p + 0.1 * atrv && c[i].c < pool.p) sweeps.push({ i, p: pool.p, dir: -1 });
+      if (!pool.hi && c[i].l < pool.p - 0.1 * atrv && c[i].c > pool.p) sweeps.push({ i, p: pool.p, dir: 1 });
+    }
+  return { pools, sweeps: sweeps.slice(-2) };
+}
+
+/* ---- double top / double bottom (formés ou en formation) ---- */
+function doublePatterns(c, atrv) {
+  const pts = swings(c, 3), out = [];
+  const hs = pts.filter(p => p.hi).slice(-2), ls = pts.filter(p => !p.hi).slice(-2);
+  const price = c[c.length - 1].c;
+  if (hs.length === 2 && Math.abs(hs[0].p - hs[1].p) < 0.35 * atrv && hs[1].i - hs[0].i >= 6 && hs[1].i > c.length - 40) {
+    const neck = Math.min(...c.slice(hs[0].i, hs[1].i + 1).map(k => k.l));
+    out.push({ name: "Double top", dir: -1, trigger: neck, done: price < neck, at: hs[1].p });
+  }
+  if (ls.length === 2 && Math.abs(ls[0].p - ls[1].p) < 0.35 * atrv && ls[1].i - ls[0].i >= 6 && ls[1].i > c.length - 40) {
+    const neck = Math.max(...c.slice(ls[0].i, ls[1].i + 1).map(k => k.h));
+    out.push({ name: "Double bottom", dir: 1, trigger: neck, done: price > neck, at: ls[1].p });
+  }
+  return out;
+}
+
+/* ---- session de trading en cours ---- */
+function sessionInfo(now = new Date()) {
+  const h = now.getUTCHours();
+  if (h >= 7 && h < 12) return { name: "Londres", note: "bonne liquidité, les vraies tendances démarrent souvent ici" };
+  if (h >= 12 && h < 16) return { name: "Londres + New York (chevauchement)", note: "le pic de volume de la journée — les cassures sont les plus fiables" };
+  if (h >= 16 && h < 21) return { name: "New York", note: "liquidité correcte, attention aux retournements d'après-midi US" };
+  return { name: "Asie", note: "liquidité faible — les cassures sont souvent des pièges, préfère les ranges" };
+}
+
+/* ---- figures de bougies (sur les N dernières) ---- */
+function detectPatterns(c, lookback = 45) {
+  const res = [];
+  const body = k => Math.abs(k.c - k.o), range = k => k.h - k.l || 1e-9;
+  const upW = k => k.h - Math.max(k.o, k.c), loW = k => Math.min(k.o, k.c) - k.l;
+  const green = k => k.c > k.o, red = k => k.c < k.o;
+  const start = Math.max(2, c.length - lookback);
+  for (let i = start; i < c.length; i++) {
+    const k = c[i], p = c[i - 1];
+    const trendBefore = c[i - 1].c - c[Math.max(0, i - 6)].c; // contexte : montait ou baissait ?
+    if (body(k) / range(k) < 0.1 && range(k) > body(p)) res.push({ i, name: "Doji (indécision)", dir: 0 });
+    else if (loW(k) > 2 * body(k) && upW(k) < body(k) && trendBefore < 0) res.push({ i, name: "Marteau", dir: 1 });
+    else if (upW(k) > 2 * body(k) && loW(k) < body(k) && trendBefore > 0) res.push({ i, name: "Étoile filante", dir: -1 });
+    else if (green(k) && red(p) && k.c > p.o && k.o < p.c && body(k) > body(p) * 1.1) res.push({ i, name: "Avalement haussier", dir: 1 });
+    else if (red(k) && green(p) && k.c < p.o && k.o > p.c && body(k) > body(p) * 1.1) res.push({ i, name: "Avalement baissier", dir: -1 });
+    else if (loW(k) / range(k) > 0.66) res.push({ i, name: "Pin bar bas (rejet)", dir: 1 });
+    else if (upW(k) / range(k) > 0.66) res.push({ i, name: "Pin bar haut (rejet)", dir: -1 });
+    if (i >= 2) {
+      const a = c[i - 2], b2 = c[i - 1];
+      const strong = x => body(x) / range(x) > 0.6;
+      if (green(a) && green(b2) && green(k) && strong(a) && strong(b2) && strong(k) && k.c > b2.c && b2.c > a.c)
+        res.push({ i, name: "3 soldats blancs", dir: 1 });
+      if (red(a) && red(b2) && red(k) && strong(a) && strong(b2) && strong(k) && k.c < b2.c && b2.c < a.c)
+        res.push({ i, name: "3 corbeaux noirs", dir: -1 });
+    }
+  }
+  // une seule figure par bougie (garde la plus significative = la dernière poussée)
+  const seen = new Map();
+  for (const r of res) seen.set(r.i, r);
+  return [...seen.values()];
+}
+
+/* ================= gestion du risque (mêmes règles que le bot) ================= */
+/* capital configurable : demandé au premier lancement, modifiable via le bouton 💰 (démo 3000, réel = ton solde) */
+const CAP_KEY = "analyste_capital", RISK_PCT = 0.02, MIN_LOT = 0.01, LOT_STEP = 0.01;
+let CAPITAL_EUR = parseFloat(localStorage.getItem(CAP_KEY)) > 0 ? parseFloat(localStorage.getItem(CAP_KEY)) : 960;
+let eurusd = 1.08; // rafraîchi à chaque analyse (EURUSDT Binance)
+const TF_MIN = { "5m": 5, "15m": 15, "1h": 60, "4h": 240, "1d": 1440 };
+
+/* ---- horaires du marché de l'or (broker) : fermé le week-end + rollover 21h-22h UTC ---- */
+function marketStatus(now = new Date()) {
+  const d = now.getUTCDay(), h = now.getUTCHours() + now.getUTCMinutes() / 60;
+  if (d === 6 || (d === 5 && h >= 21) || (d === 0 && h < 22)) {
+    const t = new Date(now);
+    t.setUTCDate(now.getUTCDate() + (d === 5 ? 2 : d === 6 ? 1 : 0));
+    t.setUTCHours(22, 0, 0, 0);
+    return { open: false, why: "week-end : le marché de l'or est fermé chez ton broker (PAXG cote encore, mais tu ne peux pas exécuter)", reopenAt: t };
+  }
+  if (h >= 21 && h < 22) {
+    const t = new Date(now); t.setUTCHours(22, 0, 0, 0);
+    return { open: false, why: "rollover quotidien (21h-22h UTC) : spreads énormes, exécution dangereuse", reopenAt: t };
+  }
+  return { open: true };
+}
+function fmtEta(min) {
+  if (min < 60) return `≈ ${Math.max(1, Math.round(min))} min`;
+  const h = Math.floor(min / 60), m = Math.round(min % 60);
+  return `≈ ${h} h${m ? " " + String(m).padStart(2, "0") : ""}`;
+}
+function atTime(date) {
+  return date.toLocaleString("fr-FR", { weekday: "long", hour: "2-digit", minute: "2-digit" });
+}
+/* lot pour risquer RISK_PCT du capital : 0,01 lot XAU = 1 $ de P&L par $ de mouvement */
+function lotFor(slDist) {
+  const riskUSD = CAPITAL_EUR * RISK_PCT * eurusd;
+  const lot = Math.floor(riskUSD / (slDist * 100) / LOT_STEP) * LOT_STEP;
+  const minRiskEUR = slDist * 100 * MIN_LOT / eurusd;
+  return { lot: +lot.toFixed(2), riskEUR: CAPITAL_EUR * RISK_PCT, minRiskEUR, tooWide: lot < MIN_LOT };
+}
+
+/* ================= état global ================= */
+let TF = "15m";
+let gRatio = 1, gSpot = null;
+let D = null;          // données de l'analyse courante {candles, ind, sr, piv, patterns, ...}
+const DEF_COUNT = () => window.innerWidth < 700 ? 70 : 120; // moins de bougies sur mobile = bougies plus grosses/lisibles
+let view = { count: DEF_COUNT(), end: null }; // fenêtre visible (end = index de la dernière bougie affichée)
+let cross = null;      // position du curseur
+let newsData = null, radarData = null, ctxFetchedAt = 0;
+let analysisSeq = 0;   // annule les narrations obsolètes
+/* anti-girouette : un ordre donné reste verrouillé 5 min ; un retournement exige 3 analyses consécutives */
+let sigLock = null, pendingFlip = null;
+const SIG_LOCK_MS = 5 * 60000, FLIP_CONFIRM = 3;
+/* signal actif : un ordre donné VIT jusqu'à stop/objectif/retournement confirmé — jamais de yo-yo après ton entrée */
+let activeSig = null;
+const SIG_KEY = "analyste_sig_xau";
+try { activeSig = JSON.parse(localStorage.getItem(SIG_KEY) || "null"); } catch {}
+
+/* ================= cerveau : narration en direct ================= */
+const brainEl = document.getElementById("brain");
+const sleep = ms => new Promise(r => setTimeout(r, ms));
+function brainSep(txt) {
+  const d = document.createElement("div");
+  d.className = "step head"; d.textContent = `— ${txt} —`;
+  brainEl.appendChild(d); trimBrain();
+}
+async function say(icon, text, cls = "info", delay = 420, seq) {
+  if (seq !== analysisSeq) return; // une nouvelle analyse a démarré : on se tait
+  const th = document.createElement("div");
+  th.className = "thinking"; th.textContent = "analyse";
+  brainEl.appendChild(th); brainEl.scrollTop = brainEl.scrollHeight;
+  await sleep(delay);
+  th.remove();
+  if (seq !== analysisSeq) return;
+  const d = document.createElement("div");
+  d.className = "step " + cls;
+  d.innerHTML = `<span class="ic">${icon}</span><span class="txt">${text}</span>`;
+  brainEl.appendChild(d); trimBrain();
+  brainEl.scrollTop = brainEl.scrollHeight;
+}
+function trimBrain() { while (brainEl.children.length > 120) brainEl.firstChild.remove(); }
+
+/* ================= analyse d'un timeframe (pour la vue multi-TF) ================= */
+function tfSnapshot(c) {
+  const closes = c.map(k => k.c);
+  const e20 = last(ema(closes, 20)), e50 = last(ema(closes, 50)), e200 = last(ema(closes, 200));
+  const r = last(rsiArr(closes)), m = macdArr(closes);
+  const st = structure(c);
+  let score = 0;
+  if (e20 > e50) score += 2; else score -= 2;
+  if (closes[closes.length - 1] > e200) score += 1.5; else score -= 1.5;
+  if (last(m.hist) > 0) score += 1; else score -= 1;
+  const histRising = last(m.hist) > m.hist[m.hist.length - 3];
+  score += histRising ? 0.5 : -0.5;
+  score += st.dir;
+  if (r >= 72) score -= 0.8; if (r <= 28) score += 0.8;
+  return { e20, e50, e200, rsi: r, hist: last(m.hist), histRising, st, score, price: last(closes) };
+}
+
+/* ================= analyse complète ================= */
+let scanStart = 0; // effet visuel de balayage pendant l'analyse
+async function analyze(fullNarration = true) {
+  const seq = ++analysisSeq;
+  scanStart = performance.now(); if (D) draw(); // lance le balayage visible du graphique
+  const t0 = new Date();
+  document.getElementById("brainClock").textContent = t0.toLocaleTimeString("fr-FR");
+  brainSep(`analyse ${t0.toLocaleTimeString("fr-FR")} · ${TF.toUpperCase()}`);
+  const S = (i, t, c, d) => say(i, t, c, fullNarration ? d : Math.min(d, 150), seq);
+
+  await S("📥", `Chargement des bougies ${TF} + M15/H1/H4/D1 et du prix spot XAU/USD…`, "info", 200);
+
+  let cRaw, c15, c1h, c4h, d1, c1mRaw;
+  try {
+    let eu;
+    [cRaw, c15, c1h, c4h, d1, c1mRaw, gSpot, eu] = await Promise.all([
+      klines(TF, 300), klines("15m", 300), klines("1h", 300), klines("4h", 300), klines("1d", 80), klines("1m", 200), spotXAU(),
+      fetch(BINANCE_HOSTS[0] + "/api/v3/ticker/price?symbol=EURUSDT").then(r => r.json()).catch(() => null),
+    ]);
+    if (eu?.price) eurusd = +eu.price;
+  } catch (e) {
+    await S("❌", `Impossible de charger les données : ${e.message}`, "bad", 100);
+    return;
+  }
+  if (seq !== analysisSeq) return;
+
+  // recalage sur le prix réel XAU/USD
+  const paxgLast = last(cRaw).c;
+  gRatio = gSpot ? gSpot / paxgLast : 1;
+  const scale = arr => arr.map(k => ({ ...k, o: k.o * gRatio, h: k.h * gRatio, l: k.l * gRatio, c: k.c * gRatio }));
+  const c = scale(cRaw); c15 = scale(c15); c1h = scale(c1h); c4h = scale(c4h); d1 = scale(d1);
+  const c1m = scale(c1mRaw);
+  await S("💲", gSpot
+    ? `Prix spot réel : <b>${fmt(gSpot)} $</b> — bougies PAXG recalées (ratio ${gRatio.toFixed(5)}).`
+    : `Spot indisponible — j'utilise PAXG brut (~0,2 % d'écart).`, "info", 350);
+
+  // indicateurs sur le TF affiché
+  const closes = c.map(k => k.c);
+  const ind = {
+    e20: ema(closes, 20), e50: ema(closes, 50), e200: ema(closes, 200),
+    rsi: rsiArr(closes), macd: macdArr(closes), atr: atrArr(c), boll: bollArr(closes),
+  };
+  const atrv = last(ind.atr);
+  const price = last(closes);
+  const sr = srLevels(c, atrv);
+  const piv = dailyPivots(d1);
+  const patterns = detectPatterns(c);
+  const st = structure(c);
+  const tls = trendlines(c, atrv);
+  const fib = fibLevels(c);
+  const fvg = fvgZones(c, atrv);
+  const liq = liquidity(c, atrv);
+  const dbls = doublePatterns(c, atrv);
+  const vwap = vwapArr(c, (TF_MIN[TF] || 15) <= 60); // session sur M5/M15/H1, ancré sur H4/D1
+  const prof = volumeProfile(c);
+  const m1 = m1Snapshot(c1m);
+
+  if (seq !== analysisSeq) return; // une analyse plus récente a pris la main
+  D = { c, ind, sr, piv, patterns, price, atrv, tls, fib, fvg, liq, dbls, vwap, prof };
+  document.getElementById("px").textContent = fmt(price) + " $"; // en attendant le premier tick WebSocket
+  view = { count: Math.min(view.count, c.length), end: c.length - 1 };
+  draw();
+
+  /* ---- narration : tendance ---- */
+  const e20v = last(ind.e20), e50v = last(ind.e50), e200v = last(ind.e200);
+  const trendUp = e20v > e50v, aboveLT = price > e200v;
+  await S("📈", `EMA20 <b>${fmt(e20v)}</b> ${trendUp ? ">" : "<"} EMA50 <b>${fmt(e50v)}</b> → dynamique court terme <b>${trendUp ? "haussière" : "baissière"}</b>. Prix ${aboveLT ? "au-dessus" : "sous"} l'EMA200 (${fmt(e200v)}) : fond ${aboveLT ? "haussier" : "baissier"}.`, trendUp ? "good" : "bad");
+
+  /* ---- structure ---- */
+  await S("🏗️", `Structure des swings : <b>${st.label}</b>.`, st.dir > 0 ? "good" : st.dir < 0 ? "bad" : "warn");
+
+  /* ---- momentum ---- */
+  const r = last(ind.rsi), hist = last(ind.macd.hist);
+  const histPrev = ind.macd.hist[ind.macd.hist.length - 4];
+  const histRising = hist > histPrev;
+  let rTxt = r >= 70 ? "suracheté — risque de respiration" : r <= 30 ? "survendu — rebond technique possible" : r >= 55 ? "momentum acheteur sain" : r <= 45 ? "momentum vendeur" : "zone neutre";
+  await S("⚡", `RSI(14) = <b>${r.toFixed(1)}</b> : ${rTxt}. MACD histogramme ${hist >= 0 ? "positif" : "négatif"} et ${histRising ? "en expansion" : "en contraction"} → la poussée ${hist >= 0 === histRising ? "s'accélère" : "s'essouffle"}.`, r >= 70 || r <= 30 ? "warn" : hist >= 0 ? "good" : "bad");
+
+  /* ---- divergence RSI simple ---- */
+  const divg = detectDivergence(c, ind.rsi);
+  if (divg) await S("🔀", `<b>Divergence ${divg > 0 ? "haussière" : "baissière"} RSI/prix</b> détectée sur les derniers swings — signal d'alerte ${divg > 0 ? "de retournement haussier" : "d'essoufflement de la hausse"}.`, "warn");
+
+  /* ---- volatilité ---- */
+  const bw = (last(ind.boll.up) - last(ind.boll.lo)) / price * 100;
+  const squeeze = bw < percentileBW(ind.boll, closes) * 0.8;
+  await S("🌡️", `ATR = <b>${fmt(atrv)} $</b> par bougie · bandes de Bollinger ${squeeze ? "<b>resserrées (squeeze)</b> — une expansion de volatilité se prépare" : `largeur ${bw.toFixed(2)} % — volatilité normale`}.`, squeeze ? "warn" : "info");
+
+  /* ---- volume ---- */
+  const vols = c.map(k => k.v), vAvg = vols.slice(-21, -1).reduce((a, b) => a + b, 0) / 20;
+  const vLast = last(vols);
+  if (vLast > vAvg * 1.8) await S("📢", `Volume ×${(vLast / vAvg).toFixed(1)} vs moyenne sur la dernière bougie — <b>afflux de participants</b>, le mouvement en cours est soutenu.`, "warn");
+
+  /* ---- figures ---- */
+  const recentPat = patterns.filter(p => p.i >= c.length - 6);
+  if (recentPat.length) {
+    for (const p of recentPat.slice(-3)) {
+      await S(p.dir > 0 ? "🔺" : p.dir < 0 ? "🔻" : "◽", `Figure détectée (${ago(c, p.i)}) : <b>${p.name}</b>${p.dir ? ` — biais ${p.dir > 0 ? "haussier" : "baissier"}` : ""}.`, p.dir > 0 ? "good" : p.dir < 0 ? "bad" : "warn");
+    }
+  } else await S("◽", `Aucune figure de bougie marquante sur les 6 dernières bougies.`, "info", 300);
+
+  /* ---- niveaux ---- */
+  const above = sr.filter(l => l.p > price).sort((a, b) => a.p - b.p);
+  const below = sr.filter(l => l.p < price).sort((a, b) => b.p - a.p);
+  const res1 = above[0], sup1 = below[0];
+  await S("🧱", `Niveaux les plus travaillés : résistance <b>${res1 ? fmt(res1.p) + " $ (" + res1.n + " touches)" : "—"}</b> · support <b>${sup1 ? fmt(sup1.p) + " $ (" + sup1.n + " touches)" : "—"}</b>. Pivot du jour ${fmt(piv.P)} $ (R1 ${fmt(piv.R1)} / S1 ${fmt(piv.S1)}).`, "info");
+  if (sup1 && price - sup1.p < atrv * 0.8) await S("🎯", `Le prix travaille <b>juste au-dessus du support ${fmt(sup1.p)} $</b> (< 0,8 ATR) — zone de décision : rebond ou cassure.`, "warn");
+  if (res1 && res1.p - price < atrv * 0.8) await S("🎯", `Le prix bute <b>juste sous la résistance ${fmt(res1.p)} $</b> (< 0,8 ATR) — zone de décision : cassure ou rejet.`, "warn");
+
+  /* ---- VWAP & profil de volume ---- */
+  const vw = last(vwap.line), sd1 = last(vwap.up) - last(vwap.line);
+  const stretch = sd1 > 0 ? (price - vw) / sd1 : 0;
+  await S("💠", `VWAP ${(TF_MIN[TF] || 15) <= 60 ? "de session" : "ancré"} à <b>${fmt(vw)} $</b> — prix ${price > vw ? "AU-DESSUS" : "EN-DESSOUS"} (${fmt(Math.abs(price - vw))} $) : les ${price > vw ? "acheteurs" : "vendeurs"} contrôlent au prix moyen des institutionnels.${Math.abs(stretch) > 1.5 ? ` ⚡ Étiré à ${Math.abs(stretch).toFixed(1)}σ — les pros jouent souvent le retour vers ${fmt(vw)} $.` : ""}`, price > vw ? "good" : "bad");
+  const inVA = price >= prof.val && price <= prof.vah;
+  await S("🏦", `Profil de volume : POC à <b>${fmt(prof.poc)} $</b> (l'aimant — le prix où le plus d'argent a échangé), value area <b>${fmt(prof.val)}–${fmt(prof.vah)} $</b>. Le prix est ${inVA ? "DANS la zone de valeur — équilibre, ranges probables" : price > prof.vah ? "AU-DESSUS de la valeur (« cher ») — soit acceptation et poursuite, soit retour vers " + fmt(prof.poc) + " $" : "SOUS la valeur (« bradé ») — soit rejet et retour vers " + fmt(prof.poc) + " $, soit départ baissier accepté"}.`, inVA ? "info" : "warn");
+
+  /* ---- lignes de tendance ---- */
+  if (tls.length) {
+    for (const t of tls)
+      await S("📐", `Trendline ${t.isLow ? "haussière (sous les creux)" : "baissière (sur les sommets)"} tracée : <b>${t.touches} touches</b>, elle passe actuellement à <b>${fmt(t.now)} $</b> (${Math.abs(price - t.now) < 0.5 * atrv ? "⚡ le prix est DESSUS — test en cours" : `à ${fmt(Math.abs(price - t.now))} $ du prix`}).`, t.isLow ? "good" : "bad");
+  } else await S("📐", `Aucune trendline oblique fiable (≥ 3 touches sans traversée) sur ce timeframe — le marché ne suit pas de rail en ce moment.`, "info", 300);
+
+  /* ---- Fibonacci ---- */
+  if (fib) {
+    const gz = fib.levels.find(l => l.r === 0.618);
+    const inGz = Math.abs(price - gz.p) < 0.8 * atrv;
+    await S("🌀", `Fibonacci sur l'impulsion ${fib.up ? "haussière" : "baissière"} ${fmt(fib.up ? fib.lo : fib.hi)} → ${fmt(fib.up ? fib.hi : fib.lo)} $ : golden zone 61,8 % à <b>${fmt(gz.p)} $</b>${inGz ? " — ⚡ <b>le prix y est</b>, c'est LA zone de reprise des pros" : ""}.`, inGz ? "warn" : "info");
+  }
+
+  /* ---- FVG ---- */
+  if (fvg.length) {
+    const z = fvg[fvg.length - 1];
+    await S("🟪", `${fvg.length} fair value gap(s) non comblé(s) — le plus récent : zone ${z.bull ? "haussière" : "baissière"} <b>${fmt(z.bot)}–${fmt(z.top)} $</b>. Ces déséquilibres attirent le prix comme un aimant avant la poursuite.`, "info");
+  }
+
+  /* ---- liquidité & sweeps ---- */
+  if (liq.pools.length) {
+    const nearest = liq.pools.reduce((a, b) => Math.abs(b.p - price) < Math.abs(a.p - price) ? b : a);
+    await S("💧", `${liq.pools.length} pool(s) de liquidité (highs/lows égaux = paquets de stops). Le plus proche : <b>${fmt(nearest.p)} $</b> ${nearest.hi ? "au-dessus" : "en-dessous"} — le marché aime aller les chercher avant de se retourner.`, "info");
+  }
+  for (const sw of liq.sweeps)
+    await S("⚡", `<b>Sweep de liquidité détecté</b> (${ago(c, sw.i)}) : mèche ${sw.dir > 0 ? "sous les lows" : "au-dessus des highs"} à ${fmt(sw.p)} $ puis clôture de retour — <b>chasse aux stops classique, signal ${sw.dir > 0 ? "haussier" : "baissier"} fort</b>.`, "warn");
+
+  /* ---- double top / bottom ---- */
+  for (const dp of dbls)
+    await S("🏔️", `<b>${dp.name}</b> ${dp.done ? "CONFIRMÉ (ligne de cou cassée)" : "en formation"} sur ${fmt(dp.at)} $ — ligne de cou à <b>${fmt(dp.trigger)} $</b>${dp.done ? "" : " : à surveiller, la cassure validerait la figure"}.`, dp.dir > 0 ? "good" : "bad");
+
+  /* ---- session ---- */
+  const sess = sessionInfo();
+  await S("🕐", `Session en cours : <b>${sess.name}</b> — ${sess.note}.`, "info", 300);
+
+  /* ---- multi-timeframes ---- */
+  // bougie en cours EXCLUE du score : elle change à chaque tick et faisait dire tout et son contraire
+  const snaps = { M15: tfSnapshot(c15.slice(0, -1)), H1: tfSnapshot(c1h.slice(0, -1)), H4: tfSnapshot(c4h.slice(0, -1)) };
+  if (seq !== analysisSeq) return;
+  renderMTF(snaps);
+  const mtfScore = snaps.M15.score * 0.25 + snaps.H1.score * 0.35 + snaps.H4.score * 0.4;
+  const agree = Math.sign(snaps.M15.score) === Math.sign(snaps.H1.score) && Math.sign(snaps.H1.score) === Math.sign(snaps.H4.score);
+  await S("🔭", `Multi-TF : M15 ${lbl(snaps.M15.score)}, H1 ${lbl(snaps.H1.score)}, H4 ${lbl(snaps.H4.score)} → ${agree ? "<b>les 3 horizons sont alignés</b>" : "horizons divergents — prudence"}.`, agree ? (mtfScore > 0 ? "good" : "bad") : "warn");
+
+  /* ---- géopolitique + radar (cache 150 s : l'analyse tourne toutes les 30 s) ---- */
+  if (!newsData || Date.now() - ctxFetchedAt > 150000) {
+    await S("🌍", `Lecture du flux géopolitique et du radar risk-off…`, "info", 300);
+    [newsData, radarData] = await Promise.all([apiGet("/api/news"), apiGet("/api/radar")]);
+    ctxFetchedAt = Date.now();
+    if (seq !== analysisSeq) return;
+    renderNews(); renderRadar();
+  }
+
+  let geoScore = 0, geoTxt = "flux calme";
+  if (newsData?.headlines) {
+    const hs = newsData.headlines;
+    const geoHot = hs.filter(h => geoW(h) >= 2), geoMid = hs.filter(h => geoW(h) === 1);
+    const bull = hs.filter(h => h.bias === "bull").length, bear = hs.filter(h => h.bias === "bear").length;
+    geoScore = Math.min(3, geoHot.length * 1.2 + geoMid.length * 0.3) + Math.max(-1.5, Math.min(1.5, (bull - bear) * 0.25));
+    geoTxt = geoHot.length ? `<b>${geoHot.length} titre(s) géopolitiques chauds</b> (militaire/majeur)` : geoMid.length ? `${geoMid.length} tension(s) de fond` : "pas d'escalade détectée";
+    geoTxt += ` · sentiment presse : ${bull} pro-or / ${bear} contre-or`;
+    if (geoHot.length) await S("🚨", `${geoHot[0].title.slice(0, 110)}… — la géopolitique chaude soutient l'or (valeur refuge).`, "warn");
+  }
+  let riskOff = radarData?.riskOff ?? 0;
+  await S("🛰️", `Géopolitique : ${geoTxt}. Radar risk-off : <b>${riskOff}/9</b> ${riskOff >= 4 ? "— les marchés paniquent, l'or suit souvent à la hausse" : riskOff >= 2 ? "— nervosité modérée" : "— appétit pour le risque normal"}.`, riskOff >= 4 ? "warn" : "info");
+
+  /* ---- événements éco imminents ---- */
+  let evt = null; // {title, impact, inMin} si un événement US arrive bientôt
+  if (newsData?.calendar?.length) {
+    const next = newsData.calendar[0];
+    const inMin = Math.round((new Date(next.date) - Date.now()) / 60000);
+    if (inMin > -30 && inMin < 240) {
+      evt = { title: next.title, impact: next.impact, inMin };
+      await S("📅", `⚠️ <b>${next.title}</b> (${next.impact}) dans ${inMin > 0 ? inMin + " min" : "en cours"} — volatilité attendue, les niveaux techniques peuvent être balayés.`, "warn");
+    }
+  }
+
+  /* ---- fusion & verdict ---- */
+  const patBias = recentPat.reduce((s, p) => s + p.dir, 0);
+  // structure avancée : sweeps (fort), doubles confirmés, test de trendline, golden zone
+  let proBias = liq.sweeps.reduce((s, sw) => s + sw.dir, 0) * 1.2
+    + dbls.reduce((s, d) => s + d.dir * (d.done ? 1 : 0.3), 0);
+  for (const t of tls) if (Math.abs(price - t.now) < 0.5 * atrv) proBias += t.isLow ? 0.5 : -0.5;
+  if (fib) { const gz = fib.levels.find(l => l.r === 0.618); if (Math.abs(price - gz.p) < 0.8 * atrv) proBias += fib.up ? 0.5 : -0.5; }
+  proBias += price > vw ? 0.4 : -0.4; // côté du VWAP = qui contrôle
+  // score directionnel 100 % TECHNIQUE — géo/risk-off = modificateur de CONFIANCE, plus jamais de direction
+  // (règle validée : rejeu 3 j de données réelles — la géo pro-or permanente castrait tous les SELL, 0 signal/3 j)
+  let score = mtfScore + patBias * 0.7 + proBias + (divg || 0) * 0.8;
+  score = Math.max(-10, Math.min(10, score));
+
+  const dirUp = score > 0;
+  const geoPart = Math.min(2, geoScore * 0.5) + (riskOff >= 4 ? 1.2 : riskOff >= 2 ? 0.5 : 0);
+  const geoConf = Math.max(-6, Math.min(6, Math.round((dirUp ? 1 : -1) * geoPart * 3)));
+  const conf = Math.min(85, Math.round(52 + Math.abs(score) * 3.8 + geoConf));
+  const target = dirUp ? (res1 ? res1.p : price + 2 * atrv) : (sup1 ? sup1.p : price - 2 * atrv);
+  const target2 = dirUp ? (above[1] ? above[1].p : target + 1.5 * atrv) : (below[1] ? below[1].p : target - 1.5 * atrv);
+  const invalid = dirUp ? (sup1 ? sup1.p : price - 1.5 * atrv) : (res1 ? res1.p : price + 1.5 * atrv);
+
+  await S("🧮", `Fusion des signaux : technique ${mtfScore >= 0 ? "+" : ""}${mtfScore.toFixed(1)}, figures ${patBias >= 0 ? "+" : ""}${(patBias * 0.7).toFixed(1)}, structure pro (sweeps/doubles/trendlines/fib/vwap) ${proBias >= 0 ? "+" : ""}${proBias.toFixed(1)} → <b>score technique ${score >= 0 ? "+" : ""}${score.toFixed(1)} / ±10</b> · géo/risk-off → confiance ${geoConf >= 0 ? "+" : ""}${geoConf} pts (contexte, hors direction — règle validée sur données réelles).`, "info");
+  await S(dirUp ? "🟢" : "🔴", `<b>Mon avis : biais ${dirUp ? "HAUSSIER" : "BAISSIER"} (confiance ${conf} %)</b> — objectif ${fmt(target)} $ puis ${fmt(target2)} $, invalidé sous${dirUp ? "" : "/sur"} ${fmt(invalid)} $.`, dirUp ? "good" : "bad", 600);
+
+  if (seq !== analysisSeq) return;
+  renderVerdict({ score, conf, dirUp, price, target, target2, invalid, atrv, squeeze, st, snaps, geoTxt, riskOff, recentPat, divg });
+
+  /* ---- radar de setups : tout ce qui pourrait se déclencher, buy et sell, gros et petits ---- */
+  await S("🔬", `Micro-lecture M1 : ATR ${fmt(m1.atr1)} $/min · ${m1.sweepUp ? "<b>micro-sweep des lows détecté</b> ⚡" : m1.sweepDn ? "<b>micro-sweep des highs détecté</b> ⚡" : "pas de micro-signal immédiat"} — je scanne aussi les petits mouvements.`, m1.sweepUp || m1.sweepDn ? "warn" : "info", 250);
+  const setups = buildSetups({ price, atrv, sr, res1, sup1, tls, fib, fvg, liq, dbls, mtfScore, agree, recentPat, c, vwap: vw, prof, m1, regime: (Math.abs(last(ind.e20) - last(ind.e50)) / atrv > 0.5 || Math.abs(mtfScore) >= 4) ? "TENDANCE" : "RANGE" });
+  renderSetups(setups);
+  if (setups.length) {
+    const top = setups[0];
+    await S("🎯", `Radar : <b>${setups.length} setups en préparation</b> (${setups.filter(s => s.side === "BUY").length} buy / ${setups.filter(s => s.side === "SELL").length} sell). Le mieux placé : <b>${top.side} — ${top.type}</b> (${top.ready} % prêt, déclencheur ${fmt(top.trigger)} $).`, top.ready >= 70 ? "warn" : "info");
+  }
+
+  /* ---- décision : je trade maintenant ou plus tard ? ---- */
+  /* ---- régime de marché + confirmation H1/H4 (validé sur données réelles : M15 seul ≈ 51 % = bruit) ---- */
+  const trendStrength = Math.abs(last(ind.e20) - last(ind.e50)) / atrv;
+  const regime = trendStrength > 0.5 || Math.abs(mtfScore) >= 4 ? "TENDANCE" : "RANGE";
+  const dirSign = score >= 0 ? 1 : -1;
+  const htfOk = Math.sign(snaps.H1.score) === dirSign && Math.sign(snaps.H4.score) !== -dirSign;
+  await S("🌗", `Régime : <b>${regime}</b>${regime === "RANGE" ? " — les cassures mentent souvent ici, j'exige plus de force et je privilégie les rebonds sur les bords" : " — courant net, je suis le flux"}. Confirmation H1 : ${htfOk ? "✅ alignée" : "❌ absente — aucun ordre d'entrée sans elle"}.`, htfOk ? "info" : "warn", 300);
+
+  /* timing d'entrée M5 : le sens vient de H1/H4, le MOMENT vient de la micro-vague M5 */
+  const m5c = aggM5(c1m);
+  const closes5 = m5c.map(k => k.c);
+  const e9m5 = last(ema(closes5, 9)), e21m5 = last(ema(closes5, 21));
+  const lastC5 = m5c[m5c.length - 2] || m5c[m5c.length - 1];
+  const microOk = dirSign > 0 ? (e9m5 > e21m5 || lastC5.c > lastC5.o) : (e9m5 < e21m5 || lastC5.c < lastC5.o);
+  await S("⏱️", `Timing M5 : ${microOk ? "✅ micro-vague alignée — une entrée maintenant serait propre" : "❌ micro-vague contraire — si tout le reste valide, j'attendrai qu'elle tourne avant d'ordonner"}.`, microOk ? "info" : "warn", 250);
+
+  /* mémoire contextuelle : chaque signal emportera son contexte pour l'apprentissage */
+  lastCtx = { regime, sess: sess.name, score: +score.toFixed(1), conf, rsi: +r.toFixed(0), riskOff };
+  if (activeLessons.some(l => l.malusKey || l.bonusKey || l.slMult)) await S("🎓", `J'applique ce que mon journal m'a appris : ${activeLessons.filter(l => l.malusKey || l.slMult).length} durcissement(s), ${activeLessons.filter(l => l.bonusKey).length} point(s) fort(s) exploité(s)${slMultLearned() > 1 ? ", stops élargis de " + Math.round((slMultLearned() - 1) * 100) + " %" : ""} — détail dans la carte Auto-analyse.`, "info", 250);
+
+  let dec = decideTrade({ score, conf, dirUp, price, atrv, target, target2, invalid, res1, sup1, agree, recentPat, evt, c, rsi: r, stretch, vwapNow: vw, regime, htfOk, microOk, sessName: sess.name });
+
+  /* ---- anti-girouette : pas de BUY→SELL en quelques secondes ---- */
+  const rawAction = dec.action;
+  if (rawAction !== "WAIT") {
+    const opposite = sigLock && sigLock.side !== rawAction;
+    const lockAge = sigLock ? Date.now() - sigLock.at : Infinity;
+    if (opposite && lockAge < SIG_LOCK_MS) {
+      pendingFlip = pendingFlip && pendingFlip.side === rawAction ? { side: rawAction, n: pendingFlip.n + 1 } : { side: rawAction, n: 1 };
+      const need = FLIP_CONFIRM - pendingFlip.n;
+      if (need > 0) {
+        await S("🧷", `Signal ${rawAction} détecté, mais j'ai donné un <b>${sigLock.side}</b> il y a ${Math.max(1, Math.round(lockAge / 60000))} min — <b>cohérence d'abord</b> : il me faut encore ${need} analyse(s) consécutive(s) dans ce sens avant de retourner ma veste.`, "warn");
+        dec = { ...dec, action: "WAIT",
+          whyShort: `un ${rawAction} apparaît, mais je viens de donner un ${sigLock.side} — je ne change pas d'avis en quelques secondes.`,
+          whyLong: `Un vrai retournement se confirme sur plusieurs analyses de suite (${FLIP_CONFIRM} minimum). Les allers-retours BUY/SELL en quelques secondes, c'est du bruit de marché qui ne paie que le spread.`,
+          etaMin: Math.max(1, need * 0.5), etaTxt: `≈ ${need * 30} s (${need} confirmation(s) restante(s))`,
+          condition: `${rawAction} confirmé s'il tient encore ${need} analyse(s) — sinon on garde le cap du ${sigLock.side}.` };
+      } else {
+        sigLock = { side: rawAction, at: Date.now() };
+        pendingFlip = null;
+        await S("🔁", `Retournement <b>CONFIRMÉ</b> après ${FLIP_CONFIRM} analyses consécutives : le ${rawAction === "BUY" ? "SELL" : "BUY"} précédent est annulé, place au <b>${rawAction}</b>.`, "warn");
+      }
+    } else {
+      if (!sigLock || sigLock.side !== rawAction) sigLock = { side: rawAction, at: Date.now() };
+      pendingFlip = null;
+    }
+  } else pendingFlip = null;
+
+  /* ---- signal actif PERSISTANT : une fois donné, l'ordre vit jusqu'à son terme — plus de yo-yo ---- */
+  if (dec.action !== "WAIT") {
+    const isNew = !(activeSig && activeSig.side === dec.action);
+    activeSig = { side: dec.action, entry: dec.entry, sl: dec.sl, tp1: dec.tp1, tp2: dec.tp2,
+      at: activeSig && activeSig.side === dec.action ? activeSig.at : Date.now() };
+    localStorage.setItem(SIG_KEY, JSON.stringify(activeSig));
+    if (isNew) journalAdd(dec); // chaque signal envoyé est journalisé puis vérifié automatiquement
+  } else if (activeSig) {
+    const dirn = activeSig.side === "BUY" ? 1 : -1;
+    const mktOpen = marketStatus().open; // marché fermé = ton broker est gelé → le signal NE PEUT PAS se terminer
+    const flipped = mktOpen && sigLock && sigLock.side !== activeSig.side;
+    const invalided = mktOpen && (price - activeSig.sl) * dirn <= 0;
+    const reached = mktOpen && (price - activeSig.tp1) * dirn >= 0;
+    const expired = mktOpen && Date.now() - activeSig.at > 45 * 60000;
+    if (flipped || invalided || reached || expired) {
+      await S("🏁", `Signal ${activeSig.side} terminé : ${invalided ? "zone de stop touchée — invalidé" : reached ? "TP1 atteint ✅" : flipped ? "retournement confirmé" : "expiré (45 min)"}. Je repars sur une analyse neuve.`, reached ? "good" : "warn");
+      activeSig = null; localStorage.removeItem(SIG_KEY);
+    } else {
+      const age = Math.round((Date.now() - activeSig.at) / 60000);
+      const slD2 = Math.abs(activeSig.entry - activeSig.sl) || 1;
+      dec = { ...dec, action: activeSig.side, side: activeSig.side, dirUp: dirn > 0, sticky: true,
+        entry: activeSig.entry, sl: activeSig.sl, tp1: activeSig.tp1, tp2: activeSig.tp2,
+        slDist: slD2, rr: Math.abs(activeSig.tp1 - activeSig.entry) / slD2, rr2: Math.abs(activeSig.tp2 - activeSig.entry) / slD2,
+        lotInfo: lotFor(slD2), // lot recalculé sur le SL DU SIGNAL (pas celui du plan du cycle courant)
+        reasons: mktOpen ? [
+          `Signal donné il y a ${age} min — <b>toujours valable</b> : ni la zone de stop (${fmt(activeSig.sl)} $) ni TP1 (${fmt(activeSig.tp1)} $) ne sont touchés`,
+          `Si tu es DANS le trade : ne touche à rien, gère selon le plan (TP1 → moitié + SL au break-even)`,
+          `Si tu n'es PAS entré : n'entre que si le prix est à moins de 0,3 ATR de l'entrée ${fmt(activeSig.entry)} $ (écart actuel : ${fmt(Math.abs(price - activeSig.entry))} $)`,
+        ] : [
+          `🕒 <b>Marché fermé — ton signal est CONSERVÉ, pas annulé.</b> Le PAXG bouge le week-end mais ton broker est gelé : je ne touche à rien.`,
+          `Si tu es DANS ce trade : il reste en cours, ton SL/TP réel ne peut pas être touché tant que le marché est fermé.`,
+          `À la réouverture (dim. 22h UTC), je réévalue au vrai prix broker et je te dis quoi faire.`,
+        ] };
+    }
+  }
+
+  renderDecision(dec, setups);
+  if (dec.action === "WAIT")
+    await S("💼", `<b>Décision : J'ATTENDS</b> — ${dec.whyShort} Prochaine fenêtre : <b>${dec.etaTxt}</b>. Plan prêt : ${dec.planShort}`, "warn", 600);
+  else
+    await S("💼", `<b>Décision : ${dec.action} MAINTENANT</b> — entrée ${fmt(dec.entry)} $, SL ${fmt(dec.sl)} $, TP1 ${fmt(dec.tp1)} $ (R:R ${dec.rr.toFixed(1)}), lot ${dec.lotInfo.tooWide ? "⚠️ trop risqué" : dec.lotInfo.lot.toFixed(2)}.`, dec.action === "BUY" ? "good" : "bad", 600);
+
+  renderJournal();
+  if (!offlineDone) { offlineDone = true; syncSentinelle().then(resolveOffline); } // récupère les signaux Telegram puis les vérifie
+  pmPass(); // autopsie des trades résolus (max 1 passe / 5 min)
+}
+
+/* ================= radar de setups : tous les trades qui pourraient se déclencher ================= */
+function buildSetups(v) {
+  // v : { price, atrv, res1, sup1, above, below, tls, fib, fvg, liq, dbls, mtfScore, agree, recentPat, c }
+  const tfMin = TF_MIN[TF] || 15, S = [];
+  const bias = Math.sign(v.mtfScore); // sens du courant de fond
+  const patDir = v.recentPat.reduce((s, p) => s + p.dir, 0);
+  const add = (type, side, trigger, base, note, kind = "SWING", slD = null) => {
+    const dirn = side === "BUY" ? 1 : -1;
+    const dist = Math.abs(v.price - trigger);
+    let ready = base;
+    ready += dirn === bias ? 18 : -12;                       // avec ou contre le courant multi-TF
+    ready += Math.sign(patDir) === dirn && patDir !== 0 ? 10 : 0; // figure de bougie dans le sens
+    ready += dist < 0.5 * v.atrv ? 15 : dist < 1.2 * v.atrv ? 6 : -8; // proximité du déclencheur
+    // confluence : un autre niveau majeur à moins de 0,3 ATR du déclencheur
+    const near = x => Math.abs(x - trigger) < 0.3 * v.atrv;
+    const conf = [...v.sr.map(l => l.p), ...(v.fib ? v.fib.levels.map(l => l.p) : []), ...v.tls.map(t => t.now),
+      v.prof.poc, v.prof.vah, v.prof.val, v.vwap]
+      .filter(x => x !== trigger && near(x)).length;
+    ready += Math.min(12, conf * 6);
+    if (v.regime === "RANGE" && /assure/.test(type)) ready -= 10;                          // en range, les cassures mentent
+    if (v.regime === "RANGE" && /(Rebond|Rejet|Aimant|weep)/.test(type)) ready += 6;       // ...et les bords paient
+    ready = Math.max(5, Math.min(95, Math.round(ready)));
+    const etaMin = kind === "SCALP"
+      ? Math.max(1, Math.ceil(dist / ((v.m1?.atr1 || v.atrv / 10))))
+      : Math.max(tfMin / 3, Math.ceil(dist / (v.atrv || 1)) * tfMin);
+    // plan complet prêt à exécuter (SL plancher 2,50 $ : spread + bruit XAU)
+    const slDist = Math.max(slD || v.atrv, 2.5);
+    const sl = trigger - dirn * slDist, tp1 = trigger + dirn * 1.5 * slDist, tp2 = trigger + dirn * 2.5 * slDist;
+    S.push({ type, side, trigger, dist, ready, etaMin, kind, sl, tp1, tp2, lot: lotFor(slDist), note: note + (conf ? ` · confluence ×${conf + 1}` : "") });
+  };
+
+  if (v.sup1) add("Rebond sur support", "BUY", v.sup1.p, 42, `${v.sup1.n} touches — attendre un rejet (mèche basse) sur le niveau`);
+  if (v.res1) add("Cassure de résistance", "BUY", v.res1.p + 0.2 * v.atrv, 38, `clôture au-dessus de ${fmt(v.res1.p)} $ requise`);
+  if (v.res1) add("Rejet sous résistance", "SELL", v.res1.p, 42, `${v.res1.n} touches — attendre un rejet (mèche haute)`);
+  if (v.sup1) add("Cassure de support", "SELL", v.sup1.p - 0.2 * v.atrv, 38, `clôture sous ${fmt(v.sup1.p)} $ requise`);
+  for (const t of v.tls)
+    add(t.isLow ? "Test de trendline haussière" : "Test de trendline baissière", t.isLow ? "BUY" : "SELL", t.now, 45,
+      `oblique à ${t.touches} touches — rebond attendu, invalidée sur clôture traversante`);
+  if (v.fib) {
+    const gz = v.fib.levels.find(l => l.r === 0.618);
+    add("Golden zone Fibonacci 61,8 %", v.fib.up ? "BUY" : "SELL", gz.p, 44, `retracement de l'impulsion ${v.fib.up ? "haussière" : "baissière"}`);
+  }
+  for (const z of v.fvg.slice(-2))
+    add(`Retest de FVG ${z.bull ? "haussier" : "baissier"}`, z.bull ? "BUY" : "SELL", z.bull ? z.top : z.bot, 40,
+      `déséquilibre ${fmt(z.bot)}–${fmt(z.top)} $ non comblé : le prix y revient souvent`);
+  for (const sw of v.liq.sweeps)
+    add("Retournement post-sweep", sw.dir > 0 ? "BUY" : "SELL", v.price, 72,
+      `chasse aux stops ${sw.dir > 0 ? "sous les lows" : "sur les highs"} à ${fmt(sw.p)} $ ${ago(v.c, sw.i)} — les pros entrent après le sweep`);
+  for (const d of v.dbls)
+    add(`${d.name} ${d.done ? "confirmé" : "en formation"}`, d.dir > 0 ? "BUY" : "SELL", d.trigger, d.done ? 70 : 48,
+      `ligne de cou ${fmt(d.trigger)} $ — ${d.done ? "cassée, retest possible" : "à casser pour valider"}`);
+  if (Math.abs(v.price - v.prof.poc) > 1.2 * v.atrv)
+    add("Aimant POC (retour à la valeur)", v.prof.poc > v.price ? "BUY" : "SELL", v.prof.poc, 35,
+      `le prix revient statistiquement vers le POC ${fmt(v.prof.poc)} $ (max de volume échangé)`);
+
+  /* ---- SCALPS M1 : les petites opportunités rapides, dans le sens du courant seulement ---- */
+  if (v.m1) {
+    const sd = Math.max(v.m1.atr1 * 1.5, 2.5);
+    if (bias > 0 && v.m1.e20 > v.m1.e50 && Math.abs(v.price - v.m1.e20) < 0.5 * v.m1.atr1)
+      add("Pullback EMA20 M1", "BUY", v.m1.e20, 52, `micro-repli sur la moyenne M1, dans le sens du courant`, "SCALP", sd);
+    if (bias < 0 && v.m1.e20 < v.m1.e50 && Math.abs(v.price - v.m1.e20) < 0.5 * v.m1.atr1)
+      add("Pullback EMA20 M1", "SELL", v.m1.e20, 52, `micro-repli sur la moyenne M1, dans le sens du courant`, "SCALP", sd);
+    if (v.m1.hi - v.m1.lo < 2 * v.m1.atr1) {
+      if (bias >= 0) add("Micro-cassure haussière", "BUY", v.m1.hi + 0.1 * v.m1.atr1, 46, `compression 15 min (${fmt(v.m1.lo)}–${fmt(v.m1.hi)} $), cassure du haut`, "SCALP", sd);
+      if (bias <= 0) add("Micro-cassure baissière", "SELL", v.m1.lo - 0.1 * v.m1.atr1, 46, `compression 15 min, cassure du bas`, "SCALP", sd);
+    }
+    if (v.m1.sweepUp) add("Micro-sweep des lows", "BUY", v.price, 68, `mèche sous les lows des 20 dernières min puis reclôture — rebond rapide probable`, "SCALP", sd);
+    if (v.m1.sweepDn) add("Micro-sweep des highs", "SELL", v.price, 68, `mèche au-dessus des highs 20 min puis reclôture — repli rapide probable`, "SCALP", sd);
+  }
+
+  S.sort((a, b) => b.ready - a.ready);
+  return S.slice(0, 8);
+}
+
+function renderSetups(setups) {
+  const el = document.getElementById("setups");
+  const closed = !marketStatus().open;
+  const banner = closed ? `<div style="background:rgba(240,185,11,.12);border:1px solid var(--gold2);border-radius:8px;padding:7px 10px;margin-bottom:8px;font-size:12.5px">🕒 <b>Marché de l'or FERMÉ</b> — ces niveaux sont calculés sur le proxy PAXG (qui cote le week-end) mais <b>NON tradables</b> : ton broker n'exécute pas et le prix peut gapper à l'ouverture. Simple préparation, aucune entrée avant la réouverture (dim. 22h UTC).</div>` : "";
+  if (!setups.length) { el.innerHTML = banner + `<span class="src-note">aucun setup identifiable pour l'instant</span>`; return; }
+  el.innerHTML = banner + setups.map(s => `
+    <div class="setup">
+      <div style="display:flex;justify-content:space-between;gap:8px;align-items:baseline">
+        <span>${s.kind === "SCALP" ? "⚡" : "🌊"} <span class="tag ${s.side === "BUY" ? "up" : "down"}">${s.side}</span> <b>${s.type}</b></span>
+        <b style="color:${s.ready >= 70 ? "var(--up)" : s.ready >= 50 ? "var(--gold)" : "var(--dim)"}">${s.ready} % prêt</b>
+      </div>
+      <div class="bar" style="height:4px;border-radius:2px;background:#2a3242;margin:5px 0"><i style="display:block;height:100%;border-radius:2px;width:${s.ready}%;background:${s.ready >= 70 ? "var(--up)" : s.ready >= 50 ? "var(--gold)" : "#555"}"></i></div>
+      <div style="font-size:12px;color:var(--dim)">Déclencheur <b style="color:var(--txt)">${fmt(s.trigger)} $</b> (à ${fmt(s.dist)} $) · ${s.kind === "SCALP" ? "réaction en minutes" : "si le prix s'y dirige : " + fmtEta(s.etaMin)} · ${s.note}</div>
+      <div style="font-size:12px;margin-top:3px">➡️ Entrée <b>${fmt(s.trigger)}</b> · SL <b style="color:var(--down)">${fmt(s.sl)}</b> · TP1 <b style="color:var(--up)">${fmt(s.tp1)}</b> · TP2 ${fmt(s.tp2)} · lot ${s.lot.tooWide ? "⚠️ trop risqué" : s.lot.lot.toFixed(2)}${s.kind === "SCALP" ? ' · <span style="color:var(--gold)">scalp : fiabilité moindre, demi-lot conseillé</span>' : ""}</div>
+    </div>`).join("");
+}
+
+/* ================= moteur de décision ================= */
+function decideTrade(v) {
+  const tfMin = TF_MIN[TF] || 15;
+  const m = marketStatus();
+  const buf = 0.3 * v.atrv;
+  // plan de trade dans le sens du biais (qu'on entre maintenant ou plus tard)
+  const entry = v.price;
+  // stop : le plus proche entre l'invalidation structurelle et le swing récent (minimum 1 ATR)
+  const recent = v.c.slice(-10);
+  const slStruct = v.dirUp ? v.invalid - buf : v.invalid + buf;
+  const minSL = Math.max(v.atrv, 2.5) * slMultLearned(); // plancher 2,50 $ (spread + bruit), élargi si l'autopsie montre des stops trop serrés
+  let slSwing = v.dirUp ? Math.min(...recent.map(k => k.l)) - buf : Math.max(...recent.map(k => k.h)) + buf;
+  if (Math.abs(entry - slSwing) < minSL) slSwing = v.dirUp ? entry - minSL : entry + minSL;
+  const useSwing = Math.abs(entry - slSwing) < Math.abs(entry - slStruct);
+  let sl = useSwing ? slSwing : slStruct;
+  let slLabel = useSwing ? (v.dirUp ? "sous le plus bas récent" : "sur le plus haut récent") : "niveau d'invalidation";
+  if (Math.abs(entry - sl) < minSL) { sl = v.dirUp ? entry - minSL : entry + minSL; slLabel = "plancher spread/bruit"; } // JAMAIS de stop trop serré (→ lot démesuré)
+  const capD = 2.5 * v.atrv; // SL jamais > 2,5 ATR — même plafond que ton bot (validé par backtest)
+  if (Math.abs(entry - sl) > capD) { sl = v.dirUp ? entry - capD : entry + capD; slLabel = "plafonné à 2,5 ATR"; }
+  const slDist = Math.abs(entry - sl);
+  let tp1 = v.target, tp2 = v.target2;
+  let rr = Math.abs(tp1 - entry) / slDist;
+  if (rr < 1.2) { // niveau le plus proche trop près : viser le suivant, sinon objectif en multiples de R
+    const dirn2 = v.dirUp ? 1 : -1;
+    if (Math.abs(v.target2 - entry) / slDist >= 1.2) { tp1 = v.target2; tp2 = entry + dirn2 * Math.max(Math.abs(v.target2 - entry) * 1.6, 2.5 * slDist); }
+    else { tp1 = entry + dirn2 * 1.5 * slDist; tp2 = entry + dirn2 * 2.5 * slDist; }
+    rr = Math.abs(tp1 - entry) / slDist;
+  }
+  const rr2 = Math.abs(tp2 - entry) / slDist;
+  const lotInfo = lotFor(slDist);
+  const side = v.dirUp ? "BUY" : "SELL";
+  const planShort = `${side} vers ${fmt(tp1)} $, stop ${fmt(sl)} $.`;
+  // temps restant avant la clôture de la bougie en cours
+  const candleCloseMin = Math.max(1, (v.c[v.c.length - 1].t + tfMin * 60000 - Date.now()) / 60000);
+
+  const base = { entry, sl, slLabel, tp1, tp2, rr, rr2, slDist, lotInfo, side, planShort, dirUp: v.dirUp, conf: v.conf, score: v.score };
+  const wait = (whyShort, whyLong, etaMin, etaWhen, condition) => ({
+    ...base, action: "WAIT", whyShort, whyLong, condition,
+    etaMin, etaTxt: fmtEta(etaMin) + (etaWhen ? ` (${etaWhen})` : ""),
+  });
+
+  /* 1. marché fermé chez le broker → interdiction absolue */
+  if (!m.open) {
+    const etaMin = (m.reopenAt - Date.now()) / 60000;
+    return wait(m.why + ".",
+      "Même si le graphique bouge (PAXG cote 24/7), ton broker n'exécutera pas — et l'ouverture peut gapper au-delà de ton stop.",
+      etaMin, atTime(m.reopenAt),
+      `À la réouverture, je refais l'analyse complète avant de valider le ${side}. Ne place JAMAIS d'ordre en attente avant un week-end.`);
+  }
+  /* 1bis. discipline : 2 de mes signaux au stop aujourd'hui → journée TERMINÉE (même règle que ton bot) */
+  if (slToday() >= 2) {
+    const mid = new Date(); mid.setHours(24, 0, 0, 0);
+    return wait(`2 de mes signaux ont fini au stop aujourd'hui — journée TERMINÉE.`,
+      "Après 2 pertes, la probabilité de sur-trading émotionnel explose — chez toi comme chez moi. Le meilleur trade du reste de la journée, c'est aucun.",
+      (mid - Date.now()) / 60000, atTime(mid),
+      `Réouverture demain. Je continue d'analyser et de vérifier le journal, mais je n'ordonne plus d'entrée aujourd'hui.`);
+  }
+  /* 2. événement éco majeur imminent → on laisse passer */
+  if (v.evt && v.evt.impact === "High" && v.evt.inMin <= 45) {
+    const etaMin = Math.max(5, v.evt.inMin + 20);
+    return wait(`${v.evt.title} dans ${Math.max(0, v.evt.inMin)} min.`,
+      "Une statistique US majeure peut balayer tous les niveaux techniques en quelques secondes : le SL peut sauter avec slippage.",
+      etaMin, null,
+      `Laisser sortir le chiffre, attendre ~20 min que le marché digère, puis revalider le ${side} si le biais tient.`);
+  }
+  /* 2bis. jamais acheter le sommet, jamais vendre le creux (le contretemps = la source n°1 de pertes) */
+  if (v.dirUp && (v.rsi >= 70 || v.stretch > 2))
+    return wait(`acheter maintenant = acheter ${v.rsi >= 70 ? `suracheté (RSI ${v.rsi.toFixed(0)})` : `un prix étiré à +${v.stretch.toFixed(1)}σ au-dessus du VWAP`}.`,
+      "C'est LE piège qui donne l'impression que « tout est à l'envers » : entrer après que le mouvement a déjà eu lieu, juste avant la respiration.",
+      tfMin, null,
+      `BUY seulement sur repli vers ${fmt(v.vwapNow)} $ (VWAP)${v.sup1 ? ` ou le support ${fmt(v.sup1.p)} $` : ""}, avec rejet.`);
+  if (!v.dirUp && (v.rsi <= 30 || v.stretch < -2))
+    return wait(`vendre maintenant = vendre ${v.rsi <= 30 ? `survendu (RSI ${v.rsi.toFixed(0)})` : `un prix étiré à ${v.stretch.toFixed(1)}σ sous le VWAP`}.`,
+      "Vendre le creux après la chute, c'est offrir son stop au rebond technique.",
+      tfMin, null,
+      `SELL seulement sur remontée vers ${fmt(v.vwapNow)} $ (VWAP)${v.res1 ? ` ou la résistance ${fmt(v.res1.p)} $` : ""}, avec rejet.`);
+  /* 2ter. confirmation H1/H4 OBLIGATOIRE (audit données réelles : M15 seul ≈ 51 %, avec H1 ≈ 56 %) */
+  if (!v.htfOk)
+    return wait(`le signal M15 n'est pas confirmé par les horizons H1/H4.`,
+      "Vérifié sur 40 jours de données réelles : le M15 seul a raison ~51 % du temps (pile ou face). Avec H1 aligné : ~56 % et espérance positive. Aucun ordre d'entrée sans cette confirmation.",
+      2 * tfMin, null,
+      `${side} dès que H1 s'aligne dans le même sens — je re-vérifie toutes les 30 s.`);
+  /* 2quater. vent de face dollar (corrélation inverse or/DXY) */
+  const dxy = ((radarData && radarData.assets) || []).find(a => (a.name || "").includes("DXY"));
+  if (dxy && v.dirUp && dxy.chg1h >= 0.25)
+    return wait(`le dollar charge en face (DXY +${dxy.chg1h} %/1h) — acheter l'or contre un dollar qui monte, c'est ramer à contre-courant.`,
+      "Or et dollar évoluent en sens inverse : un DXY en forte hausse écrase la plupart des tentatives haussières de l'or.",
+      30, null, `BUY quand le DXY se calme (< +0,25 %/1h), ou si l'or casse sa résistance malgré lui, avec volume.`);
+  if (dxy && !v.dirUp && dxy.chg1h <= -0.25)
+    return wait(`le dollar plonge en face (DXY ${dxy.chg1h} %/1h) — vendre l'or pendant que le dollar chute, c'est contre le courant.`,
+      "Un DXY en forte baisse porte l'or : la plupart des SELL échouent dans ces conditions.",
+      30, null, `SELL quand le DXY se stabilise (> −0,25 %/1h).`);
+  /* 3. pas d'avantage exploitable */
+  if (Math.abs(v.score) < 2) {
+    return wait("le score est trop faible (zone neutre), aucun avantage statistique.",
+      "Trader sans edge, c'est du pile ou face payant le spread. Le score doit dépasser ±3,5 avec des horizons alignés.",
+      2 * tfMin, null,
+      `Attendre ${2} bougies ${TF.toUpperCase()} (~${fmtEta(2 * tfMin).replace("≈ ", "")}) qu'une impulsion claire se forme. Je réévalue toutes les 90 s.`);
+  }
+  /* 4. le prix bute sur un niveau contre nous → attendre la cassure ou le rejet */
+  if (v.dirUp && v.res1 && v.res1.p - v.price < 0.8 * v.atrv) {
+    const trigger = v.res1.p + 0.2 * v.atrv;
+    const etaMin = candleCloseMin + tfMin;
+    return wait(`le prix bute juste sous la résistance ${fmt(v.res1.p)} $ (${v.res1.n} touches).`,
+      "Acheter collé sous une résistance travaillée = risque de rejet immédiat. On achète la cassure confirmée, pas l'espoir.",
+      etaMin, null,
+      `BUY si une bougie ${TF.toUpperCase()} CLÔTURE au-dessus de ${fmt(trigger)} $ (cassure). Sinon, BUY sur repli vers ${v.sup1 ? fmt(v.sup1.p) + " $" : "le support"} avec rejet (mèche basse).`);
+  }
+  if (!v.dirUp && v.sup1 && v.price - v.sup1.p < 0.8 * v.atrv) {
+    const trigger = v.sup1.p - 0.2 * v.atrv;
+    const etaMin = candleCloseMin + tfMin;
+    return wait(`le prix est collé au support ${fmt(v.sup1.p)} $ (${v.sup1.n} touches).`,
+      "Vendre sur un support travaillé = risque de rebond immédiat. On vend la cassure confirmée du support.",
+      etaMin, null,
+      `SELL si une bougie ${TF.toUpperCase()} CLÔTURE sous ${fmt(trigger)} $. Sinon, SELL sur pullback vers ${v.res1 ? fmt(v.res1.p) + " $" : "la résistance"} avec rejet.`);
+  }
+  /* 5. R:R insuffisant → attendre un meilleur prix d'entrée */
+  if (rr < 1.2) {
+    const better = v.dirUp ? (v.sup1 ? v.sup1.p + 0.2 * v.atrv : entry - v.atrv) : (v.res1 ? v.res1.p - 0.2 * v.atrv : entry + v.atrv);
+    const etaMin = Math.max(tfMin, Math.ceil(Math.abs(entry - better) / v.atrv) * tfMin);
+    return wait(`le ratio risque/gain est trop faible ici (${rr.toFixed(1)} < 1,2).`,
+      `L'objectif ${fmt(tp1)} $ est trop proche par rapport au stop ${fmt(sl)} $ : même en gagnant souvent, tu perds à long terme.`,
+      etaMin, null,
+      `${side} sur repli vers ${fmt(better)} $ (le R:R passera au-dessus de 1,5) — ou attendre que la structure offre un objectif plus loin.`);
+  }
+  /* 6. signal moyen → confirmation d'une bougie */
+  const patConfirm = v.recentPat.some(p => p.dir === (v.dirUp ? 1 : -1));
+  // seuil appris : durci là où le journal montre des faiblesses, assoupli (léger) là où il excelle — plancher de sécurité 3,0
+  const thr = Math.max(3, 3.5 + (v.regime === "RANGE" ? 1 : 0) + sideMalus(side) + ctxMalus(v.regime, v.sessName, Math.abs(v.score)));
+  const strong = Math.abs(v.score) >= thr && v.conf >= 60;
+  if (!strong || (!patConfirm && !v.agree)) {
+    const lastC = v.c[v.c.length - 2]; // dernière bougie clôturée
+    const trigger = v.dirUp ? lastC.h + 0.1 * v.atrv : lastC.l - 0.1 * v.atrv;
+    return wait(`le signal va dans ton sens mais manque de force (score ${v.score >= 0 ? "+" : ""}${v.score.toFixed(1)}, ${v.agree ? "figures non confirmées" : "horizons divergents"}).`,
+      "Un biais moyen sans confirmation = trop de faux départs. Une bougie de confirmation filtre la moitié des pièges.",
+      candleCloseMin, null,
+      `${side} si la bougie en cours (clôture dans ${fmtEta(candleCloseMin).replace("≈ ", "")}) ${v.dirUp ? "dépasse" : "casse"} ${fmt(trigger)} $ ${v.dirUp ? "(plus haut précédent)" : "(plus bas précédent)"}. Sinon on attend la suivante.`);
+  }
+  /* 6bis. timing M5 : la direction vient de H1/H4, le MOMENT vient de la micro-vague M5 */
+  if (!v.microOk)
+    return wait(`la direction est validée mais le timing M5 ne l'est pas encore (micro-vague contraire).`,
+      "Entrer pendant une contre-vague M5, c'est payer plus cher et encaisser du drawdown inutile dès la première minute. Quelques minutes de patience = meilleure entrée.",
+      5, null,
+      `${side} dès que la micro-vague M5 tourne dans le sens (bougie M5 clôturée ${v.dirUp ? "verte ou EMA9 > EMA21" : "rouge ou EMA9 < EMA21"} en M5) — je vérifie toutes les 30 s.`);
+  /* 7. feu vert */
+  return { ...base, action: side, whyLong: null,
+    reasons: [
+      `Score ${v.score >= 0 ? "+" : ""}${v.score.toFixed(1)} avec confiance ${v.conf} %`,
+      v.agree ? "Les 3 horizons (M15/H1/H4) sont alignés" : "Figure de bougie de confirmation présente",
+      `R:R ${rr.toFixed(1)} vers TP1 (${rr2.toFixed(1)} vers TP2)`,
+      "Pas d'événement éco imminent, marché ouvert",
+    ] };
+}
+
+function renderDecision(d, setups = []) {
+  const el = document.getElementById("decision");
+  /* ---- setup armé : JAMAIS à contresens du plan affiché ----
+     Le badge, la vision, le tableau et le bouton doivent TOUS parler du MÊME trade.
+     Un setup n'est armé que s'il va dans le sens de la décision (d.side) : sinon le badge
+     annonçait « SELL en approche » au-dessus d'un plan BUY, et le bouton enregistrait le SELL. */
+  const armed = d.action === "WAIT" && setups.length && marketStatus().open
+    ? setups.find(s => s.side === d.side && s.ready >= 70 && (!sigLock || Date.now() - sigLock.at > SIG_LOCK_MS || s.side === sigLock.side)) || null
+    : null;
+  /* P = LE plan affiché : une seule vérité pour tout le panneau */
+  let P;
+  if (armed) {
+    const slDist = Math.abs(armed.trigger - armed.sl);
+    P = { side: armed.side, dirUp: armed.side === "BUY", entry: armed.trigger, sl: armed.sl,
+          slLabel: "invalidation du setup", slDist, tp1: armed.tp1, tp2: armed.tp2,
+          rr: Math.abs(armed.tp1 - armed.trigger) / slDist, rr2: Math.abs(armed.tp2 - armed.trigger) / slDist,
+          lotInfo: armed.lot, atTrigger: true };
+  } else {
+    P = { side: d.side, dirUp: d.dirUp, entry: d.entry, sl: d.sl, slLabel: d.slLabel, slDist: d.slDist,
+          tp1: d.tp1, tp2: d.tp2, rr: d.rr, rr2: d.rr2, lotInfo: d.lotInfo, atTrigger: false };
+  }
+  // plan actif (pour le bouton « J'ai pris ce trade ») + déclencheur surveillé tick par tick
+  window._plan = { side: P.side, entry: P.entry, sl: P.sl, tp1: P.tp1, tp2: P.tp2, lot: P.lotInfo.lot };
+  armedWatch = armed ? { side: armed.side, trigger: armed.trigger } : null;
+
+  const lotRow = P.lotInfo.tooWide
+    ? `<div class="risk-warn">⚠️ <b>Stop trop large pour ton capital</b> : même 0,01 lot risquerait ${fmt(P.lotInfo.minRiskEUR)} € (> ${fmt(P.lotInfo.riskEUR)} € = 2 % de ${CAPITAL_EUR} €). Ce trade n'est pas jouable proprement — passe ton tour ou attends une entrée plus proche du stop.</div>`
+    : `<div class="dec-line"><b class="k">Lot</b> <b>${P.lotInfo.lot.toFixed(2)}</b> — risque ${fmt(P.lotInfo.riskEUR)} € (2 % de ${CAPITAL_EUR} €) si le SL est touché. <span style="color:var(--dim)">Jamais plus : le risque max reste 2 % de ton capital.</span></div>`;
+  const plan = `
+    <table style="margin-top:8px">
+      <tbody>
+        <tr><td>Sens</td><td><b style="color:${P.dirUp ? "var(--up)" : "var(--down)"}">${P.side}</b></td></tr>
+        <tr><td>Entrée${P.atTrigger ? " (au déclencheur)" : d.action === "WAIT" ? " (si condition remplie)" : ""}</td><td>${fmt(P.entry)} $</td></tr>
+        <tr><td>Stop loss <span style="color:var(--dim)">(${P.slLabel})</span></td><td>${fmt(P.sl)} $ (${fmt(P.slDist)} $)</td></tr>
+        <tr><td>TP1 / TP2</td><td>${fmt(P.tp1)} $ / ${fmt(P.tp2)} $</td></tr>
+        <tr><td>R:R</td><td>${P.rr.toFixed(1)} / ${P.rr2.toFixed(1)}</td></tr>
+      </tbody>
+    </table>`;
+  const col = P.dirUp ? "var(--up)" : "var(--down)";
+  const vision = `<div class="dec-line" style="font-size:14px;margin-bottom:4px">🔮 <b>Ce que je vois venir :</b> <b style="color:${col}">${P.dirUp ? "HAUSSE" : "BAISSE"}</b> vers <b>${fmt(P.tp1)} $</b> puis ${fmt(P.tp2)} $ — confiance <b>${d.conf} %</b>${d.conf < 60 ? " (trop faible : je n'ordonne aucune entrée sous 60 %)" : ""}.</div>`;
+  /* ---- un seul trade à la fois : si une position est déjà ouverte, ce panneau n'est qu'une préparation ---- */
+  const openNote = myTrade
+    ? `<div class="dec-line" style="background:rgba(240,185,11,.12);border:1px solid var(--gold2);border-radius:8px;padding:8px 10px;margin:8px 0;font-size:12.5px">📌 <b>Tu as déjà un trade en cours</b> : <b style="color:${myTrade.side === "BUY" ? "var(--up)" : "var(--down)"}">${myTrade.side}</b> entré à ${fmt(myTrade.entry)} $ (SL ${fmt(myTrade.sl)} $ · TP1 ${fmt(myTrade.tp1)} $). Ce panneau prépare le <b>prochain</b> trade — n'ouvre rien de nouveau et <b>ne prends jamais le sens inverse</b> tant que celui-ci n'est pas clôturé. Suis la carte « 📈 Mon trade en cours » juste en dessous.</div>`
+    : "";
+  const takeBtn = label => myTrade
+    ? `<div class="dec-line" style="color:var(--dim);font-size:12.5px;margin-top:8px">Bouton désactivé : clôture d'abord ton trade en cours (« Je suis sorti ») avant d'en enregistrer un nouveau.</div>`
+    : `<button class="takeBtn" onclick="takeTrade()">${label}</button>`;
+
+  if (d.action !== "WAIT") {
+    if (lastAction !== d.action) beep(3);
+    el.innerHTML = `
+      <div class="badge ${d.action === "BUY" ? "buy" : "sell"}">${d.sticky ? (d.action === "BUY" ? "🟢 SIGNAL BUY ACTIF — je le suis avec toi" : "🔴 SIGNAL SELL ACTIF — je le suis avec toi") : (d.action === "BUY" ? "🟢 RENTRE EN BUY — MAINTENANT" : "🔴 RENTRE EN SELL — MAINTENANT")}</div>
+      ${openNote}
+      ${vision}
+      ${d.reasons.map(r => `<div class="dec-line">✔️ ${r}</div>`).join("")}
+      ${plan}${lotRow}
+      <div class="dec-line" style="color:var(--dim);font-size:12px;margin-top:6px">Valable tant que l'analyse ne change pas (réévaluation 30 s). Si le prix a déjà bougé de plus de 0,3 ATR, attends le retour.</div>
+      ${takeBtn("✅ J'ai pris ce trade — suis-le pour moi")}`;
+  } else if (armed) {
+    el.innerHTML = `
+      <div class="badge arm">🟠 PRÉPARE-TOI — ${armed.side} EN APPROCHE (${armed.ready} % prêt)</div>
+      ${openNote}
+      ${vision}
+      <div class="dec-line"><b class="k">Setup</b> ${armed.type} — ${armed.note}</div>
+      <div class="dec-line"><b class="k">Déclencheur</b> <b>${fmt(armed.trigger)} $</b> (le prix en est à ${fmt(armed.dist)} $) · estimation ${fmtEta(armed.etaMin)} — je re-vérifie toutes les 30 s, le badge passe en ${armed.side} si ça se confirme.</div>
+      <div class="dec-line"><b class="k">Pourquoi pas tout de suite</b> ${d.whyShort}</div>
+      ${plan}${lotRow}
+      ${takeBtn("✅ J'ai pris ce trade au déclencheur — suis-le pour moi")}`;
+  } else {
+    el.innerHTML = `
+      <div class="badge wait">⏳ N'ENTRE PAS MAINTENANT — ATTENDS</div>
+      ${openNote}
+      ${vision}
+      <div class="dec-line"><b class="k">Pourquoi</b> ${d.whyShort}</div>
+      <div class="dec-line" style="color:var(--dim);font-size:12.5px">${d.whyLong}</div>
+      <div class="dec-line"><b class="k">Dans combien de temps</b> <b>${d.etaTxt}</b> — je réanalyse toutes les 30 s, ce panneau changera de couleur dès que ce sera jouable.</div>
+      <div class="dec-line"><b class="k">Condition d'entrée</b> ${d.condition}</div>
+      ${plan}${lotRow}`;
+  }
+  lastAction = d.action;
+}
+
+/* ---- divergence RSI (sur 2 derniers swings du prix) ---- */
+function detectDivergence(c, rsi) {
+  const pts = swings(c, 3);
+  const highs = pts.filter(p => p.hi).slice(-2), lows = pts.filter(p => !p.hi).slice(-2);
+  if (highs.length === 2 && rsi[highs[0].i] != null && rsi[highs[1].i] != null)
+    if (highs[1].p > highs[0].p && rsi[highs[1].i] < rsi[highs[0].i] - 2) return -1; // haussier prix / baissier RSI
+  if (lows.length === 2 && rsi[lows[0].i] != null && rsi[lows[1].i] != null)
+    if (lows[1].p < lows[0].p && rsi[lows[1].i] > rsi[lows[0].i] + 2) return 1;
+  return 0;
+}
+function percentileBW(boll, closes) {
+  const ws = [];
+  for (let i = 0; i < closes.length; i++) if (boll.up[i] != null) ws.push((boll.up[i] - boll.lo[i]) / closes[i] * 100);
+  ws.sort((a, b) => a - b);
+  return ws[Math.floor(ws.length / 2)] || 1;
+}
+
+/* ================= rendus ================= */
+const fmt = (x, d = 2) => x == null ? "—" : x.toLocaleString("fr-FR", { minimumFractionDigits: d, maximumFractionDigits: d });
+/* faits divers qui matchent les mots-clés géo ("home invasion", fusillades…) : pas des événements de marché */
+const GEO_NOISE = /\b(home invasion|robbery|police|murder|homicide|stabbing|shooting|shooter|carjack|burglar|kidnap|manhunt|crime scene)\b/i;
+const geoW = h => GEO_NOISE.test(h.title) ? 0 : h.w;
+const lbl = s => s >= 2 ? "🟢 haussier" : s <= -2 ? "🔴 baissier" : "⚪ neutre";
+function ago(c, i) {
+  const n = c.length - 1 - i;
+  return n === 0 ? "bougie en cours" : n === 1 ? "bougie précédente" : `il y a ${n} bougies`;
+}
+
+function renderVerdict(v) {
+  const pMain = v.conf, pAlt = 100 - v.conf;
+  const dirTxt = v.dirUp ? "HAUSSIER" : "BAISSIER";
+  const col = v.dirUp ? "var(--up)" : "var(--down)";
+  document.getElementById("verdictBody").innerHTML = `
+    <div class="dir" style="color:${col}">${v.dirUp ? "▲" : "▼"} Biais ${dirTxt} <span style="font-size:14px;color:var(--dim)">score ${v.score >= 0 ? "+" : ""}${v.score.toFixed(1)} / ±10 · confiance ${v.conf} %</span></div>
+    <div class="gauge"><div class="needle" style="left:calc(${(v.score + 10) / 20 * 100}% - 2px)"></div></div>
+    <div class="gauge-lbl"><span>fortement baissier</span><span>neutre</span><span>fortement haussier</span></div>
+
+    <div class="scen">
+      <b class="pc" style="color:${col}">${pMain} %</b> — <b>Scénario principal :</b>
+      ${v.dirUp
+        ? `poursuite vers <b>${fmt(v.target)} $</b> puis <b>${fmt(v.target2)} $</b> tant que ${fmt(v.invalid)} $ tient.`
+        : `repli vers <b>${fmt(v.target)} $</b> puis <b>${fmt(v.target2)} $</b> tant que le prix reste sous ${fmt(v.invalid)} $.`}
+      ${v.squeeze ? " Le squeeze Bollinger laisse présager un mouvement rapide au déclenchement." : ""}
+      <div class="bar"><i style="width:${pMain}%;background:${col}"></i></div>
+    </div>
+    <div class="scen">
+      <b class="pc">${pAlt} %</b> — <b>Scénario alternatif :</b>
+      ${v.dirUp
+        ? `perte de ${fmt(v.invalid)} $ → le biais s'inverse, direction ${fmt(v.invalid - 1.5 * v.atrv)} $.`
+        : `reprise de ${fmt(v.invalid)} $ → le biais s'inverse, direction ${fmt(v.invalid + 1.5 * v.atrv)} $.`}
+      <div class="bar"><i style="width:${pAlt}%;background:#666"></i></div>
+    </div>
+
+    <table style="margin-top:10px">
+      <thead><tr><th>Niveau</th><th>Prix</th><th>Distance</th></tr></thead>
+      <tbody>
+        <tr><td>🎯 Objectif 2</td><td>${fmt(v.target2)} $</td><td>${fmt(Math.abs(v.target2 - v.price))} $</td></tr>
+        <tr><td>🎯 Objectif 1</td><td>${fmt(v.target)} $</td><td>${fmt(Math.abs(v.target - v.price))} $</td></tr>
+        <tr><td><b>Prix actuel</b></td><td><b>${fmt(v.price)} $</b></td><td>—</td></tr>
+        <tr><td>🛑 Invalidation</td><td>${fmt(v.invalid)} $</td><td>${fmt(Math.abs(v.invalid - v.price))} $</td></tr>
+      </tbody>
+    </table>
+    <p style="color:var(--dim);font-size:12px;margin-top:8px">
+      Contexte : ${v.st.label} · ${v.geoTxt} · risk-off ${v.riskOff}/9
+      ${v.divg ? ` · divergence RSI ${v.divg > 0 ? "haussière" : "baissière"}` : ""}
+      ${v.recentPat.length ? " · figures récentes : " + v.recentPat.map(p => p.name).join(", ") : ""}
+    </p>`;
+}
+
+function renderMTF(snaps) {
+  const tb = document.querySelector("#mtf tbody");
+  tb.innerHTML = Object.entries(snaps).map(([tf, s]) => {
+    const [t, cl] = s.score >= 2 ? ["Haussier", "up"] : s.score <= -2 ? ["Baissier", "down"] : ["Neutre", "flat"];
+    return `<tr><td><b>${tf}</b></td>
+      <td><span class="tag ${cl}">${t}</span></td>
+      <td>${s.rsi.toFixed(0)}</td>
+      <td>${s.hist >= 0 ? "＋" : "－"}${s.histRising ? "↗" : "↘"}</td>
+      <td style="font-size:11.5px">${s.st.label}</td>
+      <td style="font-size:11.5px;color:var(--dim)">EMA20 ${s.e20 > s.e50 ? ">" : "<"} EMA50 · ${s.price > s.e200 ? "sur" : "sous"} EMA200</td></tr>`;
+  }).join("");
+}
+
+function renderNews() {
+  const el = document.getElementById("news"), cal = document.getElementById("calBox");
+  if (!newsData) { el.innerHTML = `<span class="err">flux news indisponible (API non joignable)</span>`; return; }
+  cal.innerHTML = (newsData.calendar || []).slice(0, 4).map(e => {
+    const d = new Date(e.date);
+    return `<div class="headline" style="border-left:3px solid ${e.impact === "High" ? "var(--down)" : "var(--gold)"}">
+      📅 <b>${d.toLocaleDateString("fr-FR", { weekday: "short" })} ${d.toLocaleTimeString("fr-FR", { hour: "2-digit", minute: "2-digit" })}</b> — ${e.title} (${e.impact})</div>`;
+  }).join("") || `<span class="src-note">aucun événement éco US majeur imminent</span>`;
+
+  const hs = [...(newsData.headlines || [])].sort((a, b) => (geoW(b) - geoW(a)) || (new Date(b.date) - new Date(a.date))).slice(0, 18);
+  el.innerHTML = hs.map(h => {
+    const s = h.bias === "bull" ? `<span style="color:var(--up)">▲ or</span>` : h.bias === "bear" ? `<span style="color:var(--down)">▼ or</span>` : "";
+    const w = geoW(h);
+    const geo = w >= 3 ? "🔴" : w === 2 ? "🟠" : w === 1 ? "🟡" : "";
+    return `<div class="headline ${w ? "geo" + w : ""}">${geo} ${h.title}
+      <div class="meta">${h.source} · ${h.date ? new Date(h.date).toLocaleTimeString("fr-FR", { hour: "2-digit", minute: "2-digit" }) : ""} ${s}</div></div>`;
+  }).join("") || `<span class="src-note">aucune actualité</span>`;
+}
+
+function renderRadar() {
+  const el = document.getElementById("radar");
+  if (!radarData?.assets) { el.innerHTML = `<span class="err">radar indisponible (API non joignable)</span>`; return; }
+  el.innerHTML = radarData.assets.map(a => {
+    const v = (a.chg1h == null || isNaN(a.chg1h)) ? null : a.chg1h; // donnée manquante → pas de "null%"
+    const c1 = v > 0 ? "up" : v < 0 ? "down" : "";
+    const chgTxt = v == null ? "—" : `${v > 0 ? "+" : ""}${v}% /1h`;
+    return `<div class="radar-row"><span>${a.name}</span>
+      <span><b>${fmt(a.last, a.last > 1000 ? 0 : 2)}</b>
+      <span class="chg ${c1}" style="margin-left:8px">${chgTxt}</span></span></div>`;
+  }).join("") + `<div class="riskoff" style="color:${(radarData.riskOff ?? 0) >= 4 ? "var(--down)" : (radarData.riskOff ?? 0) >= 2 ? "var(--gold)" : "var(--up)"}">
+    Signature risk-off : ${radarData.riskOff ?? 0} / 9 ${(radarData.riskOff ?? 0) >= 4 ? "— fuite vers les refuges 🚨" : (radarData.riskOff ?? 0) >= 2 ? "— nervosité" : "— calme"}</div>`;
+}
+
+/* ================= graphique canvas ================= */
+const cv = document.getElementById("chart"), ctx = cv.getContext("2d");
+const ohlcEl = document.getElementById("ohlc");
+
+function draw() {
+  if (!D) return;
+  const dpr = window.devicePixelRatio || 1;
+  const W = cv.clientWidth, H = cv.clientHeight;
+  if (cv.width !== W * dpr) { cv.width = W * dpr; cv.height = H * dpr; }
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  ctx.clearRect(0, 0, W, H);
+
+  const AXIS = W < 700 ? 48 : 64;       // marge droite pour l'échelle (réduite sur mobile = graphique plus large)
+  // sur mobile on donne plus de place aux bougies/courbes (RSI et MACD compressés)
+  const pShare = W < 700 ? 0.70 : 0.62, iShare = W < 700 ? 0.10 : 0.13;
+  const priceH = H * pShare, volH = H * 0.07, rsiH = H * iShare, macdH = H * iShare;
+  const rsiY0 = priceH + volH + 8, macdY0 = rsiY0 + rsiH + 8;
+  const cw = W - AXIS;
+
+  const { c, ind, sr, piv, patterns } = D;
+  const end = Math.min(view.end ?? c.length - 1, c.length - 1);
+  const start = Math.max(0, end - view.count + 1);
+  const n = end - start + 1;
+  const xw = cw / n, bw = Math.max(1, xw * 0.65);
+  const X = i => (i - start) * xw + xw / 2;
+
+  // échelle calée sur l'ACTION (bougies + EMA20/50 + VWAP) ; EMA200 et Bollinger peuvent dépasser les bords
+  let lo = Infinity, hi = -Infinity, vMax = 0;
+  for (let i = start; i <= end; i++) {
+    lo = Math.min(lo, c[i].l); hi = Math.max(hi, c[i].h); vMax = Math.max(vMax, c[i].v);
+    for (const arr of [ind.e20, ind.e50]) if (arr[i] != null) { lo = Math.min(lo, arr[i]); hi = Math.max(hi, arr[i]); }
+    if (D.vwap && D.vwap.line[i] != null) { lo = Math.min(lo, D.vwap.line[i]); hi = Math.max(hi, D.vwap.line[i]); }
+  }
+  // EMA200 + Bollinger : n'élargissent l'échelle que de 20 % max (sinon ils écrasaient les bougies)
+  const core = hi - lo || 1, marge = core * 0.2, hi0 = hi, lo0 = lo;
+  for (let i = start; i <= end; i++) {
+    const cand = [ind.e200[i], ind.boll.up[i], ind.boll.lo[i]].filter(x => x != null);
+    for (const x of cand) { hi = Math.max(hi, Math.min(x, hi0 + marge)); lo = Math.min(lo, Math.max(x, lo0 - marge)); }
+  }
+  const pad = (hi - lo) * 0.07; lo -= pad; hi += pad;
+  const Y = p => priceH * (1 - (p - lo) / (hi - lo));
+
+  /* grille + échelle prix */
+  const AF = W < 700 ? 13 : 10; // texte d'échelle plus grand sur mobile
+  ctx.font = AF + "px sans-serif"; ctx.fillStyle = "#5a6478"; ctx.strokeStyle = "#1b2130"; ctx.lineWidth = 1;
+  const step = niceStep((hi - lo) / 6);
+  for (let p = Math.ceil(lo / step) * step; p < hi; p += step) {
+    const y = Y(p);
+    ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(cw, y); ctx.stroke();
+    ctx.fillText(fmt(p, step < 1 ? 2 : 0), cw + 6, y + 3);
+  }
+  /* échelle temps */
+  const tEvery = Math.ceil(n / 7);
+  for (let i = start; i <= end; i += tEvery) {
+    const d = new Date(c[i].t);
+    const s = TF === "1d" ? d.toLocaleDateString("fr-FR", { day: "2-digit", month: "2-digit" }) : d.toLocaleTimeString("fr-FR", { hour: "2-digit", minute: "2-digit" });
+    ctx.fillText(s, X(i) - 12, priceH + 12 + (AF - 10));
+  }
+  ctx.font = AF + "px sans-serif";
+
+  /* Bollinger */
+  ctx.beginPath();
+  let started = false;
+  for (let i = start; i <= end; i++) if (ind.boll.up[i] != null) { started ? ctx.lineTo(X(i), Y(ind.boll.up[i])) : ctx.moveTo(X(i), Y(ind.boll.up[i])); started = true; }
+  for (let i = end; i >= start; i--) if (ind.boll.lo[i] != null) ctx.lineTo(X(i), Y(ind.boll.lo[i]));
+  ctx.closePath(); ctx.fillStyle = "rgba(79,143,247,.07)"; ctx.fill();
+  ctx.strokeStyle = "rgba(120,165,255,.55)"; ctx.lineWidth = 1.2; ctx.stroke();
+
+  /* S/R (épaisseur = nb de touches) */
+  for (const l of sr) {
+    if (l.p < lo || l.p > hi) continue;
+    ctx.strokeStyle = l.p > D.price ? "rgba(239,83,80,.45)" : "rgba(38,166,154,.45)";
+    ctx.lineWidth = Math.min(3, 1 + l.n * 0.4);
+    ctx.beginPath(); ctx.moveTo(0, Y(l.p)); ctx.lineTo(cw, Y(l.p)); ctx.stroke();
+    ctx.fillStyle = ctx.strokeStyle; ctx.fillText(`${fmt(l.p, 0)} (${l.n})`, 4, Y(l.p) - 3);
+  }
+  /* pivots journaliers */
+  ctx.setLineDash([5, 5]); ctx.lineWidth = 1;
+  for (const [k, p] of Object.entries(piv)) {
+    if (p < lo || p > hi) continue;
+    ctx.strokeStyle = k === "P" ? "rgba(240,185,11,.6)" : "rgba(160,160,160,.35)";
+    ctx.beginPath(); ctx.moveTo(0, Y(p)); ctx.lineTo(cw, Y(p)); ctx.stroke();
+    ctx.fillStyle = ctx.strokeStyle; ctx.fillText(k, cw - 18, Y(p) - 3);
+  }
+  ctx.setLineDash([]);
+
+  /* volume (entre l'axe des temps et le panneau RSI) */
+  const volBase = rsiY0 - 4, volMaxH = volBase - (priceH + 16);
+  for (let i = start; i <= end; i++) {
+    ctx.fillStyle = c[i].c >= c[i].o ? "rgba(38,166,154,.35)" : "rgba(239,83,80,.35)";
+    const vh = volMaxH * (c[i].v / vMax || 0);
+    ctx.fillRect(X(i) - bw / 2, volBase - vh, bw, vh);
+  }
+
+  /* profil de volume : barres horizontales ancrées à droite (où l'argent a échangé) */
+  if (D.prof) {
+    const pw = cw * (W < 700 ? 0.09 : 0.16); // profil de volume plus fin sur mobile (n'écrase plus les bougies)
+    for (let b = 0; b < D.prof.bins.length; b++) {
+      const pTop = D.prof.lo + (b + 1) * D.prof.step, pBot = D.prof.lo + b * D.prof.step;
+      if (pTop < lo || pBot > hi) continue;
+      const w = D.prof.bins[b] / D.prof.max * pw;
+      const inVA = pBot >= D.prof.val - D.prof.step && pTop <= D.prof.vah + D.prof.step;
+      ctx.fillStyle = inVA ? "rgba(148,163,184,.16)" : "rgba(148,163,184,.07)";
+      ctx.fillRect(cw - w, Y(pTop), w, Math.max(1, Y(pBot) - Y(pTop)));
+    }
+    if (D.prof.poc >= lo && D.prof.poc <= hi) {
+      ctx.strokeStyle = "rgba(255,255,255,.4)"; ctx.lineWidth = 1.2;
+      ctx.beginPath(); ctx.moveTo(0, Y(D.prof.poc)); ctx.lineTo(cw, Y(D.prof.poc)); ctx.stroke();
+      ctx.fillStyle = "rgba(255,255,255,.7)"; ctx.fillText("POC", cw - 96, Y(D.prof.poc) - 3);
+    }
+    ctx.setLineDash([4, 4]); ctx.strokeStyle = "rgba(255,255,255,.18)"; ctx.lineWidth = 1;
+    for (const [k2, p] of [["VAH", D.prof.vah], ["VAL", D.prof.val]]) {
+      if (p < lo || p > hi) continue;
+      ctx.beginPath(); ctx.moveTo(0, Y(p)); ctx.lineTo(cw, Y(p)); ctx.stroke();
+      ctx.fillStyle = "rgba(255,255,255,.45)"; ctx.fillText(k2, cw - 96, Y(p) - 3);
+    }
+    ctx.setLineDash([]);
+  }
+
+  /* zones FVG (déséquilibres non comblés) : boîtes étendues jusqu'à maintenant */
+  for (const z of D.fvg || []) {
+    const x0 = Math.max(0, X(Math.max(z.i, start)));
+    ctx.fillStyle = z.bull ? "rgba(38,166,154,.09)" : "rgba(239,83,80,.09)";
+    ctx.fillRect(x0, Y(z.top), cw - x0, Y(z.bot) - Y(z.top));
+    ctx.strokeStyle = z.bull ? "rgba(38,166,154,.3)" : "rgba(239,83,80,.3)";
+    ctx.strokeRect(x0, Y(z.top), cw - x0, Y(z.bot) - Y(z.top));
+    ctx.fillStyle = ctx.strokeStyle; ctx.fillText("FVG", x0 + 3, Y(z.top) + 10);
+  }
+
+  /* niveaux Fibonacci de la dernière impulsion */
+  if (D.fib) {
+    ctx.setLineDash([2, 4]); ctx.lineWidth = 1;
+    for (const l of D.fib.levels) {
+      if (l.p < lo || l.p > hi) continue;
+      const golden = l.r === 0.618 || l.r === 0.5;
+      ctx.strokeStyle = golden ? "rgba(240,185,11,.5)" : "rgba(176,124,247,.35)";
+      ctx.beginPath(); ctx.moveTo(X(Math.max(D.fib.i0, start)), Y(l.p)); ctx.lineTo(cw, Y(l.p)); ctx.stroke();
+      ctx.fillStyle = ctx.strokeStyle;
+      ctx.fillText(`fib ${(l.r * 100).toFixed(1)} %`, cw - 62, Y(l.p) - 3);
+    }
+    ctx.setLineDash([]);
+  }
+
+  /* pools de liquidité (stops) */
+  for (const pool of (D.liq?.pools || [])) {
+    if (pool.p < lo || pool.p > hi) continue;
+    ctx.setLineDash([1, 3]); ctx.strokeStyle = "rgba(120,180,255,.5)"; ctx.lineWidth = 1;
+    ctx.beginPath(); ctx.moveTo(X(Math.max(pool.i, start)), Y(pool.p)); ctx.lineTo(cw, Y(pool.p)); ctx.stroke();
+    ctx.setLineDash([]);
+    ctx.fillStyle = "rgba(120,180,255,.8)"; ctx.fillText("💧", cw - 78, Y(pool.p) + 4);
+  }
+
+  /* bougies */
+  for (let i = start; i <= end; i++) {
+    const k = c[i], up = k.c >= k.o;
+    ctx.strokeStyle = ctx.fillStyle = up ? "#26a69a" : "#ef5350";
+    ctx.lineWidth = 1;
+    ctx.beginPath(); ctx.moveTo(X(i), Y(k.h)); ctx.lineTo(X(i), Y(k.l)); ctx.stroke();
+    const y1 = Y(Math.max(k.o, k.c)), y2 = Y(Math.min(k.o, k.c));
+    ctx.fillRect(X(i) - bw / 2, y1, bw, Math.max(1, y2 - y1));
+  }
+
+  /* EMAs — lignes NETTES : liseré sombre dessous (contraste) + trait vif dessus, zéro flou */
+  const mobW = W < 700;
+  const lines = [[ind.e20, "#ffc21e", mobW ? 2.6 : 2.2], [ind.e50, "#4d94ff", mobW ? 2.4 : 2], [ind.e200, "#c07bff", mobW ? 2.2 : 1.9]];
+  ctx.lineJoin = "round"; ctx.lineCap = "round"; ctx.shadowBlur = 0;
+  const emaPath = arr => { ctx.beginPath(); for (let i = start; i <= end; i++) i === start ? ctx.moveTo(X(i), Y(arr[i])) : ctx.lineTo(X(i), Y(arr[i])); };
+  for (const [arr, , lw] of lines) { ctx.strokeStyle = "rgba(8,11,17,.85)"; ctx.lineWidth = lw + 2.4; emaPath(arr); ctx.stroke(); } // liseré (casing)
+  for (const [arr, col, lw] of lines) {
+    ctx.strokeStyle = col; ctx.lineWidth = lw; emaPath(arr); ctx.stroke();
+    ctx.fillStyle = col; ctx.strokeStyle = "rgba(8,11,17,.85)"; ctx.lineWidth = 1.5;
+    ctx.beginPath(); ctx.arc(X(end), Y(arr[end]), lw + 1.2, 0, 7); ctx.fill(); ctx.stroke(); // pastille valeur actuelle
+  }
+
+  /* VWAP + bandes ±1σ (le prix des institutionnels) */
+  if (D.vwap) {
+    ctx.setLineDash([2, 3]); ctx.strokeStyle = "rgba(34,211,238,.35)"; ctx.lineWidth = 1;
+    for (const arr of [D.vwap.up, D.vwap.dn]) {
+      ctx.beginPath();
+      for (let i = start; i <= end; i++) i === start ? ctx.moveTo(X(i), Y(arr[i])) : ctx.lineTo(X(i), Y(arr[i]));
+      ctx.stroke();
+    }
+    ctx.setLineDash([]);
+    const vwPath = () => { ctx.beginPath(); for (let i = start; i <= end; i++) i === start ? ctx.moveTo(X(i), Y(D.vwap.line[i])) : ctx.lineTo(X(i), Y(D.vwap.line[i])); };
+    ctx.strokeStyle = "rgba(8,11,17,.85)"; ctx.lineWidth = (mobW ? 2.3 : 2) + 2.4; vwPath(); ctx.stroke();
+    ctx.strokeStyle = "#22d3ee"; ctx.lineWidth = mobW ? 2.3 : 2; vwPath(); ctx.stroke();
+    const vv = D.vwap.line[end];
+    if (vv >= lo && vv <= hi) { ctx.fillStyle = "#22d3ee"; ctx.fillText("VWAP", cw - 130, Y(vv) - 3); }
+  }
+
+  /* lignes de tendance obliques (les "traits" du pro) */
+  for (const t of D.tls || []) {
+    const p = i => t.p0 + t.slope * (i - t.i0);
+    ctx.strokeStyle = t.isLow ? "rgba(38,166,154,.85)" : "rgba(239,83,80,.85)";
+    ctx.lineWidth = 1.6;
+    ctx.beginPath(); ctx.moveTo(X(Math.max(t.i0, start)), Y(p(Math.max(t.i0, start)))); ctx.lineTo(X(end), Y(p(end))); ctx.stroke();
+    // projection en pointillés au-delà de la dernière bougie
+    ctx.setLineDash([6, 4]);
+    ctx.beginPath(); ctx.moveTo(X(end), Y(p(end))); ctx.lineTo(cw, Y(p(end) + t.slope * ((cw - X(end)) / xw))); ctx.stroke();
+    ctx.setLineDash([]);
+    ctx.fillStyle = ctx.strokeStyle;
+    ctx.fillText(`TL ${t.touches}✓`, X(end) - 34, Y(p(end)) + (t.isLow ? 14 : -8));
+  }
+
+  /* sweeps de liquidité (chasse aux stops) */
+  ctx.font = "12px sans-serif";
+  for (const sw of (D.liq?.sweeps || [])) {
+    if (sw.i < start || sw.i > end) continue;
+    ctx.fillStyle = "#ffd54f";
+    ctx.fillText("⚡", X(sw.i) - 6, sw.dir > 0 ? Y(c[sw.i].l) + 22 : Y(c[sw.i].h) - 14);
+  }
+
+  /* marqueurs de figures */
+  ctx.font = "11px sans-serif";
+  for (const p of patterns) {
+    if (p.i < start || p.i > end) continue;
+    const k = c[p.i];
+    if (p.dir >= 0) { ctx.fillStyle = "#26a69a"; ctx.fillText("▲", X(p.i) - 5, Y(k.l) + 14); }
+    if (p.dir <= 0) { ctx.fillStyle = p.dir ? "#ef5350" : "#aaa"; ctx.fillText(p.dir ? "▼" : "◆", X(p.i) - 5, Y(k.h) - 6); }
+  }
+
+  /* ligne du dernier prix */
+  const lp = D.price;
+  if (lp >= lo && lp <= hi) {
+    ctx.strokeStyle = "#f0b90b"; ctx.setLineDash([3, 3]); ctx.lineWidth = 1;
+    ctx.beginPath(); ctx.moveTo(0, Y(lp)); ctx.lineTo(cw, Y(lp)); ctx.stroke(); ctx.setLineDash([]);
+    ctx.fillStyle = "#f0b90b"; ctx.fillRect(cw, Y(lp) - 8, AXIS, 15);
+    ctx.fillStyle = "#000"; ctx.fillText(fmt(lp), cw + 4, Y(lp) + 4);
+  }
+
+  /* ---- effet de SCAN : on voit le bot balayer le graphique quand il analyse ---- */
+  if (scanStart) {
+    const prog = (performance.now() - scanStart) / 1500;
+    if (prog >= 1) scanStart = 0;
+    else {
+      const sx = prog * cw;
+      const grad = ctx.createLinearGradient(sx - 60, 0, sx, 0);
+      grad.addColorStop(0, "rgba(240,185,11,0)"); grad.addColorStop(1, "rgba(240,185,11,.16)");
+      ctx.fillStyle = grad; ctx.fillRect(sx - 60, 0, 60, priceH);
+      ctx.strokeStyle = "rgba(255,220,120,.9)"; ctx.lineWidth = 2; ctx.shadowColor = "#f0b90b"; ctx.shadowBlur = 12;
+      ctx.beginPath(); ctx.moveTo(sx, 0); ctx.lineTo(sx, priceH); ctx.stroke(); ctx.shadowBlur = 0;
+      requestAnimationFrame(() => { if (!cross) draw(); });
+    }
+  }
+
+  /* ---- RSI ---- */
+  panelBox(0, rsiY0, cw, rsiH, "RSI 14");
+  const ry = v => rsiY0 + rsiH * (1 - v / 100);
+  ctx.fillStyle = "rgba(160,160,160,.07)"; ctx.fillRect(0, ry(70), cw, ry(30) - ry(70));
+  ctx.strokeStyle = "#b07cf7"; ctx.lineWidth = 1.2; ctx.beginPath();
+  let st2 = false;
+  for (let i = start; i <= end; i++) if (ind.rsi[i] != null) { st2 ? ctx.lineTo(X(i), ry(ind.rsi[i])) : ctx.moveTo(X(i), ry(ind.rsi[i])); st2 = true; }
+  ctx.stroke();
+  ctx.fillStyle = "#5a6478"; ctx.fillText("70", cw + 6, ry(70) + 3); ctx.fillText("30", cw + 6, ry(30) + 3);
+  const rv = ind.rsi[end]; if (rv != null) { ctx.fillStyle = "#b07cf7"; ctx.fillText(rv.toFixed(0), cw + 30, ry(rv) + 3); }
+
+  /* ---- MACD ---- */
+  panelBox(0, macdY0, cw, macdH, "MACD 12·26·9");
+  let mMax = 0;
+  for (let i = start; i <= end; i++) mMax = Math.max(mMax, Math.abs(ind.macd.line[i]), Math.abs(ind.macd.hist[i]));
+  const my = v => macdY0 + macdH / 2 - (v / (mMax || 1)) * (macdH / 2 - 4);
+  for (let i = start; i <= end; i++) {
+    const h2 = ind.macd.hist[i];
+    ctx.fillStyle = h2 >= 0 ? "rgba(38,166,154,.5)" : "rgba(239,83,80,.5)";
+    ctx.fillRect(X(i) - bw / 2, Math.min(my(0), my(h2)), bw, Math.abs(my(h2) - my(0)) || 1);
+  }
+  for (const [arr, col] of [[ind.macd.line, "#f0b90b"], [ind.macd.sig, "#4f8ff7"]]) {
+    ctx.strokeStyle = col; ctx.lineWidth = 1.1; ctx.beginPath();
+    for (let i = start; i <= end; i++) i === start ? ctx.moveTo(X(i), my(arr[i])) : ctx.lineTo(X(i), my(arr[i]));
+    ctx.stroke();
+  }
+
+  /* ---- curseur ---- */
+  if (cross) {
+    const i = Math.round(cross.x / xw - 0.5) + start;
+    if (i >= start && i <= end) {
+      ctx.strokeStyle = "rgba(255,255,255,.25)"; ctx.setLineDash([4, 4]); ctx.lineWidth = 1;
+      ctx.beginPath(); ctx.moveTo(X(i), 0); ctx.lineTo(X(i), H); ctx.stroke();
+      if (cross.y < priceH) {
+        ctx.beginPath(); ctx.moveTo(0, cross.y); ctx.lineTo(cw, cross.y); ctx.stroke();
+        const pv = lo + (1 - cross.y / priceH) * (hi - lo);
+        ctx.setLineDash([]);
+        ctx.fillStyle = "#2a3242"; ctx.fillRect(cw, cross.y - 8, AXIS, 15);
+        ctx.fillStyle = "#fff"; ctx.fillText(fmt(pv), cw + 4, cross.y + 4);
+      }
+      ctx.setLineDash([]);
+      const k = c[i], d = new Date(k.t);
+      const pat = patterns.find(p => p.i === i);
+      ohlcEl.innerHTML = `${d.toLocaleDateString("fr-FR")} ${d.toLocaleTimeString("fr-FR", { hour: "2-digit", minute: "2-digit" })} ·
+        O <b>${fmt(k.o)}</b> H <b style="color:var(--up)">${fmt(k.h)}</b> L <b style="color:var(--down)">${fmt(k.l)}</b> C <b>${fmt(k.c)}</b>
+        · Δ ${fmt(k.c - k.o)} ${pat ? `· <b style="color:var(--gold)">${pat.name}</b>` : ""}`;
+    }
+  } else ohlcEl.textContent = "";
+}
+function panelBox(x, y, w, h, label) {
+  ctx.strokeStyle = "#1b2130"; ctx.strokeRect(x, y, w, h);
+  ctx.fillStyle = "#5a6478"; ctx.font = "10px sans-serif"; ctx.fillText(label, x + 4, y + 11);
+}
+function niceStep(raw) {
+  const mag = 10 ** Math.floor(Math.log10(raw));
+  for (const m of [1, 2, 5, 10]) if (raw <= m * mag) return m * mag;
+  return 10 * mag;
+}
+
+/* interactions graphique */
+cv.addEventListener("mousemove", e => {
+  const r = cv.getBoundingClientRect();
+  if (dragStart != null) {
+    const dx = e.clientX - dragStart.x;
+    const shift = Math.round(-dx / ((cv.clientWidth - 64) / view.count));
+    view.end = Math.max(view.count - 1, Math.min(D.c.length - 1, dragStart.end + shift));
+    cross = null;
+  } else cross = { x: e.clientX - r.left, y: e.clientY - r.top };
+  draw();
+});
+cv.addEventListener("mouseleave", () => { cross = null; draw(); });
+cv.addEventListener("wheel", e => {
+  e.preventDefault();
+  view.count = Math.max(40, Math.min(300, Math.round(view.count * (e.deltaY > 0 ? 1.15 : 0.87))));
+  draw();
+}, { passive: false });
+let dragStart = null;
+cv.addEventListener("mousedown", e => dragStart = { x: e.clientX, end: view.end ?? (D ? D.c.length - 1 : 0) });
+window.addEventListener("mouseup", () => dragStart = null);
+window.addEventListener("resize", draw);
+
+/* ================= alerte sonore + détecteur de mouvement brutal ================= */
+let lastAction = null, audioOn = false, audioCtx = null, tickBuf = [], lastSpikeAt = 0, armedWatch = null, lastTrigAt = 0;
+function beep(n = 2) {
+  if (!audioOn || !audioCtx) return;
+  for (let i = 0; i < n; i++) {
+    const o = audioCtx.createOscillator(), g = audioCtx.createGain();
+    o.frequency.value = 880; o.connect(g); g.connect(audioCtx.destination);
+    const t = audioCtx.currentTime + i * 0.25;
+    g.gain.setValueAtTime(0.15, t); g.gain.exponentialRampToValueAtTime(0.001, t + 0.18);
+    o.start(t); o.stop(t + 0.2);
+  }
+}
+document.getElementById("bell").addEventListener("click", () => {
+  audioOn = !audioOn;
+  if (audioOn && !audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+  document.getElementById("bell").textContent = audioOn ? "🔔" : "🔕";
+  if (audioOn) beep(1);
+});
+/* ---- capital : demandé au premier lancement, modifiable à tout moment (bouton 💰) ---- */
+const capBtn = document.getElementById("capBtn");
+capBtn.textContent = `💰 ${CAPITAL_EUR} €`;
+function askCapital(force) {
+  const cur = localStorage.getItem(CAP_KEY);
+  if (cur && !force) return;
+  const v = parseFloat((prompt("💰 Ton capital de trading en € (démo : 3000 · réel : ton vrai solde).\nTous les lots et les montants de gain/perte seront calculés dessus (risque 2 % par trade).", cur || "3000") || "").replace(",", "."));
+  if (v > 0) { CAPITAL_EUR = v; localStorage.setItem(CAP_KEY, String(v)); capBtn.textContent = `💰 ${CAPITAL_EUR} €`; cycle(false); }
+}
+capBtn.addEventListener("click", () => askCapital(true));
+if (!localStorage.getItem(CAP_KEY)) setTimeout(() => askCapital(false), 2000);
+/* chaque tick : mouvement mesuré sur 60 s ; au-delà de 0,7 ATR → réanalyse immédiate */
+function watchTick(p) {
+  const nowT = Date.now();
+  tickBuf.push({ t: nowT, p });
+  while (tickBuf.length && nowT - tickBuf[0].t > 120000) tickBuf.shift();
+  const ref = tickBuf.find(x => nowT - x.t <= 65000);
+  if (!ref || !D) return;
+  const mv = p - ref.p;
+  const el = document.getElementById("move1m");
+  el.textContent = `${mv >= 0 ? "+" : ""}${mv.toFixed(2)} $ / 1 min`;
+  el.className = "chg " + (mv >= 0 ? "up" : "down");
+  if (Math.abs(mv) > 0.7 * D.atrv && nowT - lastSpikeAt > 90000 && marketStatus().open) { // pas d'alerte spike marché fermé (PAXG week-end)
+    lastSpikeAt = nowT;
+    const b = document.getElementById("spikeBanner");
+    b.textContent = `⚡ MOUVEMENT BRUTAL : ${mv >= 0 ? "+" : ""}${mv.toFixed(2)} $ en 1 minute — réanalyse immédiate (prudence : les bougies de news balaient les stops dans les 2 sens)`;
+    b.style.borderColor = mv >= 0 ? "var(--up)" : "var(--down)";
+    b.style.display = "block";
+    setTimeout(() => b.style.display = "none", 90000);
+    beep(4);
+    cycle(false);
+  }
+  /* déclencheur du setup armé touché → validation immédiate, sans attendre le cycle */
+  if (armedWatch && nowT - lastTrigAt > 60000) {
+    const hit = armedWatch.side === "BUY" ? p >= armedWatch.trigger : p <= armedWatch.trigger;
+    if (hit) {
+      lastTrigAt = nowT;
+      const b = document.getElementById("spikeBanner");
+      b.textContent = `🎯 DÉCLENCHEUR ${armedWatch.side} TOUCHÉ (${fmt(armedWatch.trigger)} $) — validation immédiate en cours…`;
+      b.style.borderColor = armedWatch.side === "BUY" ? "var(--up)" : "var(--down)";
+      b.style.display = "block";
+      setTimeout(() => b.style.display = "none", 60000);
+      beep(3);
+      armedWatch = null;
+      cycle(false);
+    }
+  }
+  journalTick(p);
+  trackTrade(p);
+}
+
+/* ================= journal automatique + auto-analyse : je vérifie mes propres trades ================= */
+const JR_KEY = "analyste_journal_xau";
+let journal = [], jStats = null, offlineDone = false, lastCtx = null, activeLessons = [];
+try { journal = JSON.parse(localStorage.getItem(JR_KEY) || "[]"); } catch {}
+const saveJournal = () => localStorage.setItem(JR_KEY, JSON.stringify(journal.slice(-200)));
+
+function journalAdd(d) {
+  journal.push({ type: "sig", t: Date.now(), side: d.action, entry: d.entry, sl: d.sl, tp1: d.tp1, tp2: d.tp2,
+    lot: d.lotInfo ? d.lotInfo.lot : null, ratio: gRatio, status: "open", r: null,
+    ctx: lastCtx || null }); // contexte complet : pour comprendre POURQUOI ça a gagné ou perdu
+  saveJournal(); renderJournal();
+}
+/* ---- apprentissage : winrate par contexte → leçons + ajustements automatiques ---- */
+function bucketStats(pick) {
+  const res = journal.filter(e => e.type === "sig" && e.ctx && (e.status === "sl" || e.status === "tp1" || e.status === "tp2"));
+  const m = {};
+  for (const e of res) {
+    const k = pick(e); if (k == null) continue;
+    m[k] = m[k] || { n: 0, w: 0 };
+    m[k].n++; if (e.status !== "sl") m[k].w++;
+  }
+  return m;
+}
+function lessons() {
+  const out = [];
+  const push = (m, fmtBad, fmtGood, keyPrefix) => {
+    for (const [k, s] of Object.entries(m)) {
+      if (s.n < 8) continue; // pas de conclusion sans échantillon suffisant
+      if (s.w / s.n < 0.45) out.push({ malusKey: keyPrefix + k, txt: fmtBad(k, s) });
+      else if (s.w / s.n >= 0.6) out.push({ bonusKey: keyPrefix + k, txt: fmtGood(k, s) }); // point fort → léger assouplissement
+    }
+  };
+  push(bucketStats(e => e.ctx.regime), (k, s) => `mes trades en ${k} perdent (${s.w}/${s.n}) → j'exige plus de force dans ce régime`, (k, s) => `je gagne surtout en ${k} (${s.w}/${s.n})`, "regime:");
+  push(bucketStats(e => e.ctx.sess), (k, s) => `la session ${k} ne me réussit pas (${s.w}/${s.n}) → plus sélectif dessus`, (k, s) => `la session ${k} me réussit (${s.w}/${s.n})`, "sess:");
+  push(bucketStats(e => e.ctx.score != null ? (Math.abs(e.ctx.score) >= 4.5 ? "signaux forts" : "signaux moyens") : null),
+    (k, s) => `mes ${k} perdent (${s.w}/${s.n}) → seuil relevé`, (k, s) => `mes ${k} paient (${s.w}/${s.n})`, "band:");
+  /* leçons d'AUTOPSIE : pourquoi je perds vraiment ? */
+  const sls = journal.filter(e => e.type === "sig" && e.status === "sl" && e.pm);
+  const timing = sls.filter(e => e.pm === "timing").length, direction = sls.filter(e => e.pm === "direction").length;
+  if (sls.length >= 5 && timing / sls.length >= 0.6)
+    out.push({ slMult: 1.2, txt: `autopsie : ${timing}/${sls.length} de mes stops sautent AVANT que la cible soit atteinte (bonne direction, stop trop serré) → j'élargis mes stops de 20 %` });
+  if (sls.length >= 5 && direction / sls.length >= 0.6)
+    out.push({ malusKey: "direction", txt: `autopsie : ${direction}/${sls.length} de mes pertes sont de MAUVAISES directions → j'exige plus de confluence avant d'ordonner` });
+  const wins = journal.filter(e => e.type === "sig" && e.status === "tp1" && e.pm);
+  const tp2w = wins.filter(e => e.pm === "tp2").length;
+  if (wins.length >= 5 && tp2w / wins.length >= 0.6)
+    out.push({ txt: `autopsie : ${tp2w}/${wins.length} de mes gagnants filent jusqu'à TP2 → garde bien la moitié du trade pour TP2` });
+  return out;
+}
+function ctxMalus(regime, sessName, absScore) {
+  let m = 0;
+  for (const l of activeLessons) {
+    if (l.malusKey === "regime:" + regime || l.malusKey === "sess:" + sessName) m += 0.5;
+    if (l.malusKey === "band:signaux moyens" && absScore < 4.5) m += 0.5;
+    if (l.malusKey === "direction") m += 0.5;                                   // autopsie : directions fausses → plus de confluence
+    if (l.bonusKey === "regime:" + regime || l.bonusKey === "sess:" + sessName) m -= 0.25; // là où je gagne, je m'assouplis un peu
+  }
+  return Math.max(-0.5, Math.min(1, m));
+}
+/* autopsie : si mes stops sautent avant que la cible soit atteinte → stops élargis (appris, pas décrété) */
+function slMultLearned() {
+  for (const l of activeLessons) if (l.slMult) return l.slMult;
+  return 1;
+}
+/* ---- autopsie des trades résolus : comprendre POURQUOI (bougies réelles après coup) ---- */
+let pmBusy = false, pmLastAt = 0;
+async function pmPass() {
+  if (pmBusy || Date.now() - pmLastAt < 5 * 60000) return;
+  pmBusy = true; pmLastAt = Date.now();
+  try {
+    const todo = journal.filter(e => e.type === "sig" && !e.pm && e.closedAt &&
+      (e.status === "sl" || e.status === "tp1") && Date.now() - e.closedAt > 30 * 60000).slice(0, 3);
+    for (const e of todo) {
+      try {
+        const ks = await klines("5m", 60, e.closedAt - 30 * 60000);
+        const r = e.ratio || 1, dirn = e.side === "BUY" ? 1 : -1;
+        const around = ks.filter(k => Math.abs(k.t - e.closedAt) <= 10 * 60000);
+        const after = ks.filter(k => k.t > e.closedAt && k.t <= e.closedAt + 4 * 3600e3);
+        const avgRange = ks.reduce((s, k) => s + (k.h - k.l), 0) / (ks.length || 1);
+        const spike = around.some(k => (k.h - k.l) > 2.5 * avgRange);
+        if (e.status === "sl") {
+          const tpAfter = after.some(k => (dirn > 0 ? k.h * r >= e.tp1 : k.l * r <= e.tp1));
+          e.pm = spike ? "spike" : tpAfter ? "timing" : "direction";
+        } else {
+          const tp2After = after.some(k => (dirn > 0 ? k.h * r >= e.tp2 : k.l * r <= e.tp2));
+          e.pm = tp2After ? "tp2" : "clean";
+        }
+      } catch {}
+    }
+    if (todo.length) { saveJournal(); renderJournal(); }
+  } finally { pmBusy = false; }
+}
+/* ---- MÉMOIRE : sauvegarde sur Telegram + restauration (le localStorage seul est fragile) ---- */
+const ST_CODE = { open: "o", sl: "s", tp1: "1", tp2: "2", expired: "e", manual: "m" };
+const ST_BACK = { o: "open", s: "sl", 1: "tp1", 2: "tp2", e: "expired", m: "manual" };
+function memoireCode() { // format compact pour tenir dans un message Telegram
+  const j = journal.slice(-60).map(e => [
+    e.type === "sig" ? 1 : 0, Math.round(e.t / 1000), e.side === "BUY" ? 1 : 0,
+    +(e.entry || 0).toFixed(2), +(e.sl || 0).toFixed(2), +(e.tp1 || 0).toFixed(2), +(e.tp2 || 0).toFixed(2),
+    ST_CODE[e.status] || "o", e.r == null ? "" : e.r, +(e.lot || 0).toFixed(2),
+    e.eur == null ? "" : e.eur, e.ctx ? (e.ctx.sess || "").slice(0, 3) : "", e.ctx ? (e.ctx.regime || "").slice(0, 3) : "", e.pm || "",
+  ]);
+  const t = myTrade ? [myTrade.side === "BUY" ? 1 : 0, myTrade.entry, myTrade.sl, myTrade.tp1, myTrade.tp2, myTrade.lot, myTrade.tp1done ? 1 : 0] : null;
+  return "XAU1|" + JSON.stringify({ c: CAPITAL_EUR, j, t });
+}
+window.sauverMemoire = async function () {
+  const code = memoireCode();
+  const st = journalStats(3650);
+  const resume = `📊 ${st.n} signaux · ${st.nRes} vérifiés · winrate ${st.wr == null ? "—" : Math.round(st.wr * 100) + " %"} · cumul ${st.sumR.toFixed(1)}R · capital ${CAPITAL_EUR} €${myTrade ? ` · trade ${myTrade.side} en cours` : ""}`;
+  try {
+    const r = await fetch(API_BASES[0] + "/api/memoire?secret=gold2026cron", {
+      method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ code, resume }),
+    });
+    const j = await r.json();
+    alert(j.ok ? `✅ Mémoire sauvegardée sur ton Telegram (${j.taille} caractères).\n\n${resume}\n\nTu peux la restaurer à tout moment, même après avoir vidé le cache ou changé de téléphone.`
+                : `⚠️ Échec : ${j.error || "inconnu"}`);
+  } catch (e) { alert("⚠️ Sauvegarde impossible (réseau) : " + e.message); }
+};
+window.restaurerMemoire = function () {
+  const code = (prompt("♻️ Colle ici le bloc de mémoire reçu sur Telegram (il commence par XAU1|) :", "") || "").trim();
+  if (!code.startsWith("XAU1|")) { if (code) alert("Ce n'est pas un bloc de mémoire valide (il doit commencer par XAU1|)."); return; }
+  let d; try { d = JSON.parse(code.slice(5)); } catch { alert("Bloc illisible — recopie-le en entier."); return; }
+  if (!confirm("Restaurer cette mémoire ? Le journal actuel de cet appareil sera remplacé.")) return;
+  if (d.c > 0) { CAPITAL_EUR = d.c; localStorage.setItem(CAP_KEY, String(d.c)); capBtn.textContent = `💰 ${CAPITAL_EUR} €`; }
+  journal = (d.j || []).map(a => ({
+    type: a[0] ? "sig" : "user", t: a[1] * 1000, side: a[2] ? "BUY" : "SELL",
+    entry: a[3], sl: a[4], tp1: a[5], tp2: a[6], status: ST_BACK[a[7]] || "open",
+    r: a[8] === "" ? null : a[8], lot: a[9], eur: a[10] === "" ? null : a[10],
+    ctx: { sess: a[11], regime: a[12] === "TEN" ? "TENDANCE" : a[12] === "RAN" ? "RANGE" : a[12] }, pm: a[13] || undefined,
+    closedAt: a[7] === "o" ? undefined : a[1] * 1000 + 3600e3,
+  }));
+  saveJournal();
+  if (d.t) {
+    myTrade = { side: d.t[0] ? "BUY" : "SELL", entry: d.t[1], sl: d.t[2], tp1: d.t[3], tp2: d.t[4], lot: d.t[5],
+      tp1done: !!d.t[6], be: !!d.t[6], t0: Date.now(), declared: true };
+    localStorage.setItem(TRADE_KEY, JSON.stringify(myTrade));
+    renderTrade(D ? D.price : myTrade.entry);
+  }
+  renderJournal();
+  alert("✅ Mémoire restaurée : " + journal.length + " entrées" + (d.t ? " + ton trade en cours" : "") + ".");
+};
+
+/* remise à zéro complète : nouveau départ démo (journal, signal actif, trade suivi) */
+window.resetJournal = function () {
+  if (!confirm("⚠️ Remettre le journal à ZÉRO ?\n\nSignaux vérifiés, trades déclarés, signal actif et trade suivi seront EFFACÉS.\n\nConseil : sauvegarde d'abord ta mémoire sur Telegram (bouton 💾) si tu veux pouvoir revenir en arrière.")) return;
+  journal = []; localStorage.removeItem(JR_KEY);
+  activeSig = null; localStorage.removeItem(SIG_KEY);
+  myTrade = null; localStorage.removeItem(TRADE_KEY);
+  const tc = document.getElementById("tradeCard"); if (tc) tc.style.display = "none";
+  renderJournal();
+};
+/* discipline : 2 de mes signaux au stop aujourd'hui → journée terminée (même règle que le bot) */
+function slToday() {
+  const d0 = new Date(); d0.setHours(0, 0, 0, 0);
+  return journal.filter(e => e.type === "sig" && e.status === "sl" && (e.closedAt || 0) >= d0.getTime()).length;
+}
+/* résolution en direct : à chaque tick, TP1 ou SL touché ? (les 2 dans la même bougie = compté perdu — conservateur) */
+const marketOpenAt = t => marketStatus(new Date(t)).open; // le marché de l'or était-il ouvert à cet instant ?
+/* temps réellement écoulé MARCHÉ OUVERT (le week-end ne compte pas : ton trade ne vieillit pas broker fermé) */
+function openElapsed(from, to = Date.now()) {
+  const step = 30 * 60000; let openMs = 0;
+  for (let t = from; t < to; t += step) if (marketOpenAt(t)) openMs += Math.min(step, to - t);
+  return openMs;
+}
+/* réparation : un signal fermé ALORS QUE LE MARCHÉ ÉTAIT FERMÉ = faux (proxy PAXG bouge, ton broker est gelé) → on le rouvre */
+function healClosedWhileMarketShut() {
+  let chg = false;
+  for (const e of journal) {
+    if (e.type !== "sig" || e.status === "open") continue;
+    const fermeMarcheClos = e.closedAt && !marketOpenAt(e.closedAt);          // fermé pendant que le broker était gelé
+    const expireATort = e.status === "expired" && openElapsed(e.t) <= 24 * 3600e3; // "expiré" alors qu'il n'a pas 24 h de marché ouvert
+    if (fermeMarcheClos || expireATort) {
+      e.status = "open"; e.r = null; delete e.closedAt; delete e.pm; chg = true;
+    }
+  }
+  if (chg) { saveJournal(); renderJournal(); }
+}
+function journalTick(p) {
+  if (!marketStatus().open) return; // marché de l'or fermé : ton SL/TP réel ne peut PAS être touché, on gèle le journal
+  let chg = false;
+  for (const e of journal) {
+    if (e.type !== "sig" || e.status !== "open") continue;
+    const dirn = e.side === "BUY" ? 1 : -1;
+    if ((p - e.sl) * dirn <= 0) { e.status = "sl"; e.r = -1; e.closedAt = Date.now(); chg = true; }
+    else if ((p - e.tp1) * dirn >= 0) { e.status = "tp1"; e.r = 1.5; e.closedAt = Date.now(); chg = true; }
+    else if (openElapsed(e.t) > 24 * 3600e3) { e.status = "expired"; e.r = 0; e.closedAt = Date.now(); chg = true; } // 24 h de MARCHÉ OUVERT
+  }
+  if (chg) { saveJournal(); renderJournal(); }
+}
+/* récupère les signaux envoyés par la SENTINELLE Telegram pendant que l'app était fermée, et les journalise */
+async function syncSentinelle() {
+  try {
+    const r = await apiGet("/api/analyste-check?secret=gold2026cron&history=1&asset=x");
+    if (!r || !r.signaux) return;
+    let n = 0;
+    for (const s of r.signaux) {
+      const dejaLa = journal.some(e => e.type === "sig" && Math.abs(e.t - s.at) < 6 * 60000 && e.side === s.s);
+      if (dejaLa) continue;
+      journal.push({ type: "sig", t: s.at, side: s.s, entry: s.e, sl: s.sl, tp1: s.t1, tp2: s.t2,
+        lot: s.l, ratio: 1, status: "open", r: null, source: "telegram",
+        ctx: { regime: "?", sess: sessionInfo(new Date(s.at)).name, score: null, conf: null } });
+      n++;
+    }
+    if (n) { journal.sort((a, b) => a.t - b.t); saveJournal(); renderJournal(); }
+  } catch {}
+}
+/* rattrapage : signaux restés ouverts page fermée → vérifiés sur les bougies 5 min réelles (hors marché fermé) */
+async function resolveOffline() {
+  healClosedWhileMarketShut();
+  const open = journal.filter(e => e.type === "sig" && e.status === "open" && Date.now() - e.t > 10 * 60000);
+  for (const e of open.slice(0, 4)) {
+    try {
+      const ks = await klines("5m", 288, e.t);
+      const dirn = e.side === "BUY" ? 1 : -1;
+      for (const k of ks) {
+        if (!marketOpenAt(k.t)) continue; // ignore les bougies week-end/rollover : ton broker n'exécute pas
+        const hi = k.h * (e.ratio || 1), lo = k.l * (e.ratio || 1);
+        const hitSL = dirn > 0 ? lo <= e.sl : hi >= e.sl;
+        const hitTP = dirn > 0 ? hi >= e.tp1 : lo <= e.tp1;
+        if (hitSL) { e.status = "sl"; e.r = -1; e.closedAt = k.t; break; }
+        if (hitTP) { e.status = "tp1"; e.r = 1.5; e.closedAt = k.t; break; }
+      }
+      if (e.status === "open" && marketStatus().open && openElapsed(e.t) > 24 * 3600e3) { e.status = "expired"; e.r = 0; e.closedAt = Date.now(); } // jamais d'expiration marché fermé
+    } catch {}
+  }
+  saveJournal(); renderJournal();
+}
+function journalStats(days) {
+  const since = Date.now() - days * 86400e3;
+  const sig = journal.filter(e => e.type === "sig" && e.t >= since);
+  const res = sig.filter(e => e.status === "sl" || e.status === "tp1" || e.status === "tp2");
+  const wins = res.filter(e => e.status !== "sl").length;
+  const side = {};
+  for (const s of ["BUY", "SELL"]) {
+    const r = res.filter(e => e.side === s);
+    side[s] = { nRes: r.length, wins: r.filter(e => e.status !== "sl").length };
+  }
+  return { n: sig.length, open: sig.filter(e => e.status === "open").length, nRes: res.length, wins,
+    wr: res.length ? wins / res.length : null, sumR: res.reduce((a, e) => a + (e.r || 0), 0), side };
+}
+/* auto-amélioration : un sens qui perd trop (< 45 % sur ≥ 10 vérifiés) devient plus exigeant */
+function sideMalus(s) {
+  const st = jStats && jStats.side && jStats.side[s];
+  return st && st.nRes >= 10 && st.wins / st.nRes < 0.45 ? 0.5 : 0;
+}
+function renderJournal() {
+  const el = document.getElementById("journal"); if (!el) return;
+  jStats = journalStats(21);
+  activeLessons = lessons();
+  const all = journalStats(3650);
+  if (!all.n) { el.innerHTML = `<span class="src-note">aucun signal enregistré pour l'instant — chaque ordre BUY/SELL que je donne sera journalisé puis VÉRIFIÉ au prix réel (TP1 avant SL = gagné +1,5R · SL d'abord = perdu −1R · les deux dans la même bougie = compté perdu, conservateur).</span>`; return; }
+  const wrTxt = st => st.wr == null ? "—" : (st.wr * 100).toFixed(0) + " %";
+  const user = journal.filter(e => e.type === "user");
+  const eur = user.reduce((a, e) => a + (e.eur || 0), 0);
+  const rows = journal.filter(e => e.type === "sig").slice(-8).reverse().map(e => {
+    const col = e.status === "tp1" || e.status === "tp2" ? "var(--up)" : e.status === "sl" ? "var(--down)" : "var(--dim)";
+    const pmLbl = { timing: " · ⏱ stop trop serré", direction: " · 🧭 mauvaise direction", spike: " · ⚡ bougie de news", tp2: " · a filé à TP2", clean: "" }[e.pm] || "";
+    const lbl = ({ open: "⏳ en cours", tp1: "✅ TP1 (+1,5R)", tp2: "✅ TP2", sl: "❌ SL (−1R)", expired: "◻︎ expiré" }[e.status] || e.status) + pmLbl;
+    return `<tr><td>${new Date(e.t).toLocaleString("fr-FR", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" })}</td><td><span class="tag ${e.side === "BUY" ? "up" : "down"}">${e.side}</span></td><td>${fmt(e.entry)}</td><td style="color:${col}">${lbl}</td></tr>`;
+  }).join("");
+  el.innerHTML = `
+    <div class="dec-line"><b class="k">3 dernières semaines</b> ${jStats.n} signaux · ${jStats.nRes} vérifiés · winrate <b style="color:${(jStats.wr || 0) >= 0.5 ? "var(--up)" : "var(--down)"}">${wrTxt(jStats)}</b> · cumul <b>${jStats.sumR >= 0 ? "+" : ""}${jStats.sumR.toFixed(1)} R</b> · ${jStats.open} en cours</div>
+    <div class="dec-line" style="font-size:12.5px;color:var(--dim)">BUY : ${jStats.side.BUY.wins}/${jStats.side.BUY.nRes} gagnés · SELL : ${jStats.side.SELL.wins}/${jStats.side.SELL.nRes} gagnés${sideMalus("BUY") ? " · ⚙️ BUY sous-performant → exigences durcies dessus" : ""}${sideMalus("SELL") ? " · ⚙️ SELL sous-performant → exigences durcies dessus" : ""}</div>
+    ${user.length ? `<div class="dec-line"><b class="k">Tes trades déclarés</b> ${user.length} · total <b class="chg ${eur >= 0 ? "up" : "down"}">${eur >= 0 ? "+" : ""}${eur.toFixed(2)} €</b></div>` : ""}
+    ${activeLessons.length ? `<div class="dec-line">🎓 <b>Ce que j'ai appris :</b> ${activeLessons.map(l => l.txt).join(" · ")}${activeLessons.some(l => l.malusKey || l.bonusKey || l.slMult) ? " <span style='color:var(--gold)'>(ajustements appliqués automatiquement)</span>" : ""}</div>` : ""}
+    ${(() => { const p = journal.filter(e => e.type === "sig" && e.status === "sl" && e.pm); return p.length ? `<div class="dec-line" style="font-size:12.5px;color:var(--dim)">🔬 <b>Autopsie de mes pertes :</b> ${p.filter(e => e.pm === "timing").length} stop trop serré · ${p.filter(e => e.pm === "direction").length} mauvaise direction · ${p.filter(e => e.pm === "spike").length} bougie de news</div>` : ""; })()}
+    <table style="margin-top:6px"><thead><tr><th>Quand</th><th>Sens</th><th>Entrée</th><th>Résultat vérifié</th></tr></thead><tbody>${rows}</tbody></table>
+    <div class="dec-line" style="font-size:11.5px;color:var(--dim);margin-top:4px">Vérification automatique au prix réel, même si la page était fermée (rattrapage sur bougies 5 min). Ces stats me calibrent — et te disent honnêtement ce que je vaux.</div>`;
+}
+
+/* ================= suivi de mon trade (bouton « J'ai pris ce trade ») ================= */
+const TRADE_KEY = "analyste_trade_xau", PNL_PER_LOT = 100; // 0,01 lot XAU = 1 $ de P&L par $ de mouvement
+let myTrade = null;
+try { myTrade = JSON.parse(localStorage.getItem(TRADE_KEY) || "null"); } catch {}
+window.takeTrade = function () {
+  const pl = window._plan; if (!pl) return;
+  myTrade = { side: pl.side, entry: D ? D.price : pl.entry, sl: pl.sl, tp1: pl.tp1, tp2: pl.tp2, lot: pl.lot || MIN_LOT, t0: Date.now(), be: false, tp1done: false };
+  localStorage.setItem(TRADE_KEY, JSON.stringify(myTrade));
+  renderTrade(myTrade.entry);
+  beep(1);
+};
+/* déclarer une position déjà ouverte (prise via Telegram ou directement sur MT5) — l'app la suit ensuite tick par tick */
+window.declareTrade = function () {
+  const s = (prompt("📥 Déclarer un trade que tu as DÉJÀ pris.\n\nSens ? Tape B pour BUY (achat) ou S pour SELL (vente) :", "S") || "").trim().toUpperCase();
+  if (s !== "B" && s !== "S") return;
+  const side = s === "B" ? "BUY" : "SELL";
+  const num = (txt, def) => { const v = parseFloat((prompt(txt, def) || "").replace(",", ".")); return isNaN(v) ? null : v; };
+  const entry = num(`Ton prix d'ENTRÉE (${side}) :`, D ? D.price.toFixed(2) : "");
+  if (!entry) return;
+  const dirn = side === "BUY" ? 1 : -1;
+  const sl = num("Ton STOP LOSS :", (entry - dirn * (D ? Math.max(D.atrv, 2.5) : 3)).toFixed(2));
+  if (!sl) return;
+  const risk = Math.abs(entry - sl) || 1;
+  const tp1 = num("Ton TP1 (objectif 1) :", (entry + dirn * 1.5 * risk).toFixed(2));
+  const tp2 = num("Ton TP2 (objectif 2) :", (entry + dirn * 2.5 * risk).toFixed(2));
+  const lot = num("Ton LOT réel (ex : 0.06) :", lotFor(risk).lot.toFixed(2)) || MIN_LOT;
+  myTrade = { side, entry, sl, tp1: tp1 || entry + dirn * 1.5 * risk, tp2: tp2 || entry + dirn * 2.5 * risk,
+    lot, t0: Date.now(), be: false, tp1done: false, declared: true };
+  localStorage.setItem(TRADE_KEY, JSON.stringify(myTrade));
+  renderTrade(D ? D.price : entry);
+  document.getElementById("tradeCard").scrollIntoView({ block: "center" });
+  beep(1);
+};
+/* déclaration par lien : ...?trade=S,entree,sl,tp1,tp2,lot → le trade est enregistré au chargement */
+(function tradeFromUrl() {
+  const q = new URLSearchParams(location.search).get("trade");
+  if (!q) return;
+  const [s, e, sl, tp1, tp2, lot] = q.split(",").map(x => (x || "").trim());
+  const side = /^b/i.test(s) ? "BUY" : /^s/i.test(s) ? "SELL" : null;
+  const n = x => { const v = parseFloat(x); return isNaN(v) ? null : v; };
+  if (!side || !n(e) || !n(sl)) return;
+  const dirn = side === "BUY" ? 1 : -1, risk = Math.abs(n(e) - n(sl)) || 1;
+  myTrade = { side, entry: n(e), sl: n(sl),
+    tp1: n(tp1) ?? n(e) + dirn * 1.5 * risk, tp2: n(tp2) ?? n(e) + dirn * 2.5 * risk,
+    lot: n(lot) ?? MIN_LOT, t0: Date.now(), be: false, tp1done: false, declared: true };
+  localStorage.setItem(TRADE_KEY, JSON.stringify(myTrade));
+  history.replaceState(null, "", location.pathname); // nettoie l'URL (pas de ré-ajout au refresh)
+})();
+window.exitTrade = function () {
+  if (myTrade) { // journal pro : résultat réel demandé à chaque sortie
+    const res = prompt("📓 Pour ton journal — résultat RÉEL du trade en € (ex : +12,50 ou -8) :", "");
+    const val = res ? parseFloat(res.replace(",", ".").replace(/€|\s/g, "")) : NaN;
+    const lvl = (prompt("Sorti à quel niveau ? 1 = TP1 · 2 = TP2 · 0 = stop (SL) · m = sortie manuelle", "1") || "m").trim().toLowerCase();
+    journal.push({ type: "user", t: Date.now(), side: myTrade.side, entry: myTrade.entry, lot: myTrade.lot,
+      eur: isNaN(val) ? null : val, lvl, status: lvl === "0" ? "sl" : lvl === "2" ? "tp2" : lvl === "1" ? "tp1" : "manual" });
+    saveJournal(); renderJournal();
+  }
+  myTrade = null; localStorage.removeItem(TRADE_KEY);
+  document.getElementById("tradeCard").style.display = "none";
+};
+function trackTrade(p) {
+  if (!myTrade) return;
+  const dirn = myTrade.side === "BUY" ? 1 : -1;
+  if (marketStatus().open && !myTrade.tp1done && (p - myTrade.tp1) * dirn >= 0) { // marché fermé : rien ne se déclenche
+    myTrade.tp1done = true; myTrade.be = true; beep(3);
+    localStorage.setItem(TRADE_KEY, JSON.stringify(myTrade));
+  }
+  renderTrade(p);
+}
+function renderTrade(p) {
+  if (!myTrade) return;
+  document.getElementById("tradeCard").style.display = "block";
+  const dirn = myTrade.side === "BUY" ? 1 : -1;
+  const pnlEUR = (p - myTrade.entry) * dirn * myTrade.lot * PNL_PER_LOT / eurusd;
+  const r1 = Math.abs(myTrade.entry - myTrade.sl) || 1;
+  const prog = (p - myTrade.entry) * dirn / r1;
+  const slEff = myTrade.be ? myTrade.entry : myTrade.sl;
+  const mktOpen = marketStatus().open;
+  let order, oc = "";
+  if (!mktOpen) { order = `🕒 <b>Marché fermé — suivi gelé.</b> Ton SL/TP réel ne peut PAS être touché : ton broker n'exécute pas. Le P&L ci-dessus est indicatif (proxy PAXG), pas ton vrai résultat. Je reprends le suivi à la réouverture.`; oc = "var(--gold)"; }
+  else if ((p - slEff) * dirn <= 0) { order = myTrade.be ? `🛑 Break-even touché → <b>SORS</b> — trade protégé, zéro perte.` : `🛑 STOP touché → <b>SORS MAINTENANT</b>. C'est le système qui protège ton capital, pas un échec.`; oc = "var(--down)"; }
+  else if (myTrade.tp1done && (p - myTrade.tp2) * dirn >= 0) { order = `🏆 TP2 ATTEINT → <b>SORS TOUT</b>. Trade terminé, bravo.`; oc = "var(--up)"; }
+  else if (myTrade.tp1done) { order = `✅ TP1 atteint → <b>prends la moitié</b> et mets ton SL à l'entrée (${fmt(myTrade.entry)} $). Le reste vise TP2 ${fmt(myTrade.tp2)} $.`; oc = "var(--up)"; }
+  else if (lastAction && lastAction !== "WAIT" && lastAction !== myTrade.side) { order = `⚠️ Le signal s'est <b>INVERSÉ</b> → sors maintenant, ne discute pas avec le marché.`; oc = "var(--down)"; }
+  else { order = `⏳ En cours — laisse travailler. Prochaine étape : TP1 à ${fmt(myTrade.tp1)} $. Ne touche à rien.`; }
+  document.getElementById("tradeBody").innerHTML = `
+    <div class="dec-line"><span class="tag ${myTrade.side === "BUY" ? "up" : "down"}">${myTrade.side}</span> entré à <b>${fmt(myTrade.entry)} $</b> · lot ${myTrade.lot.toFixed(2)}
+      · P&L flottant : <b class="chg ${pnlEUR >= 0 ? "up" : "down"}">${pnlEUR >= 0 ? "+" : ""}${pnlEUR.toFixed(2)} €</b> (${prog >= 0 ? "+" : ""}${prog.toFixed(2)} R)</div>
+    <div class="dec-line" style="font-size:12.5px;color:var(--dim)">SL ${myTrade.be ? "au break-even " + fmt(myTrade.entry) : fmt(myTrade.sl)} $ · TP1 ${fmt(myTrade.tp1)} $ · TP2 ${fmt(myTrade.tp2)} $</div>
+    <div class="dec-line" style="font-weight:700${oc ? ";color:" + oc : ""}">${order}</div>
+    <button onclick="exitTrade()" style="margin-top:6px;background:var(--card2);color:var(--txt);border:1px solid var(--border);border-radius:8px;padding:6px 12px;cursor:pointer">🚪 Je suis sorti</button>`;
+}
+
+/* ================= prix en direct (WebSocket) ================= */
+let dayOpen = null;
+function connectWS() {
+  try {
+    const ws = new WebSocket("wss://stream.binance.com:9443/ws/paxgusdt@trade");
+    ws.onmessage = ev => {
+      const p = +JSON.parse(ev.data).p * gRatio;
+      watchTick(p);
+      document.getElementById("px").textContent = fmt(p) + " $";
+      document.getElementById("liveTag").innerHTML = `<span class="live-dot"></span>temps réel`;
+      if (dayOpen) {
+        const ch = (p - dayOpen) / dayOpen * 100;
+        const el = document.getElementById("chg");
+        el.textContent = `${ch >= 0 ? "+" : ""}${ch.toFixed(2)} % aujourd'hui`;
+        el.className = "chg " + (ch >= 0 ? "up" : "down");
+      }
+      if (D) { // met à jour la bougie en cours
+        const k = D.c[D.c.length - 1];
+        k.c = p; k.h = Math.max(k.h, p); k.l = Math.min(k.l, p);
+        D.price = p;
+        if (!cross) draw();
+      }
+    };
+    ws.onclose = () => setTimeout(connectWS, 5000);
+  } catch { setTimeout(connectWS, 10000); }
+}
+
+/* ================= cycle ================= */
+const REFRESH_S = 30;
+let nextAt = Date.now() + REFRESH_S * 1000;
+async function cycle(full) {
+  try { await analyze(full); } catch (e) { say("❌", "Erreur d'analyse : " + e.message, "bad", 100, analysisSeq); }
+  try {
+    const d1 = await klines("1d", 2);
+    dayOpen = d1[d1.length - 1].o * gRatio;
+  } catch {}
+  nextAt = Date.now() + REFRESH_S * 1000;
+}
+setInterval(() => {
+  const s = Math.max(0, Math.round((nextAt - Date.now()) / 1000));
+  document.getElementById("countdown").textContent = `prochaine analyse dans ${s}s`;
+  if (s === 0) { nextAt = Date.now() + REFRESH_S * 1000; cycle(false); }
+}, 1000);
+
+document.getElementById("tfs").addEventListener("click", e => {
+  const b = e.target.closest("button"); if (!b) return;
+  document.querySelectorAll("#tfs button").forEach(x => x.classList.toggle("on", x === b));
+  TF = b.dataset.tf;
+  view = { count: DEF_COUNT(), end: null };
+  cycle(true);
+});
+document.getElementById("rerun").addEventListener("click", () => cycle(true));
+
+cycle(true);
+connectWS();
+if (myTrade) renderTrade(myTrade.entry); // trade repris après rechargement de la page
+renderJournal();
+</script>
+</body>
+</html>
