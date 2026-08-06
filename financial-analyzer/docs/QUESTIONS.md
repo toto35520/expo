@@ -68,7 +68,10 @@ l'avancement de la spécification ; elles bloqueront l'implémentation. Ce fichi
 | **Q33** | Rupture **immédiate** ou **retenue** après fenêtre de maintien ? Ce sont deux signaux distincts, avec des taux de base différents ; l'arbitrage entre force du signal et coût du retard en prix d'entrée se calcule, il ne se devine pas. | 🟠 | 04b §6 |
 | **Q34** | Combien de zones de déséquilibre actives au maximum par niveau ? Sans plafond, la confluence est garantie par construction et cesse de mesurer quoi que ce soit. | 🟠 | 04c C8 |
 | **Q35** | Quelles conventions d'agrégation exactement ? Chaque couple (unité, ancrage, fuseau, base de prix, fournisseur) crée un **jeu d'objets distinct** : le nombre de conventions retenues multiplie directement le coût de calcul, de stockage et de validation. | 🟠 | 04c §3 |
-| **Q36** | Politique d'invalidation : elle appartient à la stratégie, donc elle dépend de Q3 et Q4. Sans horizon défini, ni le seuil de profondeur, ni la durée d'acceptation τ, ni l'expiration ne peuvent être fixés. | 🔴 | 04c §11 |
+| **Q36** | Politique d'invalidation et **horizons opérationnels officiellement supportés**. Sans cette décision : fenêtre d'acceptation, expiration, barrière temporelle de réaction, profondeur d'invalidation, distance de réinitialisation et définition d'un retest distinct restent tous non fixables. | 🔴 | 04c §11 · 04d |
+| **Q37** | L'intensité d'acceptation : formule déterministe, modèle calibré, ou les deux ? *Recommandation retenue* : vecteur brut obligatoire + score déterministe reproductible + probabilité calibrée facultative — le déterministe garantit le test de double implémentation, le calibré est seul autorisé à s'exprimer en pourcentage (ADR-037). | 🟠 | 04d |
+| **Q38** | Quelle fraction de la largeur d'une zone l'incertitude de traduction peut-elle représenter avant suspension ? À tester par horizon et par largeur de zone. | 🟠 | 04d §12 |
+| **Q39** | **Séquencement du projet** : consacrer le budget aux moteurs dérivés suivants, ou à la résolution de Q1/Q19/Q36 ? Le nombre de sources d'information réellement distinctes n'a pas augmenté depuis l'étape 4.1, alors que le coût de construction croît à chaque étape. | 🔴 | 04d C9 |
 
 ---
 

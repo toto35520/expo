@@ -1535,3 +1535,241 @@ troisième hypothèse à tester au §26 de la spécification — l'**hypothèse 
 borne distale fournit-elle un meilleur emplacement de protection qu'un stop de volatilité
 équivalente ? Elle peut être vraie même si attraction et réaction sont fausses, et agit sur
 l'espérance nette par le dimensionnement plutôt que par la direction.
+
+---
+
+> **Note de numérotation (étape 4.4).** La spécification détaillée proposait des décisions
+> numérotées 073 à 082, en collision avec les ADR-073 et ADR-074 figés à l'étape 4.3. Les numéros
+> **075 à 084** leur sont attribués dans l'ordre d'origine. Deux d'entre elles convergent avec des
+> décisions déjà prises — elles sont enregistrées comme extensions explicites plutôt que comme
+> doublons.
+>
+> | Numérotation d'origine | Numéro retenu | Relation |
+> | --- | --- | --- |
+> | ADR-073 (objet dérivé distinct) | **ADR-075** | — |
+> | ADR-074 (acceptation mesurable obligatoire) | **ADR-076** | — |
+> | ADR-075 (candidat immédiat / accepté retardé) | **ADR-077** | — |
+> | ADR-076 (quatre axes d'état) | **ADR-078** | généralise ADR-073 |
+> | ADR-077 (marchés séparés, base, incertitude) | **ADR-079** | étend ADR-074 |
+> | ADR-078 (bornes canoniques immuables) | **ADR-080** | — |
+> | ADR-079 (épisodes de rôle versionnés) | **ADR-081** | — |
+> | ADR-080 (trois hypothèses, trois modèles) | **ADR-082** | — |
+> | ADR-081 (cluster causal de retournement) | **ADR-083** | — |
+> | ADR-082 (prix, base et volatilité figés au retest) | **ADR-084** | — |
+
+---
+
+## ADR-075 — L'IFVG est un objet dérivé, la source n'est jamais modifiée
+
+**Statut** : figé (étape 4.4)
+
+**Contexte.** Inverser le sens d'un FVG existant détruirait son historique et rendrait
+impossible l'étude du rôle initial comme du rôle inversé.
+
+**Décision.** L'IFVG est un objet distinct référençant `source_fvg_id`. Le FVG source conserve
+bornes, sens, horodatages et historiques ; l'IFVG possède ses propres disponibilité, retests,
+réactions et validité. Sa création ne supprime jamais la source.
+
+**Conséquences.** Les deux rôles restent mesurables séparément, condition pour répondre à la
+question de recherche de l'étape.
+
+---
+
+## ADR-076 — Une acceptation mesurable est obligatoire ; un remplissage ne suffit pas
+
+**Statut** : figé (étape 4.4)
+
+**Contexte.** Un FVG peut être entièrement traversé puis immédiatement réintégré. Traiter ce cas
+comme une inversion produirait un objet à chaque oscillation.
+
+**Décision.** L'inversion exige une acceptation mesurée par un vecteur continu — profondeur,
+occupation temporelle, volume au-delà, distance moyenne, réintégrations échouées, vitesse, flux —
+agrégé par une fonction versionnée en une intensité `I_A ∈ [0,1]`. Le découpage en classes est une
+commodité d'interface, jamais un substitut à la valeur continue. Un franchissement peu profond
+mais durablement occupé peut être accepté ; un franchissement profond immédiatement réintégré ne
+l'est pas.
+
+**Conséquences.** Remplissage et inversion deviennent deux phénomènes distincts et mesurables
+séparément.
+
+---
+
+## ADR-077 — Candidat immédiat et inversion acceptée sont publiés séparément
+
+**Statut** : figé (étape 4.4)
+
+**Contexte.** L'acceptation ne peut être évaluée qu'après une fenêtre. Publier un seul objet
+laisserait croire que l'inversion confirmée était connue au premier tick de franchissement.
+
+**Décision.** `IFVG_CANDIDATE` est disponible immédiatement avec une fiabilité faible ;
+`IFVG_ACCEPTED` n'est disponible qu'après la fenêtre. Le coût de la confirmation est publié :
+latence et déplacement du prix pendant la confirmation.
+
+**Conséquences.** Même structure que la rupture immédiate contre la rupture retenue (ADR-059) :
+deux produits distincts, deux taux de base, un arbitrage qui se calcule.
+
+---
+
+## ADR-078 — Formation, retest, réaction et validité sont quatre axes indépendants
+
+**Statut** : figé (étape 4.4) · généralise l'ADR-073
+
+**Contexte.** Un rôle inversé peut être correctement formé, retesté, ne pas avoir réagi, et rester
+néanmoins valide pour un autre horizon. Un statut unique rend cet état inexprimable.
+
+**Décision.** Quatre axes indépendants, avec `CENSORED` sur l'axe réaction et `SUSPENDED` sur
+l'axe validité.
+
+**Conséquences.** Confirme la correction apportée à l'étape 4.3 et l'étend à un objet dont le
+cycle de vie est plus riche. L'éligibilité au retest ne commence qu'après l'acceptation, ce qui
+empêche de détecter une inversion et son retest dans la même oscillation.
+
+---
+
+## ADR-079 — Traduction de base assortie d'une incertitude, avec suspension
+
+**Statut** : figé (étape 4.4) · étend l'ADR-074
+
+**Contexte.** L'ADR-074 imposait la traduction par la base entre marché de détection et marché
+d'exécution. Il manquait le traitement de l'**incertitude** de cette traduction.
+
+**Décision.** L'incertitude `u_b` est publiée, ainsi que son rapport à la largeur de la zone.
+Au-delà d'un seuil versionné, la validité passe à `SUSPENDED` et l'éligibilité à l'exécution est
+retirée : une zone dont l'incertitude de traduction vaut une fraction importante de la largeur
+n'est pas exploitable. Une base périmée rend la zone d'exécution indisponible, la zone analytique
+restant visible.
+
+**Conséquences.** Les bornes d'exécution sont des **vues recalculées**, jamais une vérité
+persistée (seules les bornes canoniques le sont). Cas complémentaire à trancher avec Q18 : une
+suspension survenant alors qu'une position est ouverte suit la conduite du mode dégradé — ne pas
+augmenter, ne pas élargir les protections, traiter la dégradation comme motif de réduction.
+
+---
+
+## ADR-080 — Les bornes canoniques sont immuables
+
+**Statut** : figé (étape 4.4)
+
+**Contexte.** Ajuster rétroactivement les bornes pour épouser la réaction observée fabriquerait
+une performance apparente.
+
+**Décision.** Les bornes canoniques ne changent jamais après confirmation. Les bornes de réaction
+observée et les bornes d'exécution sont des propriétés dérivées, stockées séparément et marquées
+comme telles.
+
+**Conséquences.** Condition de la non-repeinture et du test batch contre streaming.
+
+---
+
+## ADR-081 — Chaque changement de rôle accepté crée un épisode versionné
+
+**Statut** : figé (étape 4.4)
+
+**Contexte.** Une zone peut changer plusieurs fois de rôle. Modifier le sens d'un objet existant
+réécrirait l'historique à chaque oscillation.
+
+**Décision.** Épisodes successifs identifiés et versionnés, chacun avec sa création, son
+acceptation, ses retests, ses réactions et sa validité. Les compteurs de franchissements et de
+retournements sont des attributs prédictifs, pas des règles d'exclusion.
+
+**Conséquences.** Correction nécessaire relevée ici : un compteur de retournements brut est
+**biaisé par l'exposition** — une zone ayant changé cinq fois de rôle est une zone près de
+laquelle le prix est resté, donc sélectionnée sur l'attraction. Le dénominateur doit être
+l'exposition (temps ou volume écoulé à portée, occasions de franchissement), et la variable
+exploitable un taux par unité d'exposition.
+
+---
+
+## ADR-082 — Trois hypothèses, trois modèles, trois validations
+
+**Statut** : figé (étape 4.4)
+
+**Contexte.** Attraction, réaction et qualité de l'invalidation sont indépendantes. Une forte
+probabilité de retest peut coexister avec une réaction non exploitable.
+
+**Décision.** Trois modèles distincts et trois validations séparées, contre des contrôles
+appariés. Un score unique ne masque jamais leurs différences. Une réponse négative sur la
+direction ne doit pas masquer une utilité pour le placement du risque.
+
+**Conséquences.** Confirme l'ajout de l'hypothèse d'invalidation (ADR-074) et l'installe comme
+troisième pilier permanent de la famille structure. Deux exigences statistiques associées :
+toutes les probabilités sont publiées **en fonction du seuil d'acceptation**, celui-ci définissant
+l'échantillon et non un simple réglage ; et l'estimation traite explicitement la **censure et les
+risques concurrents**, les issues de la triple barrière étant concurrentes — la grandeur correcte
+est une incidence cumulée, pas une proportion binomiale.
+
+---
+
+## ADR-083 — Cluster causal de retournement
+
+**Statut** : figé (étape 4.4)
+
+**Contexte.** Le franchissement produisant l'inversion peut aussi produire un CHOCH, un MSS, un
+déplacement et une prise de liquidité — un seul mouvement, cinq sorties.
+
+**Décision.** Regroupement obligatoire dans `ROLE_REVERSAL_CLUSTER`, transmis tel quel à la
+fusion, jamais compté comme plusieurs preuves indépendantes.
+
+**Conséquences.** Deuxième instanciation de l'ADR-035 côté structure, après
+`STRUCTURAL_DISPLACEMENT_CLUSTER` (ADR-070).
+
+---
+
+## ADR-084 — Prix, base de prix et volatilité sont figés à l'événement qui les utilise
+
+**Statut** : figé (étape 4.4)
+
+**Contexte.** Trois volatilités coexistent — création de la source, début du franchissement,
+retest — et ne sont pas interchangeables. Utiliser la volatilité de création plusieurs heures plus
+tard fausse toutes les mesures normalisées.
+
+**Décision.** Chaque grandeur est estimée avec l'information disponible à son événement, puis
+figée pour cet événement. Le prix de référence d'une réaction est le prix **exécutable** au
+retest, jamais une borne théorique non négociable. Contacts analytiques et exécutables restent
+séparés.
+
+**Conséquences.** Rend exécutable le test d'absence de fuite temporelle : chaque propriété porte
+son horodatage de disponibilité, et le moteur de features ne la charge que si celle-ci précède
+l'instant de décision.
+
+---
+
+## ADR-085 — `PriceAcceptance` est un primitif unique et versionné
+
+**Statut** : figé (étape 4.4) · décision ajoutée
+
+**Contexte.** La notion d'« acceptation d'un prix » est aujourd'hui définie **quatre fois** dans le
+système : maintien après rupture de structure (ADR-059), prix accepté après balayage (`03f` §8),
+acceptation du franchissement d'inversion (ADR-076), et invalidation canonique du rôle inversé,
+que la spécification décrit elle-même comme « une logique analogue au franchissement initial ».
+
+C'est la situation exacte de Q27 avant l'étape 4.1 : une notion partagée redéfinie localement,
+garantissant que deux moteurs se contrediront sur le même événement.
+
+**Décision.** `PriceAcceptance` devient un primitif unique et versionné, prenant une frontière,
+une direction, une fenêtre et une volatilité de référence, et produisant le vecteur de preuves et
+l'intensité. Les quatre usages en sont des appels paramétrés, jamais des réimplémentations.
+
+**Conséquences.** Une seule fonction à calibrer, valider et faire varier dans les tests de
+sensibilité, au lieu de quatre. Même traitement que la définition d'impulsion (ADR-056).
+
+---
+
+## ADR-086 — L'ordre de validation suit l'ordre de dérivation
+
+**Statut** : figé (étape 4.4) · décision ajoutée
+
+**Contexte.** Trois tests fondateurs restent sans réponse : les niveaux de pivot provoquent-ils
+une réaction (ADR-056) ; le déséquilibre apporte-t-il quelque chose au-delà d'un contrôle apparié
+(ADR-071) ; l'inversion apporte-t-elle quelque chose au-delà d'un changement de rôle générique
+(ADR-082). Chacun dépend du précédent.
+
+**Décision.** Ordre imposé : pivots, puis déséquilibre, puis inversion. **Un résultat positif à un
+niveau dont le niveau inférieur a échoué est traité comme suspect, non comme une découverte.**
+Écrire les moteurs par avance reste légitime — la spécification est utile et le code se réutilise —
+mais aucun poids ne leur est accordé avant que leur fondation ait passé son propre test.
+
+**Conséquences.** Observation de séquencement associée : le coût de construction croît nettement
+plus vite que le nombre de sources d'information réellement distinctes, lequel n'a pas augmenté
+depuis l'étape 4.1. À budget fini, ce coût mérite d'être comparé à celui de la résolution des
+questions bloquantes du registre, qui conditionnent la valeur de tout ce qui a été spécifié.
