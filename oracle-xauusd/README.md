@@ -73,3 +73,28 @@ des trades réellement pris, et `slToday()` — qui déclenche la règle « 2 st
 `journalTake()` inscrit maintenant tout trade pris ou déclaré, en marquant le
 signal existant plutôt qu'en le doublonnant s'il vient d'être journalisé.
 Ces lignes portent la mention `📥 pris` dans l'historique.
+
+## Ajout — chat « Parle-moi »
+
+Version `2026.08.06-j`.
+
+Une carte de discussion sous le suivi de trade : question en français libre,
+réponse immédiate. Le moteur lit l'instantané `AI` de la dernière analyse
+(décision, snapshots M15/H1/H4, ATR, S/R, contexte, événement éco) plus
+`myTrade`, `journalStats()`, `lessons()` et `slMultLearned()` — donc les
+chiffres annoncés sont exactement ceux des cartes, jamais une approximation.
+
+Aucun appel réseau : la réponse est instantanée et fonctionne hors connexion.
+
+Intentions reconnues : avis sur le trade en cours, entrer ou non maintenant,
+pourquoi cette décision, placement du stop, risque et lot, niveaux
+(S/R, POC, VWAP, objectifs), tendance multi-timeframes, statistiques du
+journal, actualité et événements, prix. Toute autre formulation renvoie le
+menu des questions possibles.
+
+L'avis sur le trade en cours applique la même hiérarchie que la carte de
+suivi — marché fermé, stop touché, TP1 pris, signal inversé — et ajoute un
+avertissement quand le biais passe contre la position sans qu'un signal
+inverse soit encore donné.
+
+`AI` est renseigné dans `analyze()` juste avant `renderDecision()`.

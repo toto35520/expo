@@ -96,6 +96,21 @@
   .risk-warn { background: rgba(239,83,80,.12); border: 1px solid var(--down); border-radius: 8px; padding: 8px 10px; font-size: 12.5px; margin-top: 8px; }
   .setup { background: var(--card2); border-radius: 8px; padding: 8px 10px; margin-bottom: 7px; }
 
+  /* ---- chat analyste ---- */
+  #chatLog { max-height: 360px; overflow-y: auto; display: flex; flex-direction: column; gap: 7px; margin-bottom: 9px; }
+  #chatLog:empty { display: none; }
+  .msg { border-radius: 11px; padding: 9px 12px; font-size: 13px; line-height: 1.55; max-width: 93%; }
+  .msg.moi { background: var(--gold); color: #000; align-self: flex-end; font-weight: 600; }
+  .msg.ana { background: var(--card2); border: 1px solid var(--border); align-self: flex-start; }
+  .msg.ana b { color: var(--gold); }
+  #chatChips { display: flex; gap: 5px; flex-wrap: wrap; margin-bottom: 9px; }
+  #chatChips button { background: var(--card2); color: var(--dim); border: 1px solid var(--border); border-radius: 999px; padding: 5px 11px; font-size: 12px; cursor: pointer; }
+  #chatChips button:hover { color: var(--txt); border-color: var(--gold2); }
+  #chatBar { display: flex; gap: 6px; }
+  #chatIn { flex: 1; min-width: 0; background: var(--card2); color: var(--txt); border: 1px solid var(--border); border-radius: 8px; padding: 10px 12px; font-size: 16px; }
+  #chatIn:focus { outline: none; border-color: var(--gold2); }
+  #chatSend { background: var(--gold); color: #000; border: none; border-radius: 8px; padding: 10px 16px; font-weight: 700; cursor: pointer; font-size: 13px; }
+
   /* ---- géo / news ---- */
   #news { max-height: 300px; overflow-y: auto; display: flex; flex-direction: column; gap: 6px; }
   .headline { font-size: 12.5px; padding: 6px 8px; background: var(--card2); border-radius: 8px; }
@@ -163,6 +178,16 @@
       <div id="tradeBody"></div>
     </div>
 
+    <div class="card" id="chatCard">
+      <h2>💬 Parle-moi — pose ta question</h2>
+      <div id="chatLog"></div>
+      <div id="chatChips"></div>
+      <div id="chatBar">
+        <input id="chatIn" type="text" placeholder="ex : je fais quoi sur mon trade ?" autocomplete="off" enterkeyhint="send">
+        <button id="chatSend">Envoyer</button>
+      </div>
+    </div>
+
     <div class="card">
       <h2>📊 Auto-analyse — je vérifie mes propres trades</h2>
       <div id="journal"></div>
@@ -210,7 +235,7 @@
   </div>
 </div>
 
-<footer>Outil d'analyse — aucune exécution d'ordre. Ceci n'est pas un conseil financier. · <b>version 2026.08.06-i</b></footer>
+<footer>Outil d'analyse — aucune exécution d'ordre. Ceci n'est pas un conseil financier. · <b>version 2026.08.06-j</b></footer>
 
 <script>
 "use strict";
@@ -558,7 +583,8 @@ function lotFor(slDist) {
 /* ================= état global ================= */
 let TF = "15m";
 let gRatio = 1, gSpot = null;
-let D = null;          // données de l'analyse courante {candles, ind, sr, piv, patterns, ...}
+let D = null, AI = null; // D : données du graphique · AI : instantané complet de la dernière analyse (lu par le chat)
+                      // données de l'analyse courante {candles, ind, sr, piv, patterns, ...}
 const DEF_COUNT = () => window.innerWidth < 700 ? 70 : 120; // moins de bougies sur mobile = bougies plus grosses/lisibles
 let view = { count: DEF_COUNT(), end: null }; // fenêtre visible (end = index de la dernière bougie affichée)
 let cross = null;      // position du curseur
@@ -925,6 +951,9 @@ async function analyze(fullNarration = true) {
     }
   }
 
+  /* instantané pour le chat : il répond avec EXACTEMENT les chiffres de cette analyse */
+  AI = { dec, setups, at: Date.now(), ctx: lastCtx, atrv, dirUp, htfOk, microOk, agree,
+         res1, sup1, target, target2, evt, mtfScore, snaps, vwapNow: vw, stretch, regime };
   renderDecision(dec, setups);
   if (dec.action === "WAIT")
     await S("💼", `<b>Décision : J'ATTENDS</b> — ${dec.whyShort} Prochaine fenêtre : <b>${dec.etaTxt}</b>. Plan prêt : ${dec.planShort}`, "warn", 600);
@@ -2179,6 +2208,214 @@ function connectWS() {
     ws.onclose = () => setTimeout(connectWS, 5000);
   } catch { setTimeout(connectWS, 10000); }
 }
+
+/* ================= 💬 CHAT — poser une question à l'analyste =================
+   Répond à partir de l'instantané AI de la dernière analyse : mêmes chiffres que
+   les cartes, aucun appel réseau — réponse immédiate, y compris hors connexion. */
+const chatHist = [];
+const nrm = t => (t || "").toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g, "");
+const hit = (t, ...ws) => ws.some(w => t.includes(w));
+const fmtEUR = x => `${x >= 0 ? "+" : ""}${fmt(x)} €`;
+const PAS_ENCORE = "Je n'ai pas encore terminé ma première analyse — laisse-moi quelques secondes et repose ta question.";
+
+function chatPush(who, html) {
+  chatHist.push({ who, html });
+  const el = document.getElementById("chatLog");
+  el.innerHTML = chatHist.slice(-40).map(m => `<div class="msg ${m.who}">${m.html}</div>`).join("");
+  el.scrollTop = el.scrollHeight;
+}
+
+/* ---- avis sur le trade en cours : la question n°1 ---- */
+function rTrade() {
+  if (!myTrade) return `Tu n'as <b>aucun trade en cours</b> déclaré — si tu viens d'en prendre un sur MT5, clique « 📥 J'ai DÉJÀ un trade en cours » et je le suivrai tick par tick.<br><br>` + rEntrer();
+  const p = D ? D.price : myTrade.entry, dirn = myTrade.side === "BUY" ? 1 : -1;
+  const r1 = Math.abs(myTrade.entry - myTrade.sl) || 1;
+  const pnl = (p - myTrade.entry) * dirn * myTrade.lot * PNL_PER_LOT / eurusd;
+  const prog = (p - myTrade.entry) * dirn / r1;
+  const slEff = myTrade.be ? myTrade.entry : myTrade.sl;
+  const enJeu = Math.abs(p - slEff) * myTrade.lot * PNL_PER_LOT / eurusd;
+  const mkt = marketStatus();
+  let verdict;
+  if (!mkt.open)
+    verdict = `🕒 <b>Marché fermé</b> — ton broker est gelé, ni ton stop ni ton TP ne peuvent se déclencher. Le P&L ci-dessus est indicatif (proxy PAXG). On réévalue à la réouverture.`;
+  else if ((p - slEff) * dirn <= 0)
+    verdict = `🛑 <b>Ton stop est touché — sors.</b> C'est le système qui protège ton capital : tu perds ${fmt(Math.abs(pnl))} €, pas plus.`;
+  else if (myTrade.tp1done)
+    verdict = `✅ <b>TP1 est déjà pris.</b> Garde le reste vers TP2 ${fmt(myTrade.tp2)} $ avec ton stop remonté à l'entrée : tu ne peux plus perdre sur ce trade.`;
+  else if (AI && AI.dec.action !== "WAIT" && AI.dec.action !== myTrade.side)
+    verdict = `⚠️ <b>Sors maintenant.</b> Mon signal s'est inversé en ${AI.dec.action} : tu es à contresens du marché. Ne discute pas avec lui.`;
+  else if (AI && AI.dirUp !== (myTrade.side === "BUY"))
+    verdict = `🟠 <b>Prudence.</b> Mon biais est repassé ${AI.dirUp ? "haussier" : "baissier"} alors que tu es ${myTrade.side}. Ce n'est pas encore un signal inverse, mais je n'ajouterais rien : si le prix revient vers ton entrée, sors à zéro.`;
+  else
+    verdict = `⏳ <b>Laisse travailler, ne touche à rien.</b> Ni ton stop ni mon biais ne justifient de sortir. L'erreur ici, c'est de couper un trade sain par impatience.`;
+  return `Ton <b>${myTrade.side}</b> entré à ${fmt(myTrade.entry)} $ · prix ${fmt(p)} $ → <b>${fmtEUR(pnl)}</b> (${prog >= 0 ? "+" : ""}${prog.toFixed(2)} R).<br>
+    • Stop ${myTrade.be ? "au break-even " : ""}${fmt(slEff)} $ → <b>${fmt(Math.abs(p - slEff))} $</b> de marge, soit ${fmt(enJeu)} € encore en jeu.<br>
+    • TP1 ${fmt(myTrade.tp1)} $ → encore ${fmt(Math.abs(myTrade.tp1 - p))} $ à parcourir.<br>
+    ${verdict}`;
+}
+
+/* ---- puis-je entrer ? ---- */
+function rEntrer() {
+  if (!AI) return PAS_ENCORE;
+  const d = AI.dec, p = D ? D.price : d.entry;
+  if (d.action !== "WAIT")
+    return `✅ <b>Oui — signal ${d.action} actif.</b><br>Entrée ${fmt(d.entry)} $ · SL ${fmt(d.sl)} $ · TP1 ${fmt(d.tp1)} $ · R:R ${d.rr.toFixed(1)} · lot ${d.lotInfo.tooWide ? "⚠️ stop trop large pour ton capital → <b>passe ton tour</b>" : d.lotInfo.lot.toFixed(2)}.<br>N'entre que si le prix est à moins de ${fmt(0.3 * AI.atrv)} $ de l'entrée — écart actuel : <b>${fmt(Math.abs(p - d.entry))} $</b>.`;
+  if (d.hard)
+    return `🔒 <b>Non — blocage de sécurité.</b> ${d.whyShort}<br>Tant que ça tient, je n'arme aucun setup, même à 95 % prêt, et aucun bouton d'entrée ne s'affiche. Ce n'est pas un avis, c'est une règle.${d.etaTxt ? `<br>Prochaine fenêtre : <b>${d.etaTxt}</b>.` : ""}`;
+  return `⏳ <b>Pas encore.</b> ${d.whyShort}<br>Condition d'entrée : ${d.condition}<br>Fenêtre estimée : <b>${d.etaTxt}</b>. Le plan est déjà prêt : ${d.planShort}`;
+}
+
+/* ---- pourquoi ce que tu dis ---- */
+function rPourquoi() {
+  if (!AI) return PAS_ENCORE;
+  const c = AI.ctx || {}, d = AI.dec, s = AI.snaps || {};
+  const sc = x => x && x.score != null ? (x.score >= 0 ? "+" : "") + x.score.toFixed(1) : "—";
+  return `Voilà exactement sur quoi je m'appuie :<br>
+    • Biais <b>${AI.dirUp ? "haussier" : "baissier"}</b> — score ${c.score >= 0 ? "+" : ""}${c.score} sur ±10, confiance <b>${c.conf} %</b>.<br>
+    • Horizons : M15 ${sc(s.M15)} · H1 ${sc(s.H1)} · H4 ${sc(s.H4)} → ${AI.htfOk ? "✅ H1/H4 confirment" : "❌ <b>H1/H4 ne confirment pas</b> — et c'est bloquant : le M15 seul a raison une fois sur deux, avec H1 aligné on passe à ~56 %"}.<br>
+    • Régime <b>${c.regime}</b> · session ${c.sess} · RSI ${c.rsi}.<br>
+    • Timing M5 : ${AI.microOk ? "✅ micro-vague alignée" : "❌ micro-vague contraire"}.<br>
+    → ${d.action === "WAIT" ? `Donc j'attends : ${d.whyShort}` : `Donc je donne un <b>${d.action}</b>.`}`;
+}
+
+/* ---- risque / lot / argent ---- */
+function rRisque() {
+  let t = `Ton capital déclaré : <b>${CAPITAL_EUR} €</b>. Je ne risque jamais plus de <b>2 %</b> par trade, soit <b>${fmt(CAPITAL_EUR * RISK_PCT)} €</b> maximum.`;
+  const li = AI && AI.dec.lotInfo;
+  if (li) t += li.tooWide
+    ? `<br>⚠️ Sur le plan actuel, même 0,01 lot (le minimum) risquerait ${fmt(li.minRiskEUR)} € : <b>ce trade n'est pas jouable</b> avec ton capital. Passe ton tour, ou attends une entrée plus proche du stop.`
+    : `<br>Sur le plan actuel : lot <b>${li.lot.toFixed(2)}</b> → tu perds ${fmt(li.riskEUR)} € si le stop saute.`;
+  if (myTrade) {
+    const p = D ? D.price : myTrade.entry, dirn = myTrade.side === "BUY" ? 1 : -1;
+    const slEff = myTrade.be ? myTrade.entry : myTrade.sl;
+    t += `<br>Sur ton trade en cours : <b>${fmt(Math.abs(p - slEff) * myTrade.lot * PNL_PER_LOT / eurusd)} €</b> encore en jeu jusqu'au stop${myTrade.be ? " (au break-even : plus rien à perdre)" : ""}.`;
+  }
+  return t;
+}
+
+/* ---- niveaux ---- */
+function rNiveaux() {
+  if (!AI || !D) return PAS_ENCORE;
+  const p = D.price, L = [];
+  if (AI.res1) L.push(`🔴 Résistance <b>${fmt(AI.res1.p)} $</b> (${AI.res1.n} touches) — ${fmt(Math.abs(AI.res1.p - p))} $ au-dessus`);
+  if (AI.sup1) L.push(`🟢 Support <b>${fmt(AI.sup1.p)} $</b> (${AI.sup1.n} touches) — ${fmt(Math.abs(p - AI.sup1.p))} $ en dessous`);
+  if (D.prof) L.push(`⚖️ POC ${fmt(D.prof.poc)} $ · VAH ${fmt(D.prof.vah)} · VAL ${fmt(D.prof.val)}`);
+  if (AI.vwapNow) L.push(`📏 VWAP ${fmt(AI.vwapNow)} $ (prix étiré à ${AI.stretch >= 0 ? "+" : ""}${AI.stretch.toFixed(1)}σ)`);
+  if (AI.target) L.push(`🎯 Objectifs du biais : <b>${fmt(AI.target)} $</b> puis ${fmt(AI.target2)} $`);
+  return `Prix <b>${fmt(p)} $</b> · ATR ${fmt(AI.atrv)} $ (l'amplitude normale d'une bougie).<br>` + L.join("<br>");
+}
+
+/* ---- stop ---- */
+function rStop() {
+  if (!AI && !myTrade) return PAS_ENCORE;
+  let t = "";
+  if (myTrade) {
+    const dist = Math.abs(myTrade.entry - myTrade.sl);
+    if (!AI) return `Ton stop est à <b>${fmt(dist)} $</b> de ton entrée (${fmt(myTrade.entry)} $ → ${fmt(myTrade.sl)} $). Je te dis s'il est bien placé dès que ma première analyse est finie — il me faut l'ATR du moment pour juger.`;
+    const rap = dist / (AI.atrv || 1);
+    t += `Ton stop est à <b>${fmt(dist)} $</b> de ton entrée, soit <b>${rap.toFixed(1)} × l'ATR</b> (ATR = ${fmt(AI.atrv)} $).<br>`;
+    t += rap < 0.8
+      ? `⚠️ C'est <b>trop serré</b> : sous 1 ATR, le bruit normal du marché suffit à te sortir. C'est la cause n°1 des « j'avais raison mais j'ai quand même perdu ».`
+      : rap > 2.5
+        ? `⚠️ C'est <b>large</b> : ça encaisse le bruit, mais ça t'oblige à un petit lot et il faut un gros mouvement pour rentabiliser.`
+        : `✅ C'est dans la bonne zone (1 à 2,5 ATR) : assez large pour respirer, assez serré pour garder un R:R correct.`;
+    t += `<br>`;
+  }
+  const sm = slMultLearned();
+  t += sm > 1
+    ? `🎓 Mon journal m'a montré que mes stops sautaient trop tôt alors que la direction était bonne : je les élargis de <b>${Math.round((sm - 1) * 100)} %</b> depuis.`
+    : `Sur mes propres signaux : stop au plus proche entre l'invalidation de structure et le dernier swing, jamais sous 2,50 $ (spread + bruit) ni au-delà de 2,5 ATR.`;
+  return t;
+}
+
+/* ---- statistiques du journal ---- */
+function rStats() {
+  const st = journalStats(21), all = journalStats(3650);
+  if (!all.nRes) return `Aucun trade vérifié pour l'instant — il m'en faut une dizaine avant de tirer la moindre conclusion honnête. Chaque trade que tu prends au bouton entre automatiquement au journal.`;
+  const wr = x => x.wr == null ? "—" : (x.wr * 100).toFixed(0) + " %";
+  const parSens = s => st.side[s].nRes ? `${Math.round(st.side[s].wins / st.side[s].nRes * 100)} % (${st.side[s].wins}/${st.side[s].nRes})` : "pas assez de données";
+  let t = `<b>3 dernières semaines</b> : ${st.nRes} trades vérifiés · winrate <b>${wr(st)}</b> · cumul ${st.sumR >= 0 ? "+" : ""}${st.sumR.toFixed(1)} R.<br>
+    <b>Depuis le début</b> : ${all.nRes} vérifiés · winrate ${wr(all)}.<br>
+    Par sens : BUY ${parSens("BUY")} · SELL ${parSens("SELL")}.`;
+  const ls = lessons();
+  if (ls.length) t += `<br>🎓 Ce que j'en ai tiré :<br>• ` + ls.map(l => l.txt).join("<br>• ");
+  const n = slToday();
+  if (n) t += `<br>⚠️ ${n} stop(s) aujourd'hui${n >= 2 ? " → <b>journée terminée</b>, je n'ordonne plus rien avant demain." : "."}`;
+  return t;
+}
+
+/* ---- tendance / indicateurs ---- */
+function rTendance() {
+  if (!AI) return PAS_ENCORE;
+  const s = AI.snaps || {}, c = AI.ctx || {};
+  const l = x => x == null ? "—" : x >= 2 ? "🟢 haussier" : x <= -2 ? "🔴 baissier" : "⚪ neutre";
+  const one = (n, x) => `${n} ${l(x && x.score)} (${x && x.score != null ? (x.score >= 0 ? "+" : "") + x.score.toFixed(1) : "—"})`;
+  return `${one("M15", s.M15)} · ${one("H1", s.H1)} · ${one("H4", s.H4)}<br>
+    Régime <b>${c.regime}</b> · RSI <b>${c.rsi}</b>${c.rsi >= 70 ? " (suracheté — n'achète surtout pas ici)" : c.rsi <= 30 ? " (survendu — ne vends surtout pas ici)" : ""} · session ${c.sess}.<br>
+    ${AI.agree ? "✅ Les 3 horizons sont alignés — c'est la meilleure configuration." : "⚠️ Les horizons divergent : c'est là que naissent les faux départs."}`;
+}
+
+/* ---- news / événements ---- */
+function rNews() {
+  let t = AI && AI.evt
+    ? `📅 <b>${AI.evt.title}</b> (impact ${AI.evt.impact}) dans <b>${Math.max(0, AI.evt.inMin)} min</b>.${AI.evt.impact === "High" && AI.evt.inMin <= 45 ? " → Je bloque toute entrée jusqu'à ~20 min après la publication." : ""}<br>`
+    : `📅 Aucun événement éco majeur imminent.<br>`;
+  const c = AI && AI.ctx;
+  if (c && c.riskOff != null)
+    t += `📡 Radar risk-off : <b>${c.riskOff}/9</b> ${c.riskOff >= 4 ? "— les marchés paniquent, l'or en profite souvent." : c.riskOff >= 2 ? "— tension modérée." : "— marchés calmes."}<br>`;
+  const hs = (newsData && newsData.headlines) || [];
+  if (hs.length) t += hs.slice(0, 3).map(h => `📰 ${h.title}`).join("<br>");
+  return t;
+}
+
+/* ---- prix ---- */
+function rPrix() {
+  if (!D) return PAS_ENCORE;
+  const m = marketStatus();
+  return `XAU/USD <b>${fmt(D.price)} $</b> · unité de temps ${TF.toUpperCase()} · ATR ${fmt(D.atrv)} $.<br>${m.open ? "🟢 Marché ouvert, tradable." : "🔴 " + m.why + " — rien n'est tradable, ton broker n'exécute pas."}`;
+}
+
+function rAide() {
+  return `Je réponds avec les chiffres de l'analyse en cours. Essaie :<br>
+    • « <b>je fais quoi sur mon trade ?</b> » · « <b>je sors ?</b> »<br>
+    • « <b>je peux entrer maintenant ?</b> »<br>
+    • « <b>pourquoi tu attends ?</b> »<br>
+    • « <b>mon stop est bon ?</b> » · « <b>combien je risque ?</b> »<br>
+    • « <b>où sont les niveaux ?</b> » · « <b>c'est quoi la tendance ?</b> »<br>
+    • « <b>mes stats ?</b> » · « <b>des news ?</b> » · « <b>le prix ?</b> »`;
+}
+
+function repondre(q) {
+  const t = nrm(q);
+  if (!t.trim()) return rAide();
+  if (hit(t, "aide", "help", "tu sais faire", "que sais", "quoi demander")) return rAide();
+  if (hit(t, "mon trade", "ma position", "je sors", "je sort", "sortir", "je garde", "avis", "je fais quoi", "que faire", "je coupe", "couper", "ca vaut le coup de garder")) return rTrade();
+  if (hit(t, "stat", "winrate", "win rate", "bilan", "journal", "comment je vais", "resultat", "performance")) return rStats();
+  if (hit(t, "stop", "sl ", " sl", "break even", "breakeven", "serre")) return rStop();
+  if (hit(t, "risque", "lot", "combien je perds", "capital", "mise", "argent", "euro")) return rRisque();
+  if (hit(t, "niveau", "support", "resistance", "objectif", "cible", "poc", "vwap", "fibo")) return rNiveaux();
+  if (hit(t, "pourquoi", "explique", "comment tu", "sur quoi")) return rPourquoi();
+  if (hit(t, "entrer", "rentrer", "j entre", "acheter", "vendre", "buy", "sell", "maintenant", "on y va", "je prends", "je peux")) return rEntrer();
+  if (hit(t, "tendance", "biais", "rsi", "indicateur", "timeframe", "mtf", "horizon", "direction", "haussier", "baissier")) return rTendance();
+  if (hit(t, "news", "actu", "evenement", "calendrier", "geopo", "nfp", "fed", "cpi", "inflation")) return rNews();
+  if (hit(t, "prix", "cours", "combien vaut", "ca vaut", "cote", "or est a")) return rPrix();
+  return rAide();
+}
+
+function chatAsk(q) {
+  q = (q || "").trim(); if (!q) return;
+  chatPush("moi", q.replace(/[<>]/g, ""));
+  setTimeout(() => chatPush("ana", repondre(q)), 130);
+}
+document.getElementById("chatSend").addEventListener("click", () => {
+  const i = document.getElementById("chatIn"); chatAsk(i.value); i.value = "";
+});
+document.getElementById("chatIn").addEventListener("keydown", e => {
+  if (e.key === "Enter") { chatAsk(e.target.value); e.target.value = ""; }
+});
+const CHIPS = ["je fais quoi sur mon trade ?", "je peux entrer maintenant ?", "pourquoi tu attends ?", "mon stop est bon ?", "combien je risque ?", "les niveaux ?", "mes stats ?"];
+document.getElementById("chatChips").innerHTML = CHIPS.map(c => `<button type="button">${c}</button>`).join("");
+document.getElementById("chatChips").addEventListener("click", e => { const b = e.target.closest("button"); if (b) chatAsk(b.textContent); });
 
 /* ================= cycle ================= */
 const REFRESH_S = 30;
