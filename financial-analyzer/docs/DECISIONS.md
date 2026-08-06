@@ -643,3 +643,90 @@ l'horodatage.
 **Conséquences.** Les distributions conditionnelles de l'ADR-007 deviennent estimables sur ce
 moteur. Coût : les fenêtres n'ont plus une durée constante, ce dont l'appariement avec les
 rendements futurs doit tenir compte.
+
+---
+
+## ADR-033 — Le delta mesure l'impatience ; le delta cumulé est toujours ancré
+
+**Statut** : figé (étape 3.2)
+
+**Contexte.** Toute transaction a un acheteur et un vendeur : un excédent d'achat n'existe pas.
+Le delta mesure qui a traversé le spread, donc qui était pressé. Un acheteur important
+travaillant à l'achat limite produit un delta négatif pendant qu'il accumule. Par ailleurs une
+somme cumulée dépend entièrement de son origine : « le delta cumulé est à +12 000 » ne signifie
+rien sans elle.
+
+**Décision.** Le delta est interprété comme une mesure d'impatience, jamais d'accumulation.
+Aucune règle ne porte sur le niveau absolu du delta cumulé ; l'ancre est un paramètre déclaré et
+versionné, et deux courbes ancrées différemment ne sont jamais comparées. Le delta est rapporté
+au volume écoulé et conditionné à la session, et la distribution des tailles est conservée en
+plus de la somme.
+
+**Conséquences.** Les deux quadrants non triviaux — divergence et absorption — deviennent
+lisibles par une règle simple : quand prix et delta divergent, le côté patient est celui qui va
+dans le sens du prix. Cette lecture reste soumise à validation (ADR-034).
+
+---
+
+## ADR-034 — Toute divergence exige un modèle nul et une robustesse sur grille
+
+**Statut** : figé (étape 3.2)
+
+**Contexte.** Le delta cumulé est structurellement une marche aléatoire, le prix en est une
+autre. Deux marches aléatoires produisent des divergences visuelles en permanence sans contenir
+la moindre information. De plus, la détection de divergence dépend fortement du découpage en
+oscillations : changer ce découpage change l'ensemble des divergences trouvées.
+
+**Décision.** Aucune règle de divergence n'est exploitable sans (1) un modèle nul — série
+rééchantillonnée par blocs ou signes permutés, préservant volume et volatilité — que le signal
+réel doit battre nettement et de façon stable ; (2) une évaluation sur **grille de paramètres**,
+un effet réel se dégradant progressivement là où un artefact n'existe qu'à un réglage. La grille
+de recherche est déclarée à l'avance, le nombre de configurations testées est compté, et une
+fraction de l'historique est matériellement réservée à la validation finale.
+
+**Conséquences.** Discipline applicable à tous les moteurs, posée ici parce que la divergence est
+le premier motif où la tentation d'explorer librement devient forte. Une divergence qui ne bat
+pas son modèle nul n'est pas un signal faible : c'est du bruit nommé.
+
+---
+
+## ADR-035 — Les agents déclarent leurs recouvrements structurels
+
+**Statut** : figé (étape 3.2)
+
+**Contexte.** Le delta est la composante « transactions » du déséquilibre de flux, lequel agrège
+transactions, ajouts et retraits. Ces deux moteurs partagent leur information par construction,
+pas par accident. Une fusion qui les traite comme deux témoignages distincts compte deux fois la
+même observation : « cinq moteurs sont d'accord » signifie alors « un signal a été compté cinq
+fois ».
+
+**Décision.** Chaque agent déclare ses recouvrements structurels — entrées et mécanismes
+partagés avec d'autres agents. L'étage 7 traite les agents structurellement liés comme une
+source unique à décomposer, jamais comme des preuves indépendantes. La corrélation empirique
+mesurée sur l'historique complète cette déclaration mais ne la remplace pas : elle est instable
+et s'effondre précisément dans les régimes extrêmes, là où l'indépendance supposée coûte le plus
+cher.
+
+**Conséquences.** C'est la contrainte centrale de l'architecture multi-moteurs. Sans elle, le
+système produit une confiance artificiellement élevée et détruit la calibration — c'est-à-dire
+son objectif principal. Tout nouvel agent devra déclarer ses recouvrements avant d'être admis
+dans la fusion.
+
+---
+
+## ADR-036 — La convention d'agrégation des transactions est un paramètre déclaré
+
+**Statut** : figé (étape 3.2)
+
+**Contexte.** Une agression consommant plusieurs ordres passifs peut être diffusée comme une
+transaction ou comme plusieurs selon la source. Le delta et la distribution des tailles changent
+en conséquence : deux fournisseurs produisent deux courbes de delta cumulé différentes pour le
+même marché et la même journée.
+
+**Décision.** La convention d'agrégation est déclarée et versionnée avec la série. Deux séries de
+conventions différentes ne sont ni comparées ni fusionnées. Lorsque le côté agresseur est déduit
+plutôt que fourni, la valeur est marquée `DÉRIVÉ` et son incertitude propagée.
+
+**Conséquences.** Même famille que l'ADR-022 sur la frontière de journée : une grandeur qui
+paraît objective est en réalité relative à une convention, et la convention doit voyager avec la
+donnée.
