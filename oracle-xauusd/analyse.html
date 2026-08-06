@@ -96,6 +96,17 @@
   .risk-warn { background: rgba(239,83,80,.12); border: 1px solid var(--down); border-radius: 8px; padding: 8px 10px; font-size: 12.5px; margin-top: 8px; }
   .setup { background: var(--card2); border-radius: 8px; padding: 8px 10px; margin-bottom: 7px; }
 
+  /* ---- contrôle avant entrée ---- */
+  .ctrl { background: var(--card2); border: 1px solid var(--border); border-radius: 9px; padding: 8px 11px; margin-top: 9px; }
+  .ctrl summary { cursor: pointer; font-size: 12.5px; color: var(--dim); list-style: none; }
+  .ctrl summary::-webkit-details-marker { display: none; }
+  .ctrl summary::before { content: "▸ "; }
+  .ctrl[open] summary::before { content: "▾ "; }
+  .ctrl-l { font-size: 12.5px; line-height: 1.6; margin-top: 4px; }
+  .go { border-radius: 10px; padding: 10px 12px; margin-top: 9px; font-weight: 800; text-align: center; font-size: 15px; }
+  .go.oui { background: rgba(38,166,154,.14); border: 1px solid var(--up); color: var(--up); }
+  .go.non { background: rgba(239,83,80,.12); border: 1px solid var(--down); color: var(--down); }
+
   /* ---- chat analyste ---- */
   #chatLog { max-height: 360px; overflow-y: auto; display: flex; flex-direction: column; gap: 7px; margin-bottom: 9px; }
   #chatLog:empty { display: none; }
@@ -240,7 +251,7 @@
   </div>
 </div>
 
-<footer>Outil d'analyse — aucune exécution d'ordre. Ceci n'est pas un conseil financier. · <b>version 2026.08.06-k</b></footer>
+<footer>Outil d'analyse — aucune exécution d'ordre. Ceci n'est pas un conseil financier. · <b>version 2026.08.06-l</b></footer>
 
 <script>
 "use strict";
@@ -1097,7 +1108,36 @@ function decideTrade(v) {
   // temps restant avant la clôture de la bougie en cours
   const candleCloseMin = Math.max(1, (v.c[v.c.length - 1].t + tfMin * 60000 - Date.now()) / 60000);
 
-  const base = { entry, sl, slLabel, tp1, tp2, rr, rr2, slDist, lotInfo, side, planShort, dirUp: v.dirUp, conf: v.conf, score: v.score };
+  /* ---- CONTRÔLE AVANT ENTRÉE : chaque condition vérifiée une par une, et affichée ----
+     Calculé ici pour être joint à TOUTES les réponses (feu vert comme attente),
+     afin que tu voies toujours ce qui est validé et ce qui bloque. */
+  const dxy = ((radarData && radarData.assets) || []).find(a => (a.name || "").includes("DXY"));
+  const dxyContre = !!(dxy && (v.dirUp ? dxy.chg1h >= 0.25 : dxy.chg1h <= -0.25));
+  const patConfirm = v.recentPat.some(p => p.dir === (v.dirUp ? 1 : -1));
+  // seuil appris : durci là où le journal montre des faiblesses, assoupli (léger) là où il excelle — plancher 3,0
+  const thr = Math.max(3, 3.5 + (v.regime === "RANGE" ? 1 : 0) + sideMalus(side) + ctxMalus(v.regime, v.sessName, Math.abs(v.score)));
+  const strong = Math.abs(v.score) >= thr && v.conf >= 60;
+  const rsiExces = v.dirUp ? (v.rsi >= 70 || v.stretch > 2) : (v.rsi <= 30 || v.stretch < -2);
+  const colleNiveau = v.dirUp ? !!(v.res1 && v.res1.p - v.price < 0.8 * v.atrv)
+                              : !!(v.sup1 && v.price - v.sup1.p < 0.8 * v.atrv);
+  const nSL = slToday(), evtProche = !!(v.evt && v.evt.impact === "High" && v.evt.inMin <= 45);
+  const checks = [
+    { ok: m.open, lbl: "Marché de l'or ouvert chez ton broker", ko: m.why },
+    { ok: nSL < 2, lbl: "Moins de 2 stops encaissés aujourd'hui", ko: `${nSL} stops aujourd'hui — journée terminée` },
+    { ok: !evtProche, lbl: "Aucune statistique majeure dans les 45 min", ko: v.evt ? `${v.evt.title} dans ${Math.max(0, v.evt.inMin)} min` : "statistique imminente" },
+    { ok: !rsiExces, lbl: `Prix sans excès (RSI ${v.rsi.toFixed(0)} · ${v.stretch >= 0 ? "+" : ""}${v.stretch.toFixed(1)}σ du VWAP)`, ko: v.dirUp ? "tu achèterais un sommet suracheté" : "tu vendrais un creux survendu" },
+    { ok: v.htfOk, lbl: "H1 et H4 confirment le sens", ko: "les horizons supérieurs ne confirment pas — le M15 seul, c'est pile ou face" },
+    { ok: !dxyContre, lbl: "Le dollar ne charge pas en face", ko: `DXY à ${dxy ? (dxy.chg1h >= 0 ? "+" : "") + dxy.chg1h + " %/1h" : "contre-courant"} — l'or fait l'inverse du dollar` },
+    { ok: Math.abs(v.score) >= 2, lbl: `Avantage statistique présent (score ${v.score >= 0 ? "+" : ""}${v.score.toFixed(1)})`, ko: "zone neutre : aucun avantage exploitable" },
+    { ok: !colleNiveau, lbl: v.dirUp ? "Pas collé sous une résistance" : "Pas collé sur un support", ko: v.dirUp ? `résistance ${v.res1 ? fmt(v.res1.p) + " $" : ""} juste au-dessus` : `support ${v.sup1 ? fmt(v.sup1.p) + " $" : ""} juste en dessous` },
+    { ok: rr >= 1.2, lbl: `Rapport gain/risque suffisant (${rr.toFixed(1)})`, ko: `R:R ${rr.toFixed(1)} — trop faible pour être rentable sur la durée` },
+    { ok: strong, lbl: `Signal assez fort (${Math.abs(v.score).toFixed(1)} ≥ ${thr.toFixed(1)} requis) · confiance ${v.conf} %`, ko: `force insuffisante : ${Math.abs(v.score).toFixed(1)} contre ${thr.toFixed(1)} requis${v.conf < 60 ? ` et confiance ${v.conf} % < 60 %` : ""}` },
+    { ok: patConfirm || v.agree, lbl: "Figure de bougie confirmée ou 3 horizons alignés", ko: "ni figure de confirmation ni alignement des horizons" },
+    { ok: v.microOk, lbl: "Timing M5 aligné (micro-vague dans le sens)", ko: "micro-vague M5 contraire — tu entrerais à contretemps" },
+    { ok: !lotInfo.tooWide, lbl: `Trade jouable avec ton capital (lot ${lotInfo.lot.toFixed(2)})`, ko: "stop trop large : même 0,01 lot dépasse tes 2 % de risque" },
+  ];
+
+  const base = { entry, sl, slLabel, tp1, tp2, rr, rr2, slDist, lotInfo, side, planShort, dirUp: v.dirUp, conf: v.conf, score: v.score, checks };
   /* hard = blocage de SÉCURITÉ : tant qu'il tient, aucun setup ne peut être armé.
      Sans ce drapeau, la carte proposait un trade prêt à cliquer juste sous
      « journée terminée après 2 stops » ou « NFP dans 20 min ». */
@@ -1115,7 +1155,7 @@ function decideTrade(v) {
       `À la réouverture, je refais l'analyse complète avant de valider le ${side}. Ne place JAMAIS d'ordre en attente avant un week-end.`, true);
   }
   /* 1bis. discipline : 2 de mes signaux au stop aujourd'hui → journée TERMINÉE (même règle que ton bot) */
-  if (slToday() >= 2) {
+  if (nSL >= 2) {
     const mid = new Date(); mid.setHours(24, 0, 0, 0);
     return wait(`2 de mes signaux ont fini au stop aujourd'hui — journée TERMINÉE.`,
       "Après 2 pertes, la probabilité de sur-trading émotionnel explose — chez toi comme chez moi. Le meilleur trade du reste de la journée, c'est aucun.",
@@ -1148,7 +1188,6 @@ function decideTrade(v) {
       2 * tfMin, null,
       `${side} dès que H1 s'aligne dans le même sens — je re-vérifie toutes les 30 s.`, true);
   /* 2quater. vent de face dollar (corrélation inverse or/DXY) */
-  const dxy = ((radarData && radarData.assets) || []).find(a => (a.name || "").includes("DXY"));
   if (dxy && v.dirUp && dxy.chg1h >= 0.25)
     return wait(`le dollar charge en face (DXY +${dxy.chg1h} %/1h) — acheter l'or contre un dollar qui monte, c'est ramer à contre-courant.`,
       "Or et dollar évoluent en sens inverse : un DXY en forte hausse écrase la plupart des tentatives haussières de l'or.",
@@ -1191,10 +1230,6 @@ function decideTrade(v) {
       `${side} sur repli vers ${fmt(better)} $ (le R:R passera au-dessus de 1,5) — ou attendre que la structure offre un objectif plus loin.`);
   }
   /* 6. signal moyen → confirmation d'une bougie */
-  const patConfirm = v.recentPat.some(p => p.dir === (v.dirUp ? 1 : -1));
-  // seuil appris : durci là où le journal montre des faiblesses, assoupli (léger) là où il excelle — plancher de sécurité 3,0
-  const thr = Math.max(3, 3.5 + (v.regime === "RANGE" ? 1 : 0) + sideMalus(side) + ctxMalus(v.regime, v.sessName, Math.abs(v.score)));
-  const strong = Math.abs(v.score) >= thr && v.conf >= 60;
   if (!strong || (!patConfirm && !v.agree)) {
     const lastC = v.c[v.c.length - 2]; // dernière bougie clôturée
     const trigger = v.dirUp ? lastC.h + 0.1 * v.atrv : lastC.l - 0.1 * v.atrv;
@@ -1250,7 +1285,7 @@ function renderDecision(d, setups = []) {
   const plan = `
     <table style="margin-top:8px">
       <tbody>
-        <tr><td>Sens</td><td><b style="color:${P.dirUp ? "var(--up)" : "var(--down)"}">${P.side}</b></td></tr>
+        <tr><td>Sens</td><td><b style="color:${P.dirUp ? "var(--up)" : "var(--down)"}">${P.dirUp ? "ACHAT" : "VENTE"} (${P.side})</b></td></tr>
         <tr><td>Entrée${P.atTrigger ? " (au déclencheur)" : d.action === "WAIT" ? " (si condition remplie)" : ""}</td><td>${fmt(P.entry)} $</td></tr>
         <tr><td>Stop loss <span style="color:var(--dim)">(${P.slLabel})</span></td><td>${fmt(P.sl)} $ (${fmt(P.slDist)} $)</td></tr>
         <tr><td>TP1 / TP2</td><td>${fmt(P.tp1)} $ / ${fmt(P.tp2)} $</td></tr>
@@ -1263,6 +1298,23 @@ function renderDecision(d, setups = []) {
   const openNote = myTrade
     ? `<div class="dec-line" style="background:rgba(240,185,11,.12);border:1px solid var(--gold2);border-radius:8px;padding:8px 10px;margin:8px 0;font-size:12.5px">📌 <b>Tu as déjà un trade en cours</b> : <b style="color:${myTrade.side === "BUY" ? "var(--up)" : "var(--down)"}">${myTrade.side}</b> entré à ${fmt(myTrade.entry)} $ (SL ${fmt(myTrade.sl)} $ · TP1 ${fmt(myTrade.tp1)} $). Ce panneau prépare le <b>prochain</b> trade — n'ouvre rien de nouveau et <b>ne prends jamais le sens inverse</b> tant que celui-ci n'est pas clôturé. Suis la carte « 📈 Mon trade en cours » juste en dessous.</div>`
     : "";
+  /* contrôle avant entrée : ce que le moteur a vérifié, condition par condition */
+  const CK = d.checks || [];
+  const ko = CK.filter(c => !c.ok), nOk = CK.length - ko.length;
+  const checklist = CK.length ? `
+    <details class="ctrl"${ko.length ? " open" : ""}>
+      <summary>🔎 Contrôle avant entrée — <b>${nOk}/${CK.length}</b> vérifiés${ko.length ? ` · <b style="color:var(--down)">${ko.length} bloquant(s)</b>` : ` · <b style="color:var(--up)">tout est au vert</b>`}</summary>
+      ${CK.map(c => `<div class="ctrl-l">${c.ok ? `✅ <span style="color:var(--dim)">${c.lbl}</span>` : `❌ <b>${c.lbl}</b><br><span style="color:var(--down);padding-left:20px">${c.ko}</span>`}</div>`).join("")}
+    </details>` : "";
+  /* la phrase sans ambiguïté : y aller ou pas, et dans quel sens.
+     Le verbe est dérivé du plan AFFICHÉ (P) — jamais stocké — pour qu'il ne
+     puisse pas rester sur l'ancien sens quand un signal persistant le réécrit. */
+  const verbe = P.dirUp ? "ACHÈTE" : "VENDS";
+  const verdictGo = d.action !== "WAIT" && !ko.length
+    ? `<div class="go oui">✅ VAS-Y — ${verbe} MAINTENANT · les ${CK.length} contrôles sont au vert</div>`
+    : d.action !== "WAIT"
+      ? `<div class="go non">⚠️ ${verbe} — mais ${ko.length} contrôle(s) au rouge : lis-les avant de cliquer</div>`
+      : `<div class="go non">⛔ N'ENTRE PAS ENCORE — ${ko.length} contrôle(s) au rouge${armed ? `, je te préviens dès que c'est bon pour ${verbe.toLowerCase()}` : ""}</div>`;
   const takeBtn = label => myTrade
     ? `<div class="dec-line" style="color:var(--dim);font-size:12.5px;margin-top:8px">Bouton désactivé : clôture d'abord ton trade en cours (« Je suis sorti ») avant d'en enregistrer un nouveau.</div>`
     : `<button class="takeBtn" onclick="takeTrade()">${label}</button>`;
@@ -1270,22 +1322,24 @@ function renderDecision(d, setups = []) {
   if (d.action !== "WAIT") {
     if (lastAction !== d.action) beep(3);
     el.innerHTML = `
-      <div class="badge ${d.action === "BUY" ? "buy" : "sell"}">${d.sticky ? (d.action === "BUY" ? "🟢 SIGNAL BUY ACTIF — je le suis avec toi" : "🔴 SIGNAL SELL ACTIF — je le suis avec toi") : (d.action === "BUY" ? "🟢 RENTRE EN BUY — MAINTENANT" : "🔴 RENTRE EN SELL — MAINTENANT")}</div>
+      <div class="badge ${d.action === "BUY" ? "buy" : "sell"}">${d.sticky ? (d.action === "BUY" ? "🟢 SIGNAL ACHAT (BUY) ACTIF — je le suis avec toi" : "🔴 SIGNAL VENTE (SELL) ACTIF — je le suis avec toi") : (d.action === "BUY" ? "🟢 VAS-Y — ACHÈTE MAINTENANT (BUY)" : "🔴 VAS-Y — VENDS MAINTENANT (SELL)")}</div>
       ${openNote}
       ${vision}
       ${d.reasons.map(r => `<div class="dec-line">✔️ ${r}</div>`).join("")}
       ${plan}${lotRow}
+      ${verdictGo}${checklist}
       <div class="dec-line" style="color:var(--dim);font-size:12px;margin-top:6px">Valable tant que l'analyse ne change pas (réévaluation 30 s). Si le prix a déjà bougé de plus de 0,3 ATR, attends le retour.</div>
       ${takeBtn("✅ J'ai pris ce trade — suis-le pour moi")}`;
   } else if (armed) {
     el.innerHTML = `
-      <div class="badge arm">🟠 PRÉPARE-TOI — ${armed.side} EN APPROCHE (${armed.ready} % prêt)</div>
+      <div class="badge arm">🟠 PRÉPARE-TOI À ${armed.side === "BUY" ? "ACHETER (BUY)" : "VENDRE (SELL)"} — ${armed.ready} % prêt</div>
       ${openNote}
       ${vision}
       <div class="dec-line"><b class="k">Setup</b> ${armed.type} — ${armed.note}</div>
       <div class="dec-line"><b class="k">Déclencheur</b> <b>${fmt(armed.trigger)} $</b> (le prix en est à ${fmt(armed.dist)} $) · estimation ${fmtEta(armed.etaMin)} — je re-vérifie toutes les 30 s, le badge passe en ${armed.side} si ça se confirme.</div>
       <div class="dec-line"><b class="k">Pourquoi pas tout de suite</b> ${d.whyShort}</div>
       ${plan}${lotRow}
+      ${verdictGo}${checklist}
       ${takeBtn("✅ J'ai pris ce trade au déclencheur — suis-le pour moi")}`;
   } else {
     el.innerHTML = `
@@ -1297,7 +1351,8 @@ function renderDecision(d, setups = []) {
       <div class="dec-line" style="color:var(--dim);font-size:12.5px">${d.whyLong}</div>
       <div class="dec-line"><b class="k">Dans combien de temps</b> <b>${d.etaTxt}</b> — je réanalyse toutes les 30 s, ce panneau changera de couleur dès que ce sera jouable.</div>
       <div class="dec-line"><b class="k">Condition d'entrée</b> ${d.condition}</div>
-      ${plan}${lotRow}`;
+      ${plan}${lotRow}
+      ${verdictGo}${checklist}`;
   }
   lastAction = d.action;
 }

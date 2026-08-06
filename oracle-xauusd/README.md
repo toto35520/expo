@@ -140,3 +140,33 @@ pour le trade en cours.
 Les mouvements sont horodatés, conservés (20 derniers, `localStorage`) et
 affichés dans la carte « ⚡ Mouvements brutaux ». Le chat répond à
 « pourquoi ça a bougé ? » et « tu es bien en direct ? ».
+
+## Ajout — contrôle avant entrée et verdict explicite
+
+Version `2026.08.06-l`.
+
+`decideTrade()` construit désormais, avant tout retour, un tableau `checks` de
+13 conditions vérifiées une par une : marché ouvert, moins de 2 stops sur la
+journée, aucune statistique majeure à moins de 45 min, prix sans excès
+(RSI et écart au VWAP), confirmation H1/H4, dollar pas à contre-courant,
+avantage statistique, prix pas collé à un niveau contraire, R:R suffisant,
+force du signal contre le seuil appris, figure ou alignement des horizons,
+timing M5, trade jouable avec le capital.
+
+La liste est jointe à **toutes** les réponses — feu vert comme attente — et
+affichée sous le plan, avec pour chaque échec la raison exacte. Au-dessus,
+une phrase sans ambiguïté : `✅ VAS-Y — ACHÈTE MAINTENANT · les 13 contrôles
+sont au vert` ou `⛔ N'ENTRE PAS ENCORE — N contrôle(s) au rouge`.
+
+Les libellés passent en français explicite : `VAS-Y — ACHÈTE MAINTENANT (BUY)`,
+`PRÉPARE-TOI À VENDRE (SELL)`, et la ligne du plan indique `ACHAT (BUY)` /
+`VENTE (SELL)` — le mot anglais ne peut plus être lu à l'envers.
+
+### Bug corrigé au passage : verbe figé sur un signal persistant
+
+Un signal actif est reconduit via `dec = { ...dec, action, side, dirUp, sticky }`,
+qui réécrit le sens sans réécrire les champs dérivés. Un verbe stocké sur
+l'objet serait donc resté sur l'ancien sens : la bannière pouvait annoncer
+`ACHÈTE` au-dessus d'un signal `SELL` reconduit — exactement la famille de bug
+du premier correctif. Le verbe est maintenant dérivé du plan affiché (`P`) au
+moment du rendu, jamais stocké. Couvert par un test de régression.
