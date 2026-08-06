@@ -76,6 +76,10 @@ l'avancement de la spécification ; elles bloqueront l'implémentation. Ce fichi
 | **Q41** | **Gouvernance du jeu réservé** : frontière temporelle, source, taille, intervalle tampon, conditions d'ouverture, gestion de la dette, procédure de réplication. Le cadre est fixé (ADR-098) ; les valeurs doivent l'être avant tout usage. | 🔴 | Addendum C5 |
 | **Q42** | **Campagne de mesure sur compte réel** acceptée, et son budget ? Le niveau A (ordres lointains annulés) est quasi gratuit ; le niveau B (taille minimale) coûte quelques dizaines d'euros. Sans elle, la latence broker et le glissement restent inconnus et Q19 ne peut pas se clore. | 🔴 | Q19 §5 · §13 |
 | **Q43** | **Cadence d'évaluation cible** du système ? Elle détermine un terme de latence systématiquement oublié : en moyenne la moitié de la période, au pire la période entière. | 🟠 | Q19 §2 |
+| **Q44** | **Barème complet du courtier** : spread effectif observé par tranche de session (pas le spread annoncé), commission, portage overnight et son éventuelle multiplication hebdomadaire. Ce sont les trois quarts de `C_total`, et ils sont obtenables aujourd'hui. | 🔴 | Q40 §9 |
+| **Q45** | **Convention de comptage du spread** : aller-retour complet, ou rendements de mi-prix à mi-prix ? Les deux se défendent ; les mélanger fausse toute comparaison. À déclarer une fois pour tout le projet. | 🟠 | Q40 §3 |
+| **Q46** | **Bande d'avantages prédictifs plausibles**, déclarée à l'avance, nécessaire pour lire `h_min` sur la courbe `κ(h)`. La déclarer après avoir vu la courbe reviendrait à choisir la conclusion. | 🟠 | Q40 §5 |
+| **Q47** | **Fiscalité applicable** aux résultats. Hors périmètre technique, mais elle affecte l'espérance nette finale et doit venir d'une source compétente plutôt que d'une supposition. | 🟡 | Q40 §10 |
 
 ---
 

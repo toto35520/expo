@@ -2141,3 +2141,84 @@ d'état de marché** ; un bucket sous-échantillonné est déclaré tel plutôt 
 **Conséquences.** Une mesure conduite en démonstration rend `PROTOCOL_INVALID`. Toute modification
 d'hébergement ou de courtier invalide les campagnes antérieures, d'où une version
 d'infrastructure attachée à chaque échantillon.
+
+---
+
+## ADR-105 — Le coût est une surface, pas un scalaire ; `δ_MEU` en hérite
+
+**Statut** : figé (protocole Q40)
+
+**Contexte.** Le coût total dépend simultanément de l'horizon de détention, du type d'ordre, de la
+tranche de session, de la taille et du régime de volatilité. Le terme de financement, seul terme
+proportionnel à la durée, rend en particulier le coût dépendant de l'horizon.
+
+**Décision.** Il n'existe pas un seuil `δ_MEU` mais une **surface**
+`δ_MEU(h, type d'ordre, session, taille, régime)`. Un gate rend un verdict **par cellule**, ou
+déclare explicitement la cellule sur laquelle il conclut. Le coût entrant dans le seuil est le
+coût **conditionnel à l'état de marché où le signal se déclenche**, jamais le coût moyen — pendant
+exact de la latence conditionnelle (ADR-102).
+
+**Conséquences.** Un moteur peut légitimement être `PASS` en séance liquide et
+`FAIL_EQUIVALENT_TO_ZERO` en creux asiatique ; ce n'est pas une contradiction. Éclaire pourquoi
+Q36 bloque Q40 : fixer les horizons revient à choisir la tranche de surface sur laquelle le projet
+se prononce, non à exprimer une préférence.
+
+---
+
+## ADR-106 — Pas de terme de latence séparé du glissement
+
+**Statut** : figé (protocole Q40)
+
+**Contexte.** La formule de coût de l'addendum additionne un terme de glissement et un terme de
+latence. Or un glissement mesuré de bout en bout **contient déjà** l'effet de la latence : les
+additionner compte deux fois la même chose, surestime le seuil et rejette donc des effets réels.
+
+**Décision.** Deux formulations valides, jamais mélangées. **Mesurée** — le glissement observé en
+phase 2B de Q19 remplace tout terme de latence. **Modélisée** — avant la campagne, une fonction
+explicite de la latence, de la volatilité et du type d'ordre tient lieu de glissement, et son
+incertitude entre dans `M_sécurité`. La formulation mesurée est préférée dès qu'elle existe.
+
+**Conséquences.** `M_sécurité` est décomposée en trois composantes estimées séparément —
+incertitude d'estimation, dégradation recherche/production, décroissance de l'avantage dans le
+temps — la troisième étant la plus grande et la moins connue, ce qu'un chiffre unique masquerait.
+
+---
+
+## ADR-107 — L'horizon minimal viable se calcule avant tout signal
+
+**Statut** : figé (protocole Q40)
+
+**Contexte.** Les coûts de transaction sont approximativement fixes par aller-retour, tandis que la
+volatilité croît approximativement en racine carrée du temps. Le rapport `κ(h) = C_total(h)/σ(h)`
+— nombre d'écarts-types à capturer pour seulement couvrir ses frais — décroît donc en `1/√h`.
+
+**Décision.** Le projet calcule `κ(h)` et en déduit `h_min`, l'horizon en dessous duquel aucun
+avantage prédictif réaliste ne peut couvrir ses frais, **par tranche de session**. Ce calcul ne
+requiert ni signal, ni étiquette, ni modèle, ni compte réel : seulement le spread effectif du
+courtier, la commission et la volatilité réalisée multi-échelle. Il constitue le livrable minimal
+du protocole Q40 et ne dépend d'aucune autre question ouverte.
+
+**Conséquences.** Pendant exact de la phase 0 de Q19 : les deux calculs bornent le domaine du
+possible avant qu'une ligne de moteur ne soit écrite — l'un par la latence, l'autre par les coûts,
+et leurs conclusions se cumulent. Réserve explicite : `h_min` est une borne, non une garantie ;
+un horizon supérieur est simplement **non exclu par les coûts**, et l'approximation en `√h` se
+dégrade en présence de tendance, d'autocorrélation ou de sauts.
+
+---
+
+## ADR-108 — La sélection adverse est un coût mesuré, pas un poste de barème
+
+**Statut** : figé (protocole Q40)
+
+**Contexte.** Un ordre à cours limité n'est pas exécuté au hasard : il est exécuté
+préférentiellement quand le marché vient vers vous, donc quand vous avez tort. Le rendement
+conditionnel à l'exécution est systématiquement inférieur au rendement inconditionnel. Ce coût
+n'apparaît sur aucun relevé de frais et ne se déduit d'aucun barème.
+
+**Décision.** La sélection adverse est mesurée en comparant le résultat des ordres réellement
+exécutés à celui qu'aurait produit une exécution garantie au même prix. Elle entre dans
+`C_total` pour toute stratégie passive.
+
+**Conséquences.** Un backtest supposant une exécution à cours limité systématique est optimiste,
+et l'ampleur du biais est exactement ce terme. Renforce le traitement de la non-exécution en
+observation censurée (ADR-103) plutôt qu'en absence neutre.
