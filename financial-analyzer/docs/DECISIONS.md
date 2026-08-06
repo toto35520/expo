@@ -271,3 +271,87 @@ estimé et versionné.
 **Conséquences.** L'écart entre distribution implicite et distribution estimée par le système
 devient lui-même une feature exploitable. Le système ne peut pas se contenter de relayer le
 marché : il doit produire sa propre estimation et assumer l'écart.
+
+---
+
+## ADR-015 — Les séries basse fréquence sont indexées sur leur publication, et leurs révisions conservées
+
+**Statut** : figé (étape 2.3)
+
+**Contexte.** La couche physique et régionale mêle des séries dont la latence de publication va
+de quelques minutes à plusieurs semaines, et qui sont fréquemment révisées. Le réflexe naturel
+est de les prolonger sur la série intraday à partir de leur *période de référence*. Le backtest
+consomme alors pendant des semaines un chiffre que personne ne connaissait, ses résultats
+s'améliorent, et rien ne le signale.
+
+**Décision.** Toute série basse fréquence est prolongée à partir de sa **date de publication**.
+Les révisions sont conservées et non écrasées : la valeur connue à `t` est celle publiée à `t`,
+même corrigée depuis. Toute feature dérivée hérite de la latence de sa source et la déclare.
+
+**Conséquences.** Troisième extension de l'ADR-004 : après la donnée (ADR-004) et la
+transformation (ADR-012), c'est la **connaissance qu'on en avait** qui devient datée. Rejouer
+une décision passée impose de le faire avec les chiffres erronés de l'époque, ce qui est la
+seule reconstitution honnête.
+
+---
+
+## ADR-016 — Un résidu de cohérence unique entre spot, Londres et listé
+
+**Statut** : figé (étape 2.3)
+
+**Contexte.** Suivre trois prix séparément ne dit pas lequel a tort. Soustraire deux prix bruts
+mélange coût de portage, décalage temporel et bruit de cotation. Par ailleurs le spot OTC *est*
+le marché londonien : ce ne sont pas deux marchés concurrents mais un référentiel et sa
+cotation.
+
+**Décision.** Le système maintient un résidu unique reliant le prix de référence spot au listé
+traduit par la base, ancré aux fixings lorsqu'ils existent. L'écart entre listé et physique est
+mesuré par l'instrument qui le cote — l'échange futures contre physique — et non par une
+différence de prix brute. La sortie de plage du résidu suit la logique de l'ADR-009 : un
+marché isolé qui s'écarte est un incident technique, les trois qui se disloquent ensemble sont
+un état de marché.
+
+**Conséquences.** Un seul capteur à calibrer au lieu de trois comparaisons ad hoc, et une
+séparation nette entre « réparer une connexion » et « réduire l'exposition ».
+
+---
+
+## ADR-017 — La couche physique conditionne et bloque, elle ne déclenche jamais
+
+**Statut** : figé (étape 2.3)
+
+**Contexte.** Les données physiques et de benchmark ont une fréquence et une latence
+incompatibles avec le déclenchement d'une entrée. Leur information est déjà incorporée au prix
+au moment où elle devient disponible.
+
+**Décision.** Ces données peuvent conditionner les scénarios, pondérer la fusion selon le
+régime, durcir les contraintes de risque et ajouter un motif de blocage. Elles ne peuvent ni
+produire un signal d'entrée, ni fixer un niveau, ni augmenter une taille, ni lever un blocage
+existant. Le fixing LBMA est traité comme un état de session (`PRE_FIXING`, `EN_ENCHÈRE`,
+`POST_FIXING`) alimentant les distributions conditionnelles de l'ADR-007, et non comme un
+signal.
+
+**Conséquences.** Application directe de la monotonie des vetos (I5) : une prime physique
+favorable ne peut pas autoriser un trade que le reste du système refuse. L'effet de flux autour
+des fixings est traité comme un effet de calendrier à modéliser, jamais comme un rendement
+acquis.
+
+---
+
+## ADR-018 — Classe de redistribution transportée jusqu'à la frontière de sortie
+
+**Statut** : figé (étape 2.3)
+
+**Contexte.** Le benchmark londonien est sous licence. Or le système comporte une couche qui
+produit du texte destiné à être lu. Rien n'empêche structurellement une valeur sous licence
+d'être citée dans une explication publiée — fuite involontaire, mais fuite.
+
+**Décision.** Chaque source porte une classe de redistribution, transportée avec la donnée
+jusqu'à la sortie. La frontière de sortie filtre les valeurs non redistribuables : elles restent
+utilisables en calcul et citables dans l'enregistrement de décision interne, mais ne peuvent
+pas apparaître dans une sortie publiable. Ce filtre est appliqué au même point de la chaîne que
+le contrôle d'ancrage numérique de l'ADR-002.
+
+**Conséquences.** La frontière de sortie devient un point de contrôle unique portant deux
+garanties : aucun chiffre inventé, aucun chiffre non redistribuable. Le coût est une contrainte
+de provenance à propager sur toute la chaîne de features.
