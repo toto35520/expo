@@ -178,6 +178,11 @@
       <div id="tradeBody"></div>
     </div>
 
+    <div class="card" id="spikeCard" style="display:none">
+      <h2>⚡ Mouvements brutaux — pourquoi ça a bougé</h2>
+      <div id="spikeBody"></div>
+    </div>
+
     <div class="card" id="chatCard">
       <h2>💬 Parle-moi — pose ta question</h2>
       <div id="chatLog"></div>
@@ -235,7 +240,7 @@
   </div>
 </div>
 
-<footer>Outil d'analyse — aucune exécution d'ordre. Ceci n'est pas un conseil financier. · <b>version 2026.08.06-j</b></footer>
+<footer>Outil d'analyse — aucune exécution d'ordre. Ceci n'est pas un conseil financier. · <b>version 2026.08.06-k</b></footer>
 
 <script>
 "use strict";
@@ -582,7 +587,7 @@ function lotFor(slDist) {
 
 /* ================= état global ================= */
 let TF = "15m";
-let gRatio = 1, gSpot = null;
+let gRatio = 1, gSpot = null, gRatioAt = 0; // gRatioAt : quand le recalage sur le spot XAU réel a eu lieu
 let D = null, AI = null; // D : données du graphique · AI : instantané complet de la dernière analyse (lu par le chat)
                       // données de l'analyse courante {candles, ind, sr, piv, patterns, ...}
 const DEF_COUNT = () => window.innerWidth < 700 ? 70 : 120; // moins de bougies sur mobile = bougies plus grosses/lisibles
@@ -668,6 +673,7 @@ async function analyze(fullNarration = true) {
   // recalage sur le prix réel XAU/USD
   const paxgLast = last(cRaw).c;
   gRatio = gSpot ? gSpot / paxgLast : 1;
+  gRatioAt = gSpot ? Date.now() : 0;
   const scale = arr => arr.map(k => ({ ...k, o: k.o * gRatio, h: k.h * gRatio, l: k.l * gRatio, c: k.c * gRatio }));
   const c = scale(cRaw); c15 = scale(c15); c1h = scale(c1h); c4h = scale(c4h); d1 = scale(d1);
   const c1m = scale(c1mRaw);
@@ -1779,8 +1785,10 @@ function watchTick(p) {
   el.className = "chg " + (mv >= 0 ? "up" : "down");
   if (Math.abs(mv) > 0.7 * D.atrv && nowT - lastSpikeAt > 90000 && marketStatus().open) { // pas d'alerte spike marché fermé (PAXG week-end)
     lastSpikeAt = nowT;
+    const sp = explainSpike(mv, p);                 // POURQUOI ça vient de bouger
+    spikes.push(sp); saveSpikes(); renderSpikes();
     const b = document.getElementById("spikeBanner");
-    b.textContent = `⚡ MOUVEMENT BRUTAL : ${mv >= 0 ? "+" : ""}${mv.toFixed(2)} $ en 1 minute — réanalyse immédiate (prudence : les bougies de news balaient les stops dans les 2 sens)`;
+    b.innerHTML = `⚡ MOUVEMENT BRUTAL : ${mv >= 0 ? "+" : ""}${mv.toFixed(2)} $ en 1 min (${sp.ampl.toFixed(1)} × l'ATR) — ${sp.causes.length ? sp.causes[0].court : "cause non identifiée"} · détail dans la carte « Mouvements brutaux »`;
     b.style.borderColor = mv >= 0 ? "var(--up)" : "var(--down)";
     b.style.display = "block";
     setTimeout(() => b.style.display = "none", 90000);
@@ -1807,7 +1815,12 @@ function watchTick(p) {
 }
 
 /* ================= journal automatique + auto-analyse : je vérifie mes propres trades ================= */
-const JR_KEY = "analyste_journal_xau";
+const JR_KEY = "analyste_journal_xau", SPK_KEY = "analyste_spikes_xau";
+/* santé du flux temps réel : sans ça, un WebSocket qui se tait sans se fermer
+   laissait un prix figé sous un voyant « temps réel » toujours vert. */
+let lastTickAt = 0, wsRef = null, lastReconnectAt = 0, feedWarned = false, feedBannerOn = false;
+let spikes = []; try { spikes = JSON.parse(localStorage.getItem(SPK_KEY) || "[]"); } catch {}
+const saveSpikes = () => localStorage.setItem(SPK_KEY, JSON.stringify(spikes.slice(-20)));
 let journal = [], jStats = null, offlineDone = false, lastCtx = null, activeLessons = [];
 try { journal = JSON.parse(localStorage.getItem(JR_KEY) || "[]"); } catch {}
 const saveJournal = () => localStorage.setItem(JR_KEY, JSON.stringify(journal.slice(-200)));
@@ -2093,7 +2106,7 @@ let myTrade = null;
 try { myTrade = JSON.parse(localStorage.getItem(TRADE_KEY) || "null"); } catch {}
 window.takeTrade = function () {
   const pl = window._plan; if (!pl) return;
-  myTrade = { side: pl.side, entry: D ? D.price : pl.entry, sl: pl.sl, tp1: pl.tp1, tp2: pl.tp2, lot: pl.lot || MIN_LOT, t0: Date.now(), be: false, tp1done: false };
+  myTrade = { side: pl.side, entry: D ? D.price : pl.entry, sl: pl.sl, tp1: pl.tp1, tp2: pl.tp2, lot: pl.lot || MIN_LOT, t0: Date.now(), be: false, tp1done: false, ratio: gRatio };
   localStorage.setItem(TRADE_KEY, JSON.stringify(myTrade));
   journalTake(myTrade);
   renderTrade(myTrade.entry);
@@ -2115,7 +2128,7 @@ window.declareTrade = function () {
   const tp2 = num("Ton TP2 (objectif 2) :", (entry + dirn * 2.5 * risk).toFixed(2));
   const lot = num("Ton LOT réel (ex : 0.06) :", lotFor(risk).lot.toFixed(2)) || MIN_LOT;
   myTrade = { side, entry, sl, tp1: tp1 || entry + dirn * 1.5 * risk, tp2: tp2 || entry + dirn * 2.5 * risk,
-    lot, t0: Date.now(), be: false, tp1done: false, declared: true };
+    lot, t0: Date.now(), be: false, tp1done: false, declared: true, ratio: gRatio };
   localStorage.setItem(TRADE_KEY, JSON.stringify(myTrade));
   journalTake(myTrade);
   renderTrade(D ? D.price : entry);
@@ -2187,11 +2200,12 @@ let dayOpen = null;
 function connectWS() {
   try {
     const ws = new WebSocket("wss://stream.binance.com:9443/ws/paxgusdt@trade");
+    wsRef = ws;
     ws.onmessage = ev => {
       const p = +JSON.parse(ev.data).p * gRatio;
+      lastTickAt = Date.now(); feedWarned = false; // le chien de garde s'appuie dessus
       watchTick(p);
       document.getElementById("px").textContent = fmt(p) + " $";
-      document.getElementById("liveTag").innerHTML = `<span class="live-dot"></span>temps réel`;
       if (dayOpen) {
         const ch = (p - dayOpen) / dayOpen * 100;
         const el = document.getElementById("chg");
@@ -2208,6 +2222,184 @@ function connectWS() {
     ws.onclose = () => setTimeout(connectWS, 5000);
   } catch { setTimeout(connectWS, 10000); }
 }
+
+/* ================= ⚡ POURQUOI ÇA A BOUGÉ D'UN COUP ? =================
+   Appelé dès qu'un mouvement dépasse 0,7 ATR en une minute. Croise l'événement
+   éco, l'heure d'ouverture, le volume, les niveaux traversés et les balayages
+   de liquidité pour dire ce qui vient de se passer — et ce que ça implique. */
+function explainSpike(mv, p) {
+  const causes = [], now = new Date(), atr = (D && D.atrv) || 1;
+
+  /* 1. statistique économique programmée */
+  if (AI && AI.evt && Math.abs(AI.evt.inMin) <= 30)
+    causes.push({ w: 5, court: `statistique ${AI.evt.title}`,
+      txt: `📅 <b>${AI.evt.title}</b> (impact ${AI.evt.impact}) ${AI.evt.inMin > 0 ? `dans ${AI.evt.inMin} min` : `il y a ${-AI.evt.inMin} min`} — c'est de loin la cause la plus probable.`,
+      quoi: `Sur une bougie de statistique, le prix balaie les stops <b>des deux côtés</b> avant de choisir sa direction. N'entre pas dans les 20 minutes qui suivent : c'est le moment où l'on perd le plus vite.` });
+
+  /* 2. ouverture de session */
+  const minOfDay = now.getUTCHours() * 60 + now.getUTCMinutes();
+  for (const [m, nom] of [[0, "l'ouverture de l'Asie"], [7 * 60, "l'ouverture de Londres"], [12 * 60, "l'ouverture de New York"], [13 * 60 + 30, "l'ouverture du cash américain"]])
+    if (Math.abs(minOfDay - m) <= 12)
+      causes.push({ w: 3, court: `${nom}`,
+        txt: `🕐 <b>${nom.charAt(0).toUpperCase() + nom.slice(1)}</b> il y a ${Math.abs(minOfDay - m)} min — les gros volumes arrivent d'un coup.`,
+        quoi: `Les premières minutes d'une session font très souvent un faux mouvement avant la vraie direction. Laisse passer la deuxième bougie avant de conclure.` });
+
+  /* 3. volume de la bougie en cours */
+  if (D && D.c && D.c.length > 21) {
+    const k = D.c[D.c.length - 1], prev = D.c.slice(-21, -1);
+    const avgV = prev.reduce((s, x) => s + x.v, 0) / prev.length;
+    if (avgV > 0 && k.v > 2 * avgV)
+      causes.push({ w: 4, court: `volume × ${(k.v / avgV).toFixed(1)}`,
+        txt: `📊 Volume <b>× ${(k.v / avgV).toFixed(1)}</b> par rapport à la moyenne des 20 dernières bougies — ce n'est pas du bruit, il y a de vrais ordres derrière.`,
+        quoi: `Un mouvement porté par le volume se prolonge plus souvent qu'il ne se retourne. Si tu es dans le sens, laisse courir ; si tu es à contresens, ne t'entête pas.` });
+    else if (avgV > 0 && k.v < 0.6 * avgV)
+      causes.push({ w: 2, court: `mouvement sans volume`,
+        txt: `💨 Volume <b>faible</b> (${(k.v / avgV).toFixed(1)} × la moyenne) — le prix a bougé dans le vide, typique des heures creuses.`,
+        quoi: `Sans volume derrière, ce genre de mouvement se rétracte souvent aussi vite qu'il est venu. Ne cours pas après.` });
+  }
+
+  /* 4. niveau important traversé pendant le mouvement */
+  if (D) {
+    const niv = [];
+    if (AI && AI.res1) niv.push([AI.res1.p, `la résistance ${fmt(AI.res1.p)} $ (${AI.res1.n} touches)`]);
+    if (AI && AI.sup1) niv.push([AI.sup1.p, `le support ${fmt(AI.sup1.p)} $ (${AI.sup1.n} touches)`]);
+    if (D.prof) niv.push([D.prof.poc, `le POC ${fmt(D.prof.poc)} $`]);
+    if (D.piv) { niv.push([D.piv.R1, `le pivot R1 ${fmt(D.piv.R1)} $`]); niv.push([D.piv.S1, `le pivot S1 ${fmt(D.piv.S1)} $`]); }
+    if (AI && AI.vwapNow) niv.push([AI.vwapNow, `le VWAP ${fmt(AI.vwapNow)} $`]);
+    const from = p - mv;
+    for (const [lvl, nom] of niv)
+      if (lvl != null && (from - lvl) * (p - lvl) < 0)
+        causes.push({ w: 4, court: `cassure de ${nom.split(" (")[0]}`,
+          txt: `🎯 Le prix vient de <b>traverser ${nom}</b>.`,
+          quoi: `Une cassure déclenche tous les ordres en attente accumulés sur le niveau : c'est ça qui accélère le mouvement. La vraie question est de savoir si la bougie <b>clôture</b> de l'autre côté — sinon c'est un faux signal.` });
+  }
+
+  /* 5. balayage de liquidité (chasse aux stops) */
+  if (D && D.liq && D.liq.sweeps && D.liq.sweeps.length) {
+    const sw = D.liq.sweeps[D.liq.sweeps.length - 1];
+    if (D.c.length - 1 - sw.i <= 2)
+      causes.push({ w: 4, court: `chasse aux stops`,
+        txt: `💧 <b>Balayage de liquidité</b> ${sw.dir > 0 ? "sous les plus bas" : "au-dessus des plus hauts"} à ${fmt(sw.p)} $ — les stops accumulés là viennent d'être ramassés.`,
+        quoi: `C'est le mouvement qui piège le plus de monde : il va chercher les stops, puis repart <b>dans l'autre sens</b>. Ne cours surtout pas après — attends la reclôture, elle donne le vrai sens.` });
+  }
+
+  /* 6. contexte de tension */
+  const ro = AI && AI.ctx && AI.ctx.riskOff;
+  if (ro >= 4)
+    causes.push({ w: 2, court: `tension géopolitique`,
+      txt: `📡 Radar risk-off à <b>${ro}/9</b> — les marchés sont nerveux et l'or sert de refuge.`,
+      quoi: `Dans ce contexte, les hausses de l'or tiennent mieux que les baisses.` });
+
+  causes.sort((a, b) => b.w - a.w);
+  return { at: Date.now(), mv, p, ampl: Math.abs(mv) / atr, up: mv > 0, causes: causes.slice(0, 4) };
+}
+
+function renderSpikes() {
+  const card = document.getElementById("spikeCard"), el = document.getElementById("spikeBody");
+  if (!card || !el) return;
+  const recents = spikes.filter(s => Date.now() - s.at < 12 * 3600e3).slice(-6).reverse();
+  if (!recents.length) { card.style.display = "none"; return; }
+  card.style.display = "block";
+  el.innerHTML = recents.map(s => `
+    <div class="setup">
+      <div style="display:flex;justify-content:space-between;gap:8px;align-items:baseline">
+        <b style="color:${s.up ? "var(--up)" : "var(--down)"}">${s.up ? "▲" : "▼"} ${s.mv >= 0 ? "+" : ""}${fmt(s.mv)} $ en 1 min</b>
+        <span style="color:var(--dim);font-size:12px">${new Date(s.at).toLocaleTimeString("fr-FR", { hour: "2-digit", minute: "2-digit" })} · ${s.ampl.toFixed(1)} × l'ATR</span>
+      </div>
+      ${s.causes.length
+        ? s.causes.map(c => `<div style="font-size:12.5px;margin-top:5px">${c.txt}<div style="color:var(--dim);margin-top:2px">→ ${c.quoi}</div></div>`).join("")
+        : `<div style="font-size:12.5px;margin-top:5px;color:var(--dim)">Aucune cause identifiable : ni statistique programmée, ni volume anormal, ni niveau traversé, ni balayage. C'est probablement un déséquilibre passager du carnet d'ordres — ce type de mouvement se rétracte souvent aussi vite qu'il arrive.</div>`}
+    </div>`).join("");
+}
+
+/* ================= 🩺 SANTÉ DU FLUX TEMPS RÉEL =================
+   Un WebSocket peut cesser d'émettre SANS se fermer (bascule wifi/4G, mise en
+   veille du téléphone, coupure côté Binance). Sans surveillance, le prix restait
+   figé sous un voyant vert, et surtout journalTick/trackTrade — qui ne tournent
+   que sur les ticks — cessaient de vérifier ton SL et ton TP. */
+function forceReconnect(why) {
+  if (Date.now() - lastReconnectAt < 20000) return;
+  lastReconnectAt = Date.now();
+  try { if (wsRef) { wsRef.onclose = null; wsRef.close(); } } catch {}
+  wsRef = null;
+  connectWS();
+}
+setInterval(() => {
+  const tag = document.getElementById("liveTag");
+  if (!tag) return;
+  if (!lastTickAt) { tag.innerHTML = `<span style="color:var(--dim)">connexion au flux…</span>`; return; }
+  const age = Math.round((Date.now() - lastTickAt) / 1000);
+  const mkt = marketStatus();
+  if (age <= 15) {
+    tag.innerHTML = `<span class="live-dot"></span>temps réel`;
+    if (feedBannerOn) {                    // le flux vient de revenir après une coupure
+      feedBannerOn = false;
+      const b = document.getElementById("spikeBanner");
+      b.innerHTML = `✅ <b>Flux rétabli</b> — je reprends le suivi et je vérifie ce qui s'est passé pendant la coupure.`;
+      b.style.borderColor = "var(--up)";
+      setTimeout(() => { if (!feedBannerOn) b.style.display = "none"; }, 8000);
+      catchUpTrade();    // ton stop a-t-il été touché pendant le trou ?
+      resolveOffline();  // et les signaux du journal ?
+    }
+  }
+  else if (age <= 60) tag.innerHTML = `<span style="color:var(--dim)">dernier prix il y a ${age} s</span>`;
+  else {
+    tag.innerHTML = `<span style="color:var(--down)">⚠️ flux figé depuis ${age} s — ce prix n'est PAS à jour</span>`;
+    if (mkt.open && !feedWarned) {
+      feedWarned = true; feedBannerOn = true;
+      const b = document.getElementById("spikeBanner");
+      b.innerHTML = `⚠️ <b>FLUX DE PRIX INTERROMPU</b> — je ne reçois plus rien depuis ${age} s. Tant que ce message est là, je ne peux ni vérifier ton stop ni ton objectif. Je me reconnecte…`;
+      b.style.borderColor = "var(--down)"; b.style.display = "block";
+      beep(4);
+    }
+    if (mkt.open) forceReconnect("flux figé");
+  }
+}, 3000);
+
+/* ---- rattrapage : SL/TP touchés pendant que l'app ne recevait plus rien ---- */
+let catchUpBusy = false;
+async function catchUpTrade() {
+  if (!myTrade || catchUpBusy || !marketStatus().open) return;
+  catchUpBusy = true;
+  try {
+    const ks = await klines("1m", 500, myTrade.t0);
+    const r = myTrade.ratio || gRatio || 1, dirn = myTrade.side === "BUY" ? 1 : -1;
+    for (const k of ks) {
+      if (!marketOpenAt(k.t)) continue;
+      const hi = k.h * r, lo = k.l * r;
+      const slEff = myTrade.be ? myTrade.entry : myTrade.sl;
+      const hitSL = dirn > 0 ? lo <= slEff : hi >= slEff;
+      const hitTP1 = dirn > 0 ? hi >= myTrade.tp1 : lo <= myTrade.tp1;
+      if (!myTrade.tp1done && hitTP1) {   // TP1 d'abord : on protège comme l'aurait fait le suivi live
+        myTrade.tp1done = true; myTrade.be = true;
+        localStorage.setItem(TRADE_KEY, JSON.stringify(myTrade));
+        alerteRattrapage(`✅ <b>TP1 a été touché à ${new Date(k.t).toLocaleTimeString("fr-FR", { hour: "2-digit", minute: "2-digit" })}</b> pendant que le flux était coupé. Ton stop est considéré remonté à l'entrée — vérifie ton broker.`, "var(--up)");
+        continue;
+      }
+      if (hitSL) {
+        alerteRattrapage(`⛔ <b>Ton stop a été touché à ${new Date(k.t).toLocaleTimeString("fr-FR", { hour: "2-digit", minute: "2-digit" })}</b> pendant que le flux était coupé — le suivi n'a pas pu te prévenir sur le moment. <b>Vérifie ta position chez ton broker</b>, puis clique « Je suis sorti ».`, "var(--down)");
+        break;
+      }
+    }
+    renderTrade(D ? D.price : myTrade.entry);
+  } catch {} finally { catchUpBusy = false; }
+}
+function alerteRattrapage(html, col) {
+  const b = document.getElementById("spikeBanner");
+  b.innerHTML = html; b.style.borderColor = col; b.style.display = "block";
+  setTimeout(() => b.style.display = "none", 120000);
+  beep(4);
+}
+
+/* ---- retour au premier plan (le cas le plus fréquent sur téléphone) ---- */
+document.addEventListener("visibilitychange", () => {
+  if (document.visibilityState !== "visible") return;
+  if (Date.now() - lastTickAt > 15000) forceReconnect("retour au premier plan");
+  catchUpTrade();      // le stop a-t-il sauté pendant que l'écran était éteint ?
+  resolveOffline();    // et les signaux du journal ?
+  cycle(false);        // réanalyse immédiate plutôt que d'attendre le compte à rebours
+});
+window.addEventListener("online", () => forceReconnect("réseau retrouvé"));
 
 /* ================= 💬 CHAT — poser une question à l'analyste =================
    Répond à partir de l'instantané AI de la dernière analyse : mêmes chiffres que
@@ -2375,6 +2567,37 @@ function rPrix() {
   return `XAU/USD <b>${fmt(D.price)} $</b> · unité de temps ${TF.toUpperCase()} · ATR ${fmt(D.atrv)} $.<br>${m.open ? "🟢 Marché ouvert, tradable." : "🔴 " + m.why + " — rien n'est tradable, ton broker n'exécute pas."}`;
 }
 
+/* ---- pourquoi ça vient de monter / descendre d'un coup ---- */
+function rSpike() {
+  const rec = spikes.filter(x => Date.now() - x.at < 6 * 3600e3);
+  if (!rec.length) return `Aucun mouvement brutal détecté ces 6 dernières heures — je surveille en permanence et je déclenche dès qu'un mouvement dépasse 0,7 × l'ATR en une minute${D ? ` (soit ${fmt(0.7 * D.atrv)} $ en ce moment)` : ""}.<br>Quand ça arrive, je te dis <b>pourquoi</b> : statistique éco, ouverture de session, volume anormal, niveau cassé ou chasse aux stops.`;
+  const s0 = rec[rec.length - 1];
+  const min = Math.round((Date.now() - s0.at) / 60000);
+  return `Dernier mouvement brutal : <b style="color:${s0.up ? "var(--up)" : "var(--down)"}">${s0.mv >= 0 ? "+" : ""}${fmt(s0.mv)} $ en 1 min</b> il y a ${min} min (${s0.ampl.toFixed(1)} × l'ATR).<br>`
+    + (s0.causes.length
+      ? s0.causes.map(c => `${c.txt}<br><span style="color:var(--dim)">→ ${c.quoi}</span>`).join("<br>")
+      : `Aucune cause identifiable : ni statistique, ni volume anormal, ni niveau traversé. C'est probablement un déséquilibre passager du carnet — ça se rétracte souvent.`)
+    + (rec.length > 1 ? `<br><span style="color:var(--dim)">${rec.length} mouvements brutaux sur les 6 dernières heures — l'historique complet est dans la carte « ⚡ Mouvements brutaux ».</span>` : "");
+}
+
+/* ---- est-ce que tu suis vraiment le marché en direct ? ---- */
+function rFlux() {
+  if (!lastTickAt) return `Je n'ai encore <b>aucun prix</b> : la connexion au flux n'est pas établie. Vérifie ta connexion — tant que ce message dure, ne te fie à aucun chiffre affiché.`;
+  const age = Math.round((Date.now() - lastTickAt) / 1000);
+  const mkt = marketStatus();
+  let t = age <= 15
+    ? `✅ <b>Oui, je suis en direct.</b> Dernier prix reçu il y a ${age} s (flux Binance, tick par tick).`
+    : age <= 60
+      ? `🟠 Dernier prix reçu il y a <b>${age} s</b>. Normal en heures creuses : le flux n'envoie que sur transaction réelle.`
+      : `⚠️ <b>Flux figé depuis ${age} s</b> — le prix affiché n'est PAS à jour, je me reconnecte automatiquement. Ne prends aucune décision sur ces chiffres.`;
+  t += `<br>À chaque tick je vérifie : ton stop, ton objectif, le déclencheur du setup armé, et les mouvements brutaux. L'analyse complète, elle, se refait toutes les 30 s${mkt.open ? "" : " — mais le marché est fermé, rien n'est exécutable"}.`;
+  t += gRatioAt
+    ? `<br>⚠️ À savoir : mes bougies viennent du <b>PAXG</b> (or tokenisé, qui cote en continu), recalées sur le vrai spot XAU — dernier recalage il y a <b>${Math.round((Date.now() - gRatioAt) / 1000)} s</b>. Entre deux recalages, et surtout pendant un mouvement violent, mon prix peut <b>s'écarter de quelques dollars de celui de ton broker</b>. Pour placer un ordre, fie-toi toujours au prix de ton broker, pas au mien.`
+    : `<br>⚠️ Le recalage sur le spot XAU réel n'a pas encore pu se faire : les niveaux affichés sont ceux du PAXG brut et peuvent différer nettement de ton broker.`;
+  if (myTrade) t += `<br>Ton trade en cours est suivi sur ce même flux : si la connexion saute, je rattrape les bougies manquées dès qu'elle revient et je te préviens si ton stop a été touché entre-temps.`;
+  return t;
+}
+
 function rAide() {
   return `Je réponds avec les chiffres de l'analyse en cours. Essaie :<br>
     • « <b>je fais quoi sur mon trade ?</b> » · « <b>je sors ?</b> »<br>
@@ -2382,6 +2605,7 @@ function rAide() {
     • « <b>pourquoi tu attends ?</b> »<br>
     • « <b>mon stop est bon ?</b> » · « <b>combien je risque ?</b> »<br>
     • « <b>où sont les niveaux ?</b> » · « <b>c'est quoi la tendance ?</b> »<br>
+    • « <b>pourquoi ça a bougé ?</b> » · « <b>tu es bien en direct ?</b> »<br>
     • « <b>mes stats ?</b> » · « <b>des news ?</b> » · « <b>le prix ?</b> »`;
 }
 
@@ -2389,6 +2613,10 @@ function repondre(q) {
   const t = nrm(q);
   if (!t.trim()) return rAide();
   if (hit(t, "aide", "help", "tu sais faire", "que sais", "quoi demander")) return rAide();
+  if (hit(t, "pourquoi ca bouge", "pourquoi ca a bouge", "pourquoi ca monte", "pourquoi ca descend", "pourquoi ca chute",
+    "pourquoi cette baisse", "pourquoi cette hausse", "baisse brutale", "hausse brutale", "mouvement brutal",
+    "chute", "spike", "ca s est envole", "ca a plonge", "ca a decolle", "pourquoi ca bouge autant")) return rSpike();
+  if (hit(t, "direct", "temps reel", "flux", "a jour", "connexion", "tu suis", "ca marche encore", "tu es la", "fige")) return rFlux();
   if (hit(t, "mon trade", "ma position", "je sors", "je sort", "sortir", "je garde", "avis", "je fais quoi", "que faire", "je coupe", "couper", "ca vaut le coup de garder")) return rTrade();
   if (hit(t, "stat", "winrate", "win rate", "bilan", "journal", "comment je vais", "resultat", "performance")) return rStats();
   if (hit(t, "stop", "sl ", " sl", "break even", "breakeven", "serre")) return rStop();
@@ -2413,7 +2641,7 @@ document.getElementById("chatSend").addEventListener("click", () => {
 document.getElementById("chatIn").addEventListener("keydown", e => {
   if (e.key === "Enter") { chatAsk(e.target.value); e.target.value = ""; }
 });
-const CHIPS = ["je fais quoi sur mon trade ?", "je peux entrer maintenant ?", "pourquoi tu attends ?", "mon stop est bon ?", "combien je risque ?", "les niveaux ?", "mes stats ?"];
+const CHIPS = ["je fais quoi sur mon trade ?", "pourquoi ça a bougé ?", "je peux entrer maintenant ?", "tu es bien en direct ?", "pourquoi tu attends ?", "mon stop est bon ?", "combien je risque ?", "les niveaux ?", "mes stats ?"];
 document.getElementById("chatChips").innerHTML = CHIPS.map(c => `<button type="button">${c}</button>`).join("");
 document.getElementById("chatChips").addEventListener("click", e => { const b = e.target.closest("button"); if (b) chatAsk(b.textContent); });
 
@@ -2447,6 +2675,8 @@ cycle(true);
 connectWS();
 if (myTrade) renderTrade(myTrade.entry); // trade repris après rechargement de la page
 renderJournal();
+renderSpikes();      // l'historique des mouvements brutaux survit au rechargement
+catchUpTrade();      // un stop a-t-il sauté pendant que l'app était fermée ?
 </script>
 </body>
 </html>

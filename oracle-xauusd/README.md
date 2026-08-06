@@ -98,3 +98,45 @@ avertissement quand le biais passe contre la position sans qu'un signal
 inverse soit encore donné.
 
 `AI` est renseigné dans `analyze()` juste avant `renderDecision()`.
+
+## Correctif — le flux temps réel pouvait se figer sans que rien ne le signale
+
+Version `2026.08.06-k`.
+
+`connectWS()` ne se reconnectait que sur `onclose`. Or un WebSocket peut cesser
+d'émettre **sans se fermer** : bascule wifi/4G, mise en veille de l'écran,
+coupure côté serveur. Dans ce cas :
+
+- aucune reconnexion n'était déclenchée ;
+- le prix restait figé sur la dernière valeur reçue ;
+- le voyant `● temps réel` continuait de clignoter, puisqu'il n'était écrit
+  que dans `onmessage` — il indiquait donc « direct » sur un prix mort ;
+- surtout, `journalTick()` et `trackTrade()` ne tournent que sur les ticks :
+  **la surveillance du stop et de l'objectif s'arrêtait complètement**, sans
+  aucune alerte.
+
+Ajouts :
+
+- chien de garde toutes les 3 s ; le voyant dit la vérité (`temps réel` ≤ 15 s,
+  `dernier prix il y a N s` ≤ 60 s, `⚠️ flux figé` au-delà) ;
+- reconnexion forcée au-delà de 60 s sans tick, throttlée à 20 s ;
+- bannière rouge à la coupure, bannière verte au rétablissement ;
+- `catchUpTrade()` rejoue les bougies 1 min depuis l'ouverture du trade pour
+  détecter un SL ou un TP1 touché pendant le trou, et prévient explicitement ;
+- reprise sur `visibilitychange` (retour au premier plan, cas le plus fréquent
+  sur téléphone) et sur `online` ;
+- le chat expose l'âge du dernier tick et l'âge du recalage PAXG → spot XAU,
+  avec le rappel que le prix affiché est un proxy, pas le flux du broker.
+
+## Ajout — analyse des mouvements brutaux
+
+`explainSpike()` se déclenche sur tout mouvement dépassant 0,7 × ATR en une
+minute et croise six familles de causes : statistique économique programmée,
+ouverture de session, volume de la bougie contre la moyenne des 20 précédentes,
+niveau traversé (S/R, POC, pivots, VWAP), balayage de liquidité récent, niveau
+de tension du radar risk-off. Chaque cause est assortie de ce qu'elle implique
+pour le trade en cours.
+
+Les mouvements sont horodatés, conservés (20 derniers, `localStorage`) et
+affichés dans la carte « ⚡ Mouvements brutaux ». Le chat répond à
+« pourquoi ça a bougé ? » et « tu es bien en direct ? ».
