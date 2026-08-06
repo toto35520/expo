@@ -148,7 +148,8 @@ Non bloquantes ; à résoudre au fil des étapes suivantes.
 - **Q2** — placement du régime : l'étape 1 le situe **après** les agents, donc les agents sont
   agnostiques au régime et celui-ci conditionne scénarios et pondérations de fusion.
   L'alternative (régime en entrée des agents) est à trancher explicitement.
-- **Q3** — classes d'actifs et horizons visés : ils déterminent la structure des coûts, donc
-  le seuil d'EV, donc le taux d'abstention.
+- **Q3** — ~~classes d'actifs~~ : **résolu à l'étape 2 — XAU/USD spot.** Reste ouvert : les
+  horizons visés, qui déterminent la structure des coûts, donc le seuil d'EV, donc le taux
+  d'abstention.
 - **Q4** — mode de fonctionnement cible : alerte pour opérateur humain, ou exécution
   automatique (l'étage 10 change de nature selon la réponse).
