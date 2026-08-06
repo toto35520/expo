@@ -66,6 +66,7 @@ l'avancement de la spécification ; elles bloqueront l'implémentation. Ce fichi
 | **Q17** | Score de qualité visible en continu ou seulement en cas de dégradation ? Un indicateur permanent est ignoré au bout de quelques jours. | 🟡 | 02e §12 |
 | **Q32** | Combien de niveaux de décomposition θ, et quelles valeurs ? Paramètre le plus porteur de tout l'étage 4 : il redessine blocs d'ordres, déséquilibres et ruptures de structure. | 🟠 | 04a §9 |
 | **Q33** | Rupture **immédiate** ou **retenue** après fenêtre de maintien ? Ce sont deux signaux distincts, avec des taux de base différents ; l'arbitrage entre force du signal et coût du retard en prix d'entrée se calcule, il ne se devine pas. | 🟠 | 04b §6 |
+| **Q34** | Combien de zones de déséquilibre actives au maximum par niveau ? Sans plafond, la confluence est garantie par construction et cesse de mesurer quoi que ce soit. | 🟠 | 04c §7 |
 
 ---
 

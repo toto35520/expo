@@ -1230,3 +1230,88 @@ isolément.
 propriété mesurée partout, qui frappe notamment lors des transitions de volatilité. Test associé,
 posé tôt car il peut invalider l'étape : le BOS apporte-t-il quelque chose **conditionnellement à
 une mesure de tendance simple**, ou n'est-il qu'un habillage du momentum ?
+
+---
+
+## ADR-061 — Le déséquilibre se mesure par la densité de négociation, pas par trois bougies
+
+**Statut** : figé (étape 4.3)
+
+**Contexte.** La règle des trois bougies est un indicateur indirect du phénomène réel : une
+région traversée si vite qu'elle n'a presque pas été négociée. Elle dépend de la convention
+d'agrégation (ADR-022), elle est binaire — un chevauchement d'un pas de cotation annule le motif
+alors que la région reste tout aussi peu négociée — et elle ne dit rien de l'intensité.
+
+**Décision.** Un déséquilibre est une zone contiguë de densité anormalement basse dans le profil
+d'activité par niveau de prix construit sur la jambe d'impulsion, rapportée à ses voisines et à
+la normale conditionnelle de la session. La méthode en trois bougies est conservée comme repli et
+comme comparaison ; la sortie déclare sa méthode, et une zone détectée par repli porte une
+incertitude supérieure.
+
+**Conséquences.** La définition devient continue et indépendante des bougies. Contrainte assumée :
+elle exige l'activité par niveau de prix, donc le listé — sur le spot, seul le repli est
+calculable, ce qui mesure aussi ce que le spot perd faute de volume.
+
+---
+
+## ADR-062 — Un écart dû à une fermeture ou à un raccord n'est pas un déséquilibre
+
+**Statut** : figé (étape 4.3)
+
+**Contexte.** Les plus grands écarts de prix de l'or sont l'ouverture du dimanche, la reprise
+après coupure quotidienne et les frontières de roll. Un détecteur naïf les classe **en tête** de
+son palmarès de qualité, puisqu'ils sont les plus grands. Or un déséquilibre suppose que le
+marché **pouvait** négocier et ne l'a pas fait : quand le marché est fermé, l'absence de
+négociation n'est pas une inefficience, c'est une absence.
+
+**Décision.** Tout écart chevauchant une fermeture, une coupure ou un férié est exclu sur
+décision du calendrier (ADR-021) et non d'un seuil. Aucune zone ne franchit une frontière de
+roll ; les zones vivent sur la série brute d'un contrat unique (ADR-011) et ne sont jamais
+calculées sur une série ajustée (ADR-012).
+
+**Conséquences.** Ferme la boucle ouverte à l'étape 2.2 : les faux déséquilibres ne sont plus
+corrigés après coup, ils sont rendus impossibles par la définition. Sans calendrier, ce moteur
+produit ses signaux les plus spectaculaires et les plus faux — d'où son indisponibilité stricte
+en l'absence de calendrier.
+
+---
+
+## ADR-063 — La pénétration est continue ; les statuts et le repère à mi-zone sont des hypothèses
+
+**Statut** : figé (étape 4.3)
+
+**Contexte.** Les statuts neuf / touché / mitigé / invalidé forment un automate, mais la grandeur
+physique est la profondeur de pénétration, continue. Par ailleurs le repère à mi-zone n'est
+justifié par aucun mécanisme : c'est le milieu géométrique d'une zone définie par une convention.
+
+**Décision.** Le moteur publie la profondeur maximale atteinte et la profondeur de chaque visite ;
+les statuts sont des découpages déclarés de cette mesure, et le seuil de mitigation est un
+**paramètre calibré sur la distribution empirique des profondeurs de rebond**, non une constante
+à 50 %. `INVALIDÉ` reçoit sa définition manquante : la zone a été entièrement traversée et le
+prix a poursuivi au-delà.
+
+**Conséquences.** Le repère à mi-zone devient testable plutôt que postulé. S'il ressort de la
+mesure, il est retenu et calibré ; si la distribution est plate, il est décoratif et abandonné.
+
+---
+
+## ADR-064 — Plafond de densité des zones actives, faute de quoi la confluence est vide
+
+**Statut** : figé (étape 4.3)
+
+**Contexte.** Les zones de déséquilibre sont nombreuses. Sans expiration ni plafond, la carte s'en
+couvre, et au-delà d'une certaine densité **tout prix se trouve en confluence avec quelque
+chose**. L'attribut de confluence mesure alors la densité du détecteur, pas une coïncidence
+remarquable.
+
+**Décision.** Deux mécanismes obligatoires : une règle d'expiration calibrée — durée, distance
+parcourue en volatilité, nombre de visites — et un **plafond du nombre de zones actives par
+niveau de décomposition**, ne conservant que les meilleures selon le score de qualité. Le score
+lui-même est construit par attributs continus et découpage en quantiles (ADR-059), et retiré s'il
+ne sépare pas les comportements (ADR-027).
+
+**Conséquences.** Une confluence garantie par construction n'est pas une confirmation, c'est un
+miroir. Le plafond rend l'attribut mesurable. Constat général associé, à retenir pour la fusion :
+huit sorties du système peuvent décrire un seul événement de marché ; le décompte honnête des
+sources réellement distinctes est de l'ordre de deux ou trois, et tout nouveau moteur doit
+démontrer un apport **incrémental conditionnel**, jamais un pouvoir prédictif absolu.
