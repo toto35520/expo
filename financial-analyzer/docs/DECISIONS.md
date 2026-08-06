@@ -1235,7 +1235,12 @@ une mesure de tendance simple**, ou n'est-il qu'un habillage du momentum ?
 
 ## ADR-061 — Le déséquilibre se mesure par la densité de négociation, pas par trois bougies
 
-**Statut** : figé (étape 4.3)
+**Statut** : ⚠️ **remplacé par l'ADR-065** (spécification détaillée de l'étape 4.3)
+
+> Cette décision faisait de la densité la définition principale et des trois bougies un repli.
+> La spécification détaillée retient une position plus juste : **deux objets de première classe**
+> coexistent, `ICT_FVG` et `EXECUTION_VOID`, dont le recouvrement est une grandeur mesurée. Le
+> constat sur la dépendance aux bougies reste valable et est repris par l'ADR-066.
 
 **Contexte.** La règle des trois bougies est un indicateur indirect du phénomène réel : une
 région traversée si vite qu'elle n'a presque pas été négociée. Elle dépend de la convention
@@ -1278,7 +1283,11 @@ en l'absence de calendrier.
 
 ## ADR-063 — La pénétration est continue ; les statuts et le repère à mi-zone sont des hypothèses
 
-**Statut** : figé (étape 4.3)
+**Statut** : ⚠️ **partiellement remplacé par l'ADR-068 et l'ADR-073**
+
+> Le principe — pénétration continue, statuts déclarés, repère à mi-zone à tester — est conservé
+> et précisé par la spécification détaillée. L'ADR-068 sépare remplissage, mitigation et
+> invalidation ; l'ADR-073 corrige la mise en œuvre en statut multi-axes.
 
 **Contexte.** Les statuts neuf / touché / mitigé / invalidé forment un automate, mais la grandeur
 physique est la profondeur de pénétration, continue. Par ailleurs le repère à mi-zone n'est
@@ -1315,3 +1324,214 @@ miroir. Le plafond rend l'attribut mesurable. Constat général associé, à ret
 huit sorties du système peuvent décrire un seul événement de marché ; le décompte honnête des
 sources réellement distinctes est de l'ordre de deux ou trois, et tout nouveau moteur doit
 démontrer un apport **incrémental conditionnel**, jamais un pouvoir prédictif absolu.
+
+---
+
+> **Note de numérotation.** La spécification détaillée de l'étape 4.3 proposait ses propres
+> décisions numérotées 061 à 068, en collision avec les ADR-061 à 064 déjà figés sur le même
+> sujet. Les numéros 065 à 072 leur sont attribués, dans l'ordre d'origine. Aucun numéro déjà
+> publié n'est réutilisé — les décisions contredites sont marquées comme remplacées, jamais
+> réécrites.
+>
+> | Numérotation d'origine | Numéro retenu |
+> | --- | --- |
+> | ADR-061 (ICT_FVG / EXECUTION_VOID) | **ADR-065** |
+> | ADR-062 (convention d'agrégation versionnée) | **ADR-066** |
+> | ADR-063 (disponibilité = clôture de la 3ᵉ bougie) | **ADR-067** |
+> | ADR-064 (remplissage / mitigation / invalidation) | **ADR-068** |
+> | ADR-065 (score appris et calibré) | **ADR-069** |
+> | ADR-066 (famille causale déplacement + BOS + FVG) | **ADR-070** |
+> | ADR-067 (témoins appariés et modèle de momentum) | **ADR-071** |
+> | ADR-068 (contacts analytiques / exécutables) | **ADR-072** |
+
+---
+
+## ADR-065 — `ICT_FVG` et `EXECUTION_VOID` sont deux objets de première classe
+
+**Statut** : figé (étape 4.3 détaillée) · remplace l'ADR-061
+
+**Contexte.** Un déséquilibre graphique et un vide d'exécution ne mesurent pas la même chose. Le
+premier dépend de la convention d'agrégation des bougies ; le second est fondé sur l'activité
+réellement observée. Traiter l'un comme le repli de l'autre, comme le faisait l'ADR-061, empêche
+de mesurer leur relation.
+
+**Décision.** Les deux objets sont détectés, stockés et évalués séparément. Ils peuvent se
+superposer mais ne sont jamais équivalents. Le recouvrement entre eux est une **grandeur
+mesurée**, dont la valeur prédictive additionnelle est à établir. L'`EXECUTION_VOID` est retenu
+sous forme d'**intensité continue** plutôt que de conjonction de trois seuils, pour les mêmes
+raisons que l'ADR-059.
+
+**Conséquences.** L'`EXECUTION_VOID` exige volume et activité par niveau de prix : il n'est
+calculable que sur le listé. Sur le spot, le recouvrement vaut `INDISPONIBLE` et jamais `0` —
+une absence de mesure n'est pas une absence de vide.
+
+---
+
+## ADR-066 — Un `ICT_FVG` est indissociable de sa convention d'agrégation versionnée
+
+**Statut** : figé (étape 4.3 détaillée)
+
+**Contexte.** Un même chemin de prix produit des motifs différents selon l'unité de temps,
+l'heure d'ancrage, le fuseau, le fournisseur, la base de prix, les ticks manquants et la méthode
+de construction des bougies. Enregistrer `timeframe = M5` ne permet ni de reproduire ni de
+comparer.
+
+**Décision.** Chaque objet porte un identifiant d'agrégation complet — type et taille de barre,
+fuseau et décalage d'ancrage, base de prix, marché, fournisseur, version de schéma. **Deux
+objets issus de conventions différentes sont deux objets différents**, même si leurs zones sont
+proches, et ne sont ni fusionnés ni comparés.
+
+**Conséquences.** Application directe des ADR-022 et ADR-036 à la structure. Rend exécutable le
+test d'acceptation « le changement d'heure ne modifie pas silencieusement les conventions ».
+
+---
+
+## ADR-067 — La disponibilité est la clôture de la troisième bougie
+
+**Statut** : figé (étape 4.3 détaillée)
+
+**Contexte.** Un graphique affiche le motif dès la formation de la bougie centrale. Le moteur ne
+peut le connaître qu'après la clôture de la troisième.
+
+**Décision.** `availability_timestamp = close_time(C_{i+1})`. Avant cet instant l'objet est
+`PROVISOIRE` et ne peut jamais servir à envoyer un ordre. `origin_timestamp` est fixé au **début
+de la bougie centrale**, sans ambiguïté, sans quoi tous les âges se décalent d'une bougie.
+
+**Conséquences.** Cas non couvert et tranché ici : l'`EXECUTION_VOID` n'a pas de troisième
+bougie. Sa disponibilité est l'instant où la traversée est achevée **et** la fenêtre de mesure de
+densité complète — strictement postérieure à la traversée, faute de quoi le vide serait détecté
+pendant sa formation.
+
+---
+
+## ADR-068 — Remplissage, mitigation et invalidation sont trois notions distinctes
+
+**Statut** : figé (étape 4.3 détaillée) · précise l'ADR-063
+
+**Contexte.** Une zone peut être entièrement remplie sans que le scénario soit invalidé — le prix
+traverse, prend la liquidité au-delà de la borne distale, réintègre, puis repart dans le sens
+initial. Inversement une zone peut n'être pas remplie et avoir perdu toute pertinence.
+
+**Décision.** Les trois notions sont mesurées séparément. La mitigation exige une **réaction
+postérieure au contact**, définie mathématiquement, et n'est attribuée qu'après coup : au moment
+du contact, le moteur ne connaît que `CANDIDATE`. Le prix de référence de la réaction est le
+**prix exécutable au contact**, et la volatilité de normalisation est celle disponible **au
+contact**, non à la création. La politique d'invalidation appartient à la stratégie.
+
+**Conséquences.** Interdit l'usage rétroactif de la confirmation comme si elle était disponible
+au premier contact (ADR-038).
+
+---
+
+## ADR-069 — Le score de qualité est appris à partir de probabilités mesurées
+
+**Statut** : figé (étape 4.3 détaillée)
+
+**Contexte.** Un barème additif aux poids choisis produit un nombre d'apparence rigoureuse sans
+contenu fréquentiel.
+
+**Décision.** Les variables brutes sont stockées d'abord ; un modèle calibré estime ensuite des
+probabilités distinctes — premier contact, rejet après contact, remplissage complet, réaction au
+CE, continuation — et des excursions attendues. Le score n'est qu'une **présentation synthétique
+de ces probabilités**.
+
+**Conséquences.** Application de l'ADR-037. Précision ajoutée : les excursions adverses et
+favorables ont des distributions asymétriques à queue épaisse, dont la moyenne est un mauvais
+résumé — publier des quantiles, pas seulement l'espérance.
+
+---
+
+## ADR-070 — Déplacement, rupture et déséquilibre forment une seule famille causale
+
+**Statut** : figé (étape 4.3 détaillée)
+
+**Contexte.** Ces trois objets peuvent provenir du même mouvement de prix. Les additionner comme
+trois preuves séparées produit un double ou triple comptage.
+
+**Décision.** Ils sont regroupés dans une famille causale unique,
+`STRUCTURAL_DISPLACEMENT_CLUSTER`, transmise telle quelle à la fusion. Une séquence structurelle
+fortement documentée n'est pas trois signaux statistiquement indépendants.
+
+**Conséquences.** Instanciation concrète de l'ADR-035 côté structure, symétrique de la famille
+microstructure. L'avertissement correspondant figure dans la sortie utilisateur.
+
+---
+
+## ADR-071 — Valeur établie contre témoins appariés et contre un modèle simple
+
+**Statut** : figé (étape 4.3 détaillée)
+
+**Contexte.** Une zone de déséquilibre est créée par un déplacement fort ; sa performance
+apparente peut provenir entièrement du momentum, de la volatilité, du régime ou de la rupture
+structurelle.
+
+**Décision.** Deux tests obligatoires. Premièrement, comparaison à des zones témoins appariées
+sur largeur, âge, session, volatilité, distance au prix, déplacement préalable et position dans
+le range — ainsi qu'aux milieux d'impulsion, VWAP, retracements standards et zones de faible
+volume. Deuxièmement, mesure de l'**apport incrémental** une fois connus momentum, volatilité,
+régime et rupture. Réponse négative hors échantillon ⇒ aucun poids autonome dans l'analyseur.
+
+**Conséquences.** Ces tests doivent être conduits **séparément pour chaque hypothèse** —
+attraction, réaction, invalidation (ADR-074) : une réponse globale négative masquerait un usage
+valable. Le budget de recherche de l'ADR-034 s'applique intégralement, la combinatoire de cette
+étape dépassant le millier de tests implicites.
+
+---
+
+## ADR-072 — Contacts analytiques et contacts exécutables sont stockés séparément
+
+**Statut** : figé (étape 4.3 détaillée)
+
+**Contexte.** Un prix médian composite peut toucher une zone alors que le prix réellement
+négociable ne la touche pas. Un élargissement brutal du spread peut créer un contact fictif.
+
+**Décision.** `analytical_touch` et `executable_touch` sont conservés séparément. Une entrée
+n'est validée que sur le prix exécutable — `ask` à l'achat, `bid` à la vente. Un contact causé
+uniquement par une anomalie de spread porte `touch_quality = SPREAD_DISTORTED` et n'est pas
+assimilé à une mitigation. La base de prix utilisée pour mesurer le remplissage est également
+déclarée : un remplissage mesuré sur le médian et une entrée validée sur l'exécutable peuvent
+différer d'un spread entier, ce qui suffit à franchir ou non le CE.
+
+**Conséquences.** Relie le moteur de structure au socle de données : la qualité du spread
+(ADR-007, ADR-009) conditionne l'interprétation des contacts.
+
+---
+
+## ADR-073 — Le statut d'une zone est un vecteur, pas un état unique
+
+**Statut** : figé (étape 4.3 détaillée)
+
+**Contexte.** La spécification détaillée établit qu'une zone peut être entièrement remplie sans
+être invalidée, et non remplie tout en ayant perdu sa pertinence. Or son énumération de statuts
+place `FULLY_FILLED`, `INVALIDATED` et `MITIGATION_CANDIDATE` dans un champ unique, donc
+mutuellement exclusifs — rendant ces deux situations inexprimables. Contradiction interne.
+
+**Décision.** Quatre axes indépendants : confirmation (`PROVISOIRE | CONFIRMÉ`), remplissage
+(`NEUF | TOUCHÉ | PARTIEL | CE_ATTEINT | COMPLET`), mitigation (`SANS_OBJET | CANDIDATE |
+CONFIRMÉE | ÉCHOUÉE`), validité (`ACTIVE | INVALIDÉE | EXPIRÉE | DONNÉES_INVALIDES`).
+
+**Conséquences.** Même correction que pour les statuts de données (ADR-024), et pour la même
+raison : des dimensions orthogonales forcées dans une énumération unique rendent inexprimables
+les états qui comptent le plus.
+
+---
+
+## ADR-074 — Détection et exécution sur des marchés différents exigent une traduction par la base
+
+**Statut** : figé (étape 4.3 détaillée)
+
+**Contexte.** Une zone détectée sur le listé et une zone utilisable sur le spot ne partagent pas
+la même échelle de prix : elles diffèrent de la base, qui évolue avec les taux et le coût de
+portage. Afficher une zone unique sous l'étiquette « GC / XAU/USD » masque un décalage
+systématique, de l'ordre de grandeur de la largeur des petites zones.
+
+**Décision.** Tout objet de structure porte son marché de détection et son marché d'exécution, la
+base au moment de la création et au moment du contact, les bornes traduites avec leur
+incertitude, et la fraîcheur de la base. Sans base fraîche, l'objet est indisponible pour l'usage
+spot.
+
+**Conséquences.** Généralise à tout l'étage 4 la mise en garde de `02b` §1. Ajoute une
+troisième hypothèse à tester au §26 de la spécification — l'**hypothèse d'invalidation** : la
+borne distale fournit-elle un meilleur emplacement de protection qu'un stop de volatilité
+équivalente ? Elle peut être vraie même si attraction et réaction sont fausses, et agit sur
+l'espérance nette par le dimensionnement plutôt que par la direction.
