@@ -214,3 +214,20 @@ frappe, guerre, sanctions, blocus, escalade…) pour compter comme chaud.
 
 Mesuré sur le flux réel : **11 titres « chauds » avant, 4 après** — les quatre
 restants portant tous sur l'Iran, l'Ukraine ou une offensive russe.
+
+## Réglage — seuil de confluence exigé
+
+Version `2026.08.06-o`.
+
+Sur les 14 contrôles avant entrée, 12 faisaient déjà barrage (7 durs, 5 souples) ;
+« trade jouable avec ton capital » et « marchés liés à l'or » restent
+consultatifs sur décision de l'utilisateur.
+
+La confluence, elle, ne bloquait rien : un feu vert pouvait sortir à 2/13.
+`CONF_MIN` (constante en tête de `confluence()`) fixe désormais le minimum
+requis, réglé à **9/13** — « haut vol uniquement ».
+
+Sous ce seuil, `decideTrade()` renvoie une attente marquée `qualite: true` :
+distincte d'un blocage de sécurité, mais tout aussi ferme côté rendu — aucun
+setup armé, aucun bouton d'entrée, et un encart ambre indiquant combien de
+figures manquent. Le seuil se change en modifiant le seul chiffre `CONF_MIN`.

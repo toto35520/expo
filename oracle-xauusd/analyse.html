@@ -251,7 +251,7 @@
   </div>
 </div>
 
-<footer>Outil d'analyse — aucune exécution d'ordre. Ceci n'est pas un conseil financier. · <b>version 2026.08.06-n</b></footer>
+<footer>Outil d'analyse — aucune exécution d'ordre. Ceci n'est pas un conseil financier. · <b>version 2026.08.06-o</b></footer>
 
 <script>
 "use strict";
@@ -1146,6 +1146,9 @@ function crossMarket() {
    Les contrôles de sécurité disent si le trade est AUTORISÉ. Ceux-ci disent
    s'il est BON : chaque figure du graphique va-t-elle dans le sens du trade ?
    Ils ne bloquent pas — ils mesurent la qualité, élément par élément. */
+/* Minimum de figures devant aller dans le sens pour qu'un trade soit déclenché.
+   9 = « haut vol uniquement » (très sélectif) · 6 = qualité correcte · 0 = affichage seul. */
+const CONF_MIN = 9;
 function confluence(dirUp, vwapNow) {
   if (!D) return null;
   const p = D.price, a = D.atrv || 1, dirn = dirUp ? 1 : -1;
@@ -1295,8 +1298,8 @@ function decideTrade(v) {
   /* hard = blocage de SÉCURITÉ : tant qu'il tient, aucun setup ne peut être armé.
      Sans ce drapeau, la carte proposait un trade prêt à cliquer juste sous
      « journée terminée après 2 stops » ou « NFP dans 20 min ». */
-  const wait = (whyShort, whyLong, etaMin, etaWhen, condition, hard = false) => ({
-    ...base, action: "WAIT", whyShort, whyLong, condition, hard,
+  const wait = (whyShort, whyLong, etaMin, etaWhen, condition, hard = false, qualite = false) => ({
+    ...base, action: "WAIT", whyShort, whyLong, condition, hard, qualite,
     etaMin, etaTxt: fmtEta(etaMin) + (etaWhen ? ` (${etaWhen})` : ""),
   });
 
@@ -1398,6 +1401,16 @@ function decideTrade(v) {
       "Entrer pendant une contre-vague M5, c'est payer plus cher et encaisser du drawdown inutile dès la première minute. Quelques minutes de patience = meilleure entrée.",
       5, null,
       `${side} dès que la micro-vague M5 tourne dans le sens (bougie M5 clôturée ${v.dirUp ? "verte ou EMA9 > EMA21" : "rouge ou EMA9 < EMA21"} en M5) — je vérifie toutes les 30 s.`);
+  /* 6ter. exigence de QUALITÉ : la confluence technique doit atteindre le minimum choisi.
+     Distinct d'un blocage de sécurité — mais rien n'est armé tant qu'il n'est pas atteint. */
+  if (CF && CF.n < CONF_MIN) {
+    const absents = CF.pts.filter(x => !x.ok).map(x => x.nom.toLowerCase());
+    return wait(`confluence technique à ${CF.n}/${CF.total} — ton minimum est ${CONF_MIN}.`,
+      `Tous les contrôles de sécurité sont au vert, mais le graphique n'est pas assez d'accord avec lui-même. Il manque : ${absents.slice(0, 5).join(", ")}${absents.length > 5 ? `, et ${absents.length - 5} autre(s)` : ""}. Tu as choisi de ne prendre que les trades « haut vol » : j'attends ${CONF_MIN - CF.n} figure(s) de plus.`,
+      tfMin, null,
+      `${side} dès que ${CONF_MIN - CF.n} figure(s) supplémentaire(s) passent dans le sens — je recompte à chaque analyse (30 s).`,
+      false, true);
+  }
   /* 7. feu vert */
   return { ...base, action: side, whyLong: null,
     reasons: [
@@ -1414,7 +1427,7 @@ function renderDecision(d, setups = []) {
      Le badge, la vision, le tableau et le bouton doivent TOUS parler du MÊME trade.
      Un setup n'est armé que s'il va dans le sens de la décision (d.side) : sinon le badge
      annonçait « SELL en approche » au-dessus d'un plan BUY, et le bouton enregistrait le SELL. */
-  const armed = d.action === "WAIT" && !d.hard && setups.length && marketStatus().open
+  const armed = d.action === "WAIT" && !d.hard && !d.qualite && setups.length && marketStatus().open
     ? setups.find(s => s.side === d.side && s.ready >= 70 && (!sigLock || Date.now() - sigLock.at > SIG_LOCK_MS || s.side === sigLock.side)) || null
     : null;
   /* P = LE plan affiché : une seule vérité pour tout le panneau */
@@ -1466,20 +1479,22 @@ function renderDecision(d, setups = []) {
     : CF.n >= 6 ? { t: "CORRECTE", c: "var(--gold)" } : { t: "FAIBLE", c: "var(--down)" };
   const conflist = CF ? `
     <details class="ctrl">
-      <summary>🧱 Confluence technique — <b>${CF.n}/${CF.total}</b> figures dans le sens · qualité <b style="color:${qual.c}">${qual.t}</b></summary>
+      <summary>🧱 Confluence technique — <b>${CF.n}/${CF.total}</b> figures dans le sens · minimum exigé <b>${CONF_MIN}</b> · qualité <b style="color:${qual.c}">${qual.t}</b></summary>
       ${CF.pts.map(x => `<div class="ctrl-l">${x.ok ? "✅" : "⚪"} <b style="color:${x.ok ? "var(--txt)" : "var(--dim)"}">${x.nom}</b><br><span style="color:var(--dim);padding-left:20px">${x.txt}</span></div>`).join("")}
     </details>` : "";
 
   /* la phrase sans ambiguïté : y aller ou pas, et dans quel sens.
      Le verbe est dérivé du plan AFFICHÉ (P) — jamais stocké — pour qu'il ne
      puisse pas rester sur l'ancien sens quand un signal persistant le réécrit. */
-  const verbe = P.dirUp ? "ACHÈTE" : "VENDS";
+  const verbe = P.dirUp ? "ACHÈTE" : "VENDS", infinitif = P.dirUp ? "acheter" : "vendre";
   const qualTxt = CF ? ` · confluence ${CF.n}/${CF.total} (${qual.t})` : "";
   const verdictGo = d.action !== "WAIT" && !ko.length
     ? `<div class="go oui">✅ VAS-Y — ${verbe} MAINTENANT · les ${CK.length} contrôles sont au vert${qualTxt}</div>${CF && CF.n < 6 ? `<div class="dec-line" style="color:var(--gold);font-size:12.5px;margin-top:4px">⚠️ Rien ne bloque, mais seules ${CF.n} figures sur ${CF.total} vont dans ton sens : c'est un trade autorisé, pas un trade de qualité. Demi-lot ou passe ton tour.</div>` : ""}`
     : d.action !== "WAIT"
       ? `<div class="go non">⚠️ ${verbe} — mais ${ko.length} contrôle(s) au rouge : lis-les avant de cliquer</div>`
-      : `<div class="go non">⛔ N'ENTRE PAS ENCORE — ${ko.length} contrôle(s) au rouge${armed ? `, je te préviens dès que c'est bon pour ${verbe.toLowerCase()}` : ""}</div>`;
+      : d.qualite && CF
+        ? `<div class="go non" style="border-color:var(--gold2);color:var(--gold)">⛔ N'ENTRE PAS ENCORE — sécurité OK, mais confluence ${CF.n}/${CF.total} (il en manque ${CONF_MIN - CF.n})</div>`
+        : `<div class="go non">⛔ N'ENTRE PAS ENCORE — ${ko.length} contrôle(s) au rouge${armed ? `, je te préviens dès que c'est bon pour ${infinitif}` : ""}</div>`;
   const takeBtn = label => myTrade
     ? `<div class="dec-line" style="color:var(--dim);font-size:12.5px;margin-top:8px">Bouton désactivé : clôture d'abord ton trade en cours (« Je suis sorti ») avant d'en enregistrer un nouveau.</div>`
     : `<button class="takeBtn" onclick="takeTrade()">${label}</button>`;
@@ -1509,6 +1524,7 @@ function renderDecision(d, setups = []) {
   } else {
     el.innerHTML = `
       <div class="badge wait">⏳ N'ENTRE PAS MAINTENANT — ATTENDS</div>
+      ${d.qualite && CF ? `<div class="dec-line" style="background:rgba(240,185,11,.12);border:1px solid var(--gold2);border-radius:8px;padding:8px 10px;margin:8px 0;font-size:12.5px">🎯 <b>Filtre qualité actif</b> — les ${CK.length} contrôles de sécurité sont au vert, mais la confluence n'est qu'à <b>${CF.n}/${CF.total}</b> et ton minimum est <b>${CONF_MIN}</b>. Tu as choisi « haut vol uniquement » : je n'arme rien tant que le graphique n'est pas plus d'accord avec lui-même.</div>` : ""}
       ${d.hard ? `<div class="dec-line" style="background:rgba(239,83,80,.10);border:1px solid var(--down);border-radius:8px;padding:8px 10px;margin:8px 0;font-size:12.5px">🔒 <b>Blocage de sécurité actif</b> — tant qu'il tient, je n'arme <b>aucun</b> setup, même à 95 % prêt, et aucun bouton d'entrée ne s'affichera. Le radar plus bas reste informatif : <b>ne le trade pas</b>.</div>` : ""}
       ${openNote}
       ${vision}
@@ -2844,7 +2860,7 @@ function rConfluence() {
   const q = CF.n >= 9 ? "HAUT VOL" : CF.n >= 6 ? "CORRECTE" : "FAIBLE";
   return `Confluence technique : <b>${CF.n}/${CF.total}</b> figures vont dans le sens du trade — qualité <b>${q}</b>.<br>`
     + CF.pts.map(x => `${x.ok ? "✅" : "⚪"} <b>${x.nom}</b> — <span style="color:var(--dim)">${x.txt}</span>`).join("<br>")
-    + `<br><span style="color:var(--dim)">Ces points ne bloquent pas le trade : les 14 contrôles de sécurité s'en chargent. Eux mesurent la <b>qualité</b>. En dessous de 6/13, je te conseille le demi-lot ou rien.</span>`;
+    + `<br><span style="color:var(--dim)">Ton minimum est fixé à <b>${CONF_MIN}/${CF.total}</b> : en dessous, aucun trade n'est déclenché ni armé, même avec les 14 contrôles de sécurité au vert.${CF.n < CONF_MIN ? ` Il en manque <b>${CONF_MIN - CF.n}</b>.` : ""}</span>`;
 }
 
 /* ---- les marchés qui font bouger l'or ---- */
