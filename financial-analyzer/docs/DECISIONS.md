@@ -978,3 +978,82 @@ recharges : le niveau devient non protégé et cède fréquemment dans les insta
 d'invalidation. Avantage propre à ce moteur : il ne se déclenche que sur des exécutions réelles,
 lesquelles engagent du capital — c'est le motif le plus difficile à simuler de la famille, ce
 qui justifie un poids relatif plus élevé qu'aux signaux purement déclaratifs du carnet.
+
+---
+
+## ADR-049 — Un pic de spread est un défaut de données, jamais une classe de motif
+
+**Statut** : figé (étape 3.6)
+
+**Contexte.** Parmi les quatre cas à distinguer lors d'un balayage, trois décrivent un
+comportement de marché et le quatrième — le pic dû au spread — décrit une panne du socle : une
+cotation invalide, relevant de la divergence idiosyncratique (ADR-009), du rang quantile de
+spread (ADR-007) et du quorum (ADR-006).
+
+**Décision.** Le pic de spread ne figure pas parmi les classes du classifieur. S'il parvient
+jusqu'à ce moteur, c'est le contrôle qualité qui a échoué, et l'incident est enregistré comme
+tel.
+
+**Conséquences.** Évite que le moteur apprenne à tolérer des données corrompues au lieu que le
+socle les rejette. Sans cette séparation, chaque pic de spread serait « expliqué » plutôt que
+signalé, et le défaut deviendrait invisible.
+
+---
+
+## ADR-050 — L'état du carnet avant l'événement est la seule référence discriminante
+
+**Statut** : figé (étape 3.6)
+
+**Contexte.** Après un balayage, tous les carnets paraissent minces : la liquidité a été
+consommée. Mesurer la profondeur après coup ne sépare donc pas le trou de liquidité du
+déplacement réel. Le discriminant est l'état du carnet **immédiatement avant** le premier
+événement de la séquence — carnet normalement garni puis consommé contre carnet déjà vide.
+
+**Décision.** L'état du carnet est capturé en continu de manière à être consultable *tel qu'il
+était* juste avant tout événement détecté. Sans cette référence antérieure, le moteur se déclare
+indisponible plutôt que de classer à l'aveugle.
+
+**Conséquences.** Application directe de la bitemporalité (ADR-004, ADR-008) à la microstructure,
+avec un coût de stockage à budgéter. Le discriminant principal reste l'impact par unité de
+volume : un trou de liquidité déplace beaucoup le prix pour peu de contrats échangés, là où un
+déplacement institutionnel coûte cher à produire — et c'est ce coût qui en fait un signal.
+
+---
+
+## ADR-051 — L'impulsion de nouvelle se qualifie par le calendrier puis par la simultanéité inter-marchés
+
+**Statut** : figé (étape 3.6)
+
+**Contexte.** Une publication programmée est une **lecture d'état**, pas une inférence : le
+calendrier donne l'instant. Pour une nouvelle non programmée, le meilleur discriminant est la
+simultanéité inter-marchés — une information réelle sur l'or reprice aussi le dollar, les taux
+réels et l'argent, là où un trou de liquidité ne bouge que l'or. Or les étapes 2.1 à 2.4 ne
+prévoient **aucune donnée inter-marchés**.
+
+**Décision.** Le calendrier est consulté en premier et prime sur toute classification
+statistique. Pour le cas non programmé, deux options à trancher : ajouter au socle un flux
+minimal de marchés corrélés, ou accepter que la classe reste confondue **et le déclarer dans la
+sortie** (`simultanéité_intermarchés = INDISPONIBLE`). La confusion silencieuse est exclue.
+
+**Conséquences.** Première lacune identifiée dans le socle depuis l'étape 2 : le système ne
+contient que de l'or. Question Q30 ouverte.
+
+---
+
+## ADR-052 — Nommer la cascade observable, pas l'intention supposée
+
+**Statut** : figé (étape 3.6)
+
+**Contexte.** Des ordres de protection s'accumulent au-delà des niveaux visibles ; atteints, ils
+se déclenchent mécaniquement, consomment la liquidité, poussent le prix plus loin et déclenchent
+les suivants ; la réserve épuisée, la pression disparaît d'un coup. Ce mécanisme est observable.
+Qu'un acteur l'ait délibérément provoqué ne l'est pas.
+
+**Décision.** Le motif est nommé par ce qui est observé — cascade de liquidation au-delà d'un
+niveau — et non par un mobile supposé. La sortie décrit niveau franchi, concentration de
+l'agression au-delà, brièveté de la poussée, part retracée. Aucune probabilité n'est publiée sur
+l'intention (ADR-046).
+
+**Conséquences.** Ce motif recouvre largement le climax (ADR-044), dont il est le mécanisme le
+plus fréquent : les deux détecteurs sont réconciliés plutôt que juxtaposés, pour qu'un même
+événement ne soit pas compté deux fois par la fusion (ADR-035).
