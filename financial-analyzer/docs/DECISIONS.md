@@ -896,3 +896,85 @@ ancré sur un niveau et produit une invalidation exploitable.
 
 **Conséquences.** Le dernier trait est mesurable et devient un test : la proportion de climax
 survenant juste au-delà d'un niveau visible, et l'écart d'issue entre ceux-là et les autres.
+
+---
+
+## ADR-045 — Déterminer si la quantité cachée est observable avant d'écrire un détecteur
+
+**Statut** : figé (étape 3.5)
+
+**Contexte.** Selon la classe de données, un ordre à quantité cachée relève de l'inférence ou de
+l'observation directe. Avec un carnet par ordre conservant l'identité à travers les recharges,
+le fait est lisible ; avec un carnet agrégé, il ne peut qu'être supposé. Publier une probabilité
+sur un fait directement observable est une perte d'information déguisée en prudence.
+
+**Décision.** La sémantique du protocole est vérifiée dans sa documentation officielle avant
+toute écriture de code — indicateur dédié éventuel, conservation de l'identifiant à la recharge,
+évolution de la priorité de file. Le moteur est écrit en deux couches, un noyau d'observation et
+une couche d'inférence, dont les sorties portent un mode explicite et ne se confondent pas dans
+la fusion. Le critère discriminant du mode inféré est **causal** : une quantité cachée se
+recharge parce qu'elle a été exécutée, jamais de sa propre initiative — ce qui l'écarte d'un
+algorithme de cotation, lequel annule et se repositionne spontanément.
+
+**Conséquences.** Si le mode observé est disponible, le champ de confiance disparaît. Si les
+deux modes coexistent, le mode observé fournit une **vérité terrain** permettant de mesurer le
+taux d'erreur du mode inféré — la seule occasion de ce type dans toute la famille microstructure.
+
+---
+
+## ADR-046 — Pas de probabilité sur un état latent invérifiable
+
+**Statut** : figé (étape 3.5)
+
+**Contexte.** Sans donnée révélant l'ordre, il n'existe aucune étiquette permettant de vérifier
+qu'un iceberg était présent. Une « confiance 73 % » sur cette présence est donc structurellement
+incalibrable : rien ne permettra jamais de vérifier que 73 % des cas annoncés à 73 % en
+contenaient un. Ce n'est pas un défaut de méthode mais une impossibilité.
+
+**Décision.** Le système ne publie pas de probabilité sur un état latent invérifiable. Il publie
+une probabilité sur une **conséquence observable** — ici, la probabilité que le niveau tienne à
+un horizon donné, calibrable sur les cas historiques. La description du motif est conservée,
+sans pourcentage, accompagnée d'un score sur une échelle nommée.
+
+**Conséquences.** Règle générale dépassant cette étape, et complément direct de l'ADR-037 : ce
+dernier interdit les pourcentages non calibrés, celui-ci interdit les pourcentages
+**incalibrables par nature**. Réoriente les sorties du système vers les grandeurs vérifiables.
+
+---
+
+## ADR-047 — Aucune estimation de la quantité cachée résiduelle
+
+**Statut** : figé (étape 3.5)
+
+**Contexte.** Le champ « contrats exécutés estimés » recouvre trois grandeurs de statuts
+opposés : le volume déjà exécuté au niveau (observé, exact), la taille totale de l'ordre
+(invérifiable), et la quantité restante (invérifiable, et la plus tentante puisqu'elle dirait
+quand le niveau va céder).
+
+**Décision.** Seul le volume exécuté observé depuis la détection est publié. Aucune
+extrapolation sur le résiduel caché. Si une telle extrapolation est un jour tentée, elle
+constitue un modèle à part entière avec sa calibration et son incertitude propres — jamais un
+champ d'affichage.
+
+**Conséquences.** Application de l'ADR-025 au niveau d'un agent : la couche d'analyse ne fabrique
+pas plus de nombres que la couche de données ou le modèle de langage.
+
+---
+
+## ADR-048 — L'événement exploitable est la cessation, pas la présence
+
+**Statut** : figé (étape 3.5)
+
+**Contexte.** Tant que la quantité cachée absorbe, le niveau tient et la situation est déjà
+décrite par le moteur d'absorption. L'événement qui change la situation est l'arrêt des
+recharges : le niveau devient non protégé et cède fréquemment dans les instants qui suivent.
+
+**Décision.** Le moteur est un suiveur d'état plutôt qu'un classificateur d'instant :
+`PRÉSUMÉ_ACTIF → RECHARGES_ESPACÉES → ÉPUISÉ → NIVEAU_CÉDÉ`, avec une branche
+`RETIRÉ_SANS_EXÉCUTION` qui mesure directement le taux de fausse détection. La transition
+`ÉPUISÉ` est vérifiable après coup, donc calibrable, contrairement à la présence.
+
+**Conséquences.** Même logique que l'ADR-040 : le produit principal est un niveau et sa condition
+d'invalidation. Avantage propre à ce moteur : il ne se déclenche que sur des exécutions réelles,
+lesquelles engagent du capital — c'est le motif le plus difficile à simuler de la famille, ce
+qui justifie un poids relatif plus élevé qu'aux signaux purement déclaratifs du carnet.
