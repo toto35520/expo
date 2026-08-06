@@ -80,6 +80,8 @@ l'avancement de la spécification ; elles bloqueront l'implémentation. Ce fichi
 | **Q45** | **Convention de comptage du spread** : aller-retour complet, ou rendements de mi-prix à mi-prix ? Les deux se défendent ; les mélanger fausse toute comparaison. À déclarer une fois pour tout le projet. | 🟠 | Q40 §3 |
 | **Q46** | **Bande d'avantages prédictifs plausibles**, déclarée à l'avance, nécessaire pour lire `h_min` sur la courbe `κ(h)`. La déclarer après avoir vu la courbe reviendrait à choisir la conclusion. | 🟠 | Q40 §5 |
 | **Q47** | **Fiscalité applicable** aux résultats. Hors périmètre technique, mais elle affecte l'espérance nette finale et doit venir d'une source compétente plutôt que d'une supposition. | 🟡 | Q40 §10 |
+| **Q48** | **Grille d'horizons** à figer avant lecture des résultats, et **densité de ticks** disponible à chaque horizon. Un horizon dont l'amplitude sature sur le pas de cotation mesure la discrétisation et non le marché (ADR-121). | 🔴 | Q40 phase 0 · B1 |
+| **Q49** | **Contribution cible par unité de temps** et coûts fixes journaliers (données, infrastructure, capital immobilisé) : ils déterminent le plancher de fréquence économique, donc peuvent exclure une famille avant tout test prédictif. | 🟠 | Q40 phase 0 §9 |
 
 ---
 

@@ -1,0 +1,69 @@
+# financial-analyzer
+
+Système de décision financière sur XAU/USD — spécification et outils de validation.
+
+Le projet est actuellement en **phase de réduction d'espace**, pas de construction de signal.
+Avant de chercher un avantage, il détermine où un avantage peut encore exister après coûts,
+latence et rareté des occurrences.
+
+## Contenu
+
+| Dossier | Rôle |
+| --- | --- |
+| `docs/` | spécification, journal de décisions (`DECISIONS.md`), registre des questions (`QUESTIONS.md`) |
+| `feasibility/` | **code exécutable** : les deux phases 0 et leur intersection |
+| `tests/` | 39 tests, un par garde-fou |
+
+## Exécuter
+
+```bash
+cd financial-analyzer
+python3 -m pytest tests/ -q       # suite de tests
+python3 -m feasibility.report     # carte de faisabilité (données synthétiques)
+```
+
+Dépendances : `numpy`, `pytest`.
+
+## Ce que produit `feasibility`
+
+```
+D_feasible = D_cost  ∩  D_latency  ∩  D_frequency
+```
+
+Trois calculs indépendants de tout motif, de toute étiquette et de tout modèle prédictif — ce qui
+leur permet de **conclure négativement avant qu'un seul signal ne soit défini**.
+
+- **coût** — `κ(h) = C_total / σ(h)`, nombre d'unités d'amplitude à capturer pour seulement
+  couvrir les frais, avec intervalle par rééchantillonnage par blocs ;
+- **latence** — part du mouvement déjà survenue au moment où l'on pourrait agir, donc borne
+  supérieure de ce que *n'importe quel* signal pourrait capturer ;
+- **fréquence** — planchers économique et statistique, dont le maximum s'impose.
+
+`ELIGIBLE_FOR_PREDICTIVE_TESTING` ne signifie **jamais** rentable : seulement qu'aucun des trois
+arguments d'exclusion ne s'applique.
+
+## Principes appliqués dans le code
+
+Le paquet applique les décisions du journal plutôt que de les rappeler :
+
+- aucun seuil par défaut — bande d'avantages plausibles, planchers de fréquence et quantiles sont
+  **exigés en entrée**, pour ne pas pouvoir être choisis après lecture des résultats ;
+- les deux méthodes de coût ne peuvent pas être mélangées : la combinaison invalide lève une
+  erreur avant tout calcul ;
+- coût et amplitude sont rééchantillonnés sur les **mêmes blocs** — ils partagent la séance ;
+- l'exclusion s'appuie sur la borne de confiance défavorable, jamais sur l'estimation ponctuelle ;
+- une dimension indéterminée n'accorde jamais l'éligibilité : l'ignorance ne vaut pas permission.
+
+## Limites
+
+Le générateur de `feasibility/synthetic.py` sert aux tests et à la démonstration. **Aucun chiffre
+qu'il produit ne décrit un marché réel** : une exécution sur ces données renseigne sur le
+générateur, pas sur l'or.
+
+Sélection adverse et impact ne sont pas estimables sans campagne d'exécution réelle ; les
+fonctions existent et retournent `nan` en son absence.
+
+## Statut
+
+Code de recherche, exécuté hors ligne sur données historiques. Il ne préjuge pas de la pile
+technique du système de production, question restée ouverte (`QUESTIONS.md`, Q1).

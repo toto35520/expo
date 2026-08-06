@@ -2222,3 +2222,184 @@ exécutés à celui qu'aurait produit une exécution garantie au même prix. Ell
 **Conséquences.** Un backtest supposant une exécution à cours limité systématique est optimiste,
 et l'ampleur du biais est exactement ce terme. Renforce le traitement de la non-exécution en
 observation censurée (ADR-103) plutôt qu'en absence neutre.
+
+---
+
+## ADR-109 — Le coût minimal utile est une surface déclarée par cellule
+
+**Statut** : figé (Q40 phase 0) · confirme et précise l'ADR-105
+
+**Décision.** `δ_MEU` est défini par horizon, type d'ordre, session, taille et régime. Aucun
+verdict global ne peut masquer cette dépendance : chaque gate déclare la cellule ou le domaine
+sur lequel il conclut.
+
+**Conséquences.** Une même famille de moteurs peut être exclue sur une cellule et éligible sur une
+autre. C'est un résultat, pas une incohérence.
+
+---
+
+## ADR-110 — Deux méthodes de coût, jamais mélangées
+
+**Statut** : figé (Q40 phase 0)
+
+**Décision.** Soit l'implementation shortfall observé, soit la décomposition modélisée. Une
+estimation ne combine jamais les deux. L'interdiction est appliquée par le constructeur de
+conventions : une combinaison invalide échoue avant tout calcul.
+
+**Conséquences.** Le respect de la règle cesse de dépendre de la discipline de l'auteur.
+
+---
+
+## ADR-111 — L'implementation shortfall contient déjà latence et glissement
+
+**Statut** : figé (Q40 phase 0) · confirme l'ADR-106
+
+**Décision.** En méthode observée, ni spread, ni glissement, ni coût de latence ne sont ajoutés :
+ils sont contenus dans l'écart entre le prix de remplissage et le prix de référence de décision.
+
+**Conséquences.** Les additionner gonflerait le seuil et rejetterait des effets réels.
+
+---
+
+## ADR-112 — Conventions de prix, de spread et d'aller-retour déclarées et versionnées
+
+**Statut** : figé (Q40 phase 0)
+
+**Décision.** Toute expérience porte `reference_price_convention`, `cost_measurement_method`,
+`round_trip_definition` et `spread_counting_convention`, avec une empreinte stable. Ne jamais
+comparer une performance de mi-prix à mi-prix avec un coût déjà mesuré depuis le mi-prix, ni un
+aller simple avec un coût aller-retour.
+
+**Conséquences.** Deux résultats de conventions différentes deviennent identifiables comme
+incomparables, au lieu de l'être silencieusement.
+
+---
+
+## ADR-113 — Le coût passif inclut exécution partielle, non-exécution et sélection adverse
+
+**Statut** : figé (Q40 phase 0) · précise l'ADR-108
+
+**Décision.** Un ordre à cours limité n'est jamais considéré comme gratuit au motif qu'il n'a pas
+payé le spread de façon visible. Sont publiés : probabilité d'exécution, exécution partielle,
+délai, dérive post-exécution, taux d'annulation avant exécution, incertitude de file. Un backtest
+supposant une exécution intégrale au contact de la limite est invalide pour la mesure économique.
+
+---
+
+## ADR-114 — L'amplitude est mesurée empiriquement ; la racine du temps est un contrôle
+
+**Statut** : figé (Q40 phase 0)
+
+**Décision.** `σ(h)` est estimée par un estimateur robuste sur les déplacements observés. La loi
+en `√h` sert à vérifier l'ordre de grandeur et à repérer les anomalies, jamais à imposer une
+courbe.
+
+**Conséquences.** Mesuré à l'exécution : sur des données comportant des sauts, le rapport
+observé/attendu atteint **2,6**. Extrapoler l'amplitude longue depuis un horizon court par la
+racine du temps l'aurait sous-estimée d'un facteur deux et demi.
+
+---
+
+## ADR-115 — La bande d'avantages plausibles est préenregistrée
+
+**Statut** : figé (Q40 phase 0)
+
+**Décision.** `[a_min, a_max]` est déclarée avant tout calcul de κ, avec sa source et sa date. Le
+code exige les deux : une bande sans provenance est rejetée, faute de quoi rien ne distinguerait
+une bande préenregistrée d'une bande choisie après lecture de la courbe.
+
+---
+
+## ADR-116 — L'exclusion par les coûts s'appuie sur la borne inférieure de κ
+
+**Statut** : figé (Q40 phase 0)
+
+**Décision.** `COST_NON_VIABLE` exige `LCB[κ] > a_max` ; `COST_HEADROOM` exige `UCB[κ] < a_min`.
+L'incertitude joue donc contre la conclusion tranchée dans les deux sens. L'horizon minimal de
+coût exige un franchissement **persistant** sur plusieurs horizons consécutifs.
+
+**Conséquences.** Mesuré à l'exécution : sur le jeu de démonstration, la borne supérieure passe
+sous `a_max` sur **deux** horizons consécutifs là où la règle en exige trois — le protocole
+répond donc « aucun horizon minimal trouvé », là où une lecture ponctuelle aurait annoncé une
+valeur. La règle de persistance a joué son rôle sur le premier jeu rencontré.
+
+---
+
+## ADR-117 — Fréquence économique et fréquence statistique sont deux conditions
+
+**Statut** : figé (Q40 phase 0)
+
+**Décision.** `f_min = max(f_min_econ, f_min_stat)`. La première conditionne l'utilité, la seconde
+la validabilité. Une borne optimiste d'espérance suffit à conclure `FREQUENCY_NON_VIABLE` **avant
+tout test prédictif** si même elle exige plus d'occurrences qu'il n'en survient.
+
+---
+
+## ADR-118 — L'autorité de déclenchement vit dans l'intersection des trois domaines
+
+**Statut** : figé (Q40 phase 0)
+
+**Décision.** `D_feasible = D_cost ∩ D_latency ∩ D_frequency`. Une exclusion l'emporte sur une
+indétermination, laquelle l'emporte sur une non-exclusion : **l'ignorance ne vaut jamais
+permission**. `ELIGIBLE_FOR_PREDICTIVE_TESTING` ne signifie pas rentable.
+
+---
+
+## ADR-119 — Les ordres lointains annulés mesurent la messagerie, pas l'exécution
+
+**Statut** : figé (Q40 phase 0) · précise l'ADR-104
+
+**Décision.** Ils mesurent émission, accusé, annulation, taux de rejet et stabilité de connexion
+sur l'infrastructure de production. Ils **ne mesurent pas** la latence de remplissage, la
+priorité de file, le glissement réel, l'impact, la recotation ni la sélection adverse. Ils sont
+valides pour une partie du chemin de Q19, jamais comme substitut à une campagne d'exécution.
+
+---
+
+## ADR-120 — Jeu réservé du modèle de coûts : période contiguë postérieure
+
+**Statut** : figé (Q40 phase 0) · confirme l'ADR-098
+
+**Décision.** Contigu, postérieur, séparé par un tampon couvrant la dépendance maximale du
+protocole — horizon maximal, durée de position, mémoire du modèle de coût, fenêtre de volatilité,
+fenêtre de régime, chevauchement de labels. Aucune ligne du jeu réservé ne contribue au calibrage
+de la courbe de coûts.
+
+---
+
+## ADR-121 — La densité de ticks conditionne la validité de l'amplitude
+
+**Statut** : figé (Q40 phase 0) · décision issue de l'implémentation
+
+**Contexte.** Première exécution du protocole : l'amplitude était **identique au chiffre près**
+pour des horizons de 1 s, 10 s et 60 s, à la valeur `1,4826 × pas de cotation`. La médiane des
+déplacements valait exactement un tick, parce que la série ne contenait qu'un tick toutes les
+29 secondes. κ devenait plat aux horizons courts — ce qui se serait lu comme « les coûts ne
+dominent pas davantage à 1 s qu'à 60 s », soit l'inverse du mécanisme que la phase 0 doit révéler.
+
+**Décision.** Le nombre de ticks par horizon est publié avec chaque estimation d'amplitude, et
+les horizons dont l'amplitude sature sur le pas de cotation sont écartés de l'interprétation :
+ils mesurent la discrétisation, pas le marché.
+
+**Conséquences.** S'applique aux données réelles : en creux de liquidité, un horizon de quelques
+secondes peut être exactement dans ce régime, et le verdict de coût y serait un artefact.
+
+---
+
+## ADR-122 — Une latence dépassant l'horizon compte comme consommation totale
+
+**Statut** : figé (Q40 phase 0) · décision issue de l'implémentation
+
+**Contexte.** La première version du pré-test écartait les événements où l'instant d'exécution
+possible tombait après la fin de la fenêtre d'évaluation. Ne restaient donc que les événements où
+l'on avait eu le temps d'agir — un biais de sélection sur les cas favorables. Effet mesuré : à
+l'horizon d'une seconde avec une latence p95 de deux secondes, l'échantillon se vidait et le
+verdict passait de `NON_VIABLE` à `INDETERMINATE`, transformant un résultat conclusif en absence
+de conclusion.
+
+**Décision.** Ces cas comptent comme consommation totale et résiduel nul, jamais comme exclusion
+de l'échantillon.
+
+**Conséquences.** Après correction, la part consommée à l'horizon d'une seconde passe de 18 % à
+71 % et le verdict redevient conclusif — *il n'y a littéralement plus rien à capturer au moment
+où l'on peut enfin agir*.
