@@ -280,3 +280,33 @@ sortir (40/30/20/10 %). Le suivi de trade gère les quatre paliers.
 Le helper d'origine des objectifs était déclaré après le tableau qui l'utilise —
 zone morte temporelle : `renderDecision()` levait une `ReferenceError` à chaque
 rendu de plan. Détecté en rendant la carte dans un navigateur.
+
+## Correctif — le sens affiché basculait toutes les minutes
+
+Version `2026.08.06-r`.
+
+`const dirUp = score > 0;` : dans la zone neutre le score oscille autour de zéro
+(+0,4 · −0,2 · +0,6 · −0,5…), donc le sens affiché — vision, ligne « Sens »,
+plan complet, objectifs — changeait à **chaque analyse, soit toutes les 30 s**.
+
+La protection anti-girouette existante (`sigLock`, `FLIP_CONFIRM`) ne s'applique
+qu'aux signaux émis (`rawAction !== "WAIT"`) : en zone neutre aucun signal n'est
+donné, donc rien ne stabilisait l'affichage.
+
+Trois corrections :
+
+1. **Hystérésis** (`BIAS_SEUIL = 1,2`) : le sens ne change que si le score
+   dépasse franchement le seuil dans l'autre direction ; entre les deux, le sens
+   précédent est conservé. Mesuré sur 40 analyses consécutives d'une série
+   réaliste : **17 basculements avant, 1 après** — soit un toutes les 1,2 min
+   contre un toutes les 20 min, et le seul restant correspond à une vraie
+   impulsion.
+
+2. **Source unique** : `dirSign` se calculait sur `score >= 0` pendant que
+   `dirUp` passe par l'hystérésis — `htfOk` et `microOk` auraient été évalués
+   sur l'autre sens. `dirSign` dérive désormais de `dirUp`.
+
+3. **Aveu d'indécision** : sous |score| < 2, la carte affiche en tête
+   « ⚖️ SENS NON TRANCHÉ — ne te positionne sur rien », avant tout contenu
+   directionnel, et précise que le plan montré est une projection figée et non
+   un avis. Hors zone neutre, elle indique depuis combien de temps le sens tient.

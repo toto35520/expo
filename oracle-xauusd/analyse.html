@@ -251,7 +251,7 @@
   </div>
 </div>
 
-<footer>Outil d'analyse — aucune exécution d'ordre. Ceci n'est pas un conseil financier. · <b>version 2026.08.06-q</b></footer>
+<footer>Outil d'analyse — aucune exécution d'ordre. Ceci n'est pas un conseil financier. · <b>version 2026.08.06-r</b></footer>
 
 <script>
 "use strict";
@@ -630,6 +630,12 @@ let cross = null;      // position du curseur
 let newsData = null, radarData = null, ctxFetchedAt = 0;
 let analysisSeq = 0;   // annule les narrations obsolètes
 /* anti-girouette : un ordre donné reste verrouillé 5 min ; un retournement exige 3 analyses consécutives */
+/* Hystérésis du sens affiché : dans la zone neutre le score oscille autour de zéro
+   et « dirUp = score > 0 » faisait basculer ACHAT/VENTE à chaque analyse (30 s).
+   On ne change de sens que si le score dépasse franchement le seuil dans l'autre
+   direction ; entre les deux, on garde le sens précédent. */
+const BIAS_SEUIL = 1.2;
+let biasHold = null, biasSince = 0, biasFlips = [];
 let sigLock = null, pendingFlip = null;
 const SIG_LOCK_MS = 5 * 60000, FLIP_CONFIRM = 3;
 /* signal actif : un ordre donné VIT jusqu'à stop/objectif/retournement confirmé — jamais de yo-yo après ton entrée */
@@ -885,7 +891,16 @@ async function analyze(fullNarration = true) {
   let score = mtfScore + patBias * 0.7 + proBias + (divg || 0) * 0.8;
   score = Math.max(-10, Math.min(10, score));
 
-  const dirUp = score > 0;
+  let dirUp;
+  if (biasHold == null) dirUp = score > 0;                    // première analyse
+  else if (score > BIAS_SEUIL) dirUp = true;                  // franchement haussier
+  else if (score < -BIAS_SEUIL) dirUp = false;                // franchement baissier
+  else dirUp = biasHold;                                      // zone morte : on ne tourne pas la veste
+  if (dirUp !== biasHold) { biasFlips.push(Date.now()); biasSince = Date.now(); }
+  biasHold = dirUp;
+  biasFlips = biasFlips.filter(t => Date.now() - t < 3600e3); // changements de la dernière heure
+  const biasStable = biasSince ? Math.round((Date.now() - biasSince) / 60000) : 0;
+  const sensTranche = Math.abs(score) >= 2;                   // en dessous : aucun sens fiable
   const geoPart = Math.min(2, geoScore * 0.5) + (riskOff >= 4 ? 1.2 : riskOff >= 2 ? 0.5 : 0);
   const geoConf = Math.max(-6, Math.min(6, Math.round((dirUp ? 1 : -1) * geoPart * 3)));
   const conf = Math.min(85, Math.round(52 + Math.abs(score) * 3.8 + geoConf));
@@ -912,7 +927,7 @@ async function analyze(fullNarration = true) {
   /* ---- régime de marché + confirmation H1/H4 (validé sur données réelles : M15 seul ≈ 51 % = bruit) ---- */
   const trendStrength = Math.abs(last(ind.e20) - last(ind.e50)) / atrv;
   const regime = trendStrength > 0.5 || Math.abs(mtfScore) >= 4 ? "TENDANCE" : "RANGE";
-  const dirSign = score >= 0 ? 1 : -1;
+  const dirSign = dirUp ? 1 : -1; // même source que dirUp : sinon htfOk/microOk se calculaient sur l'autre sens
   const htfOk = Math.sign(snaps.H1.score) === dirSign && Math.sign(snaps.H4.score) !== -dirSign;
   await S("🌗", `Régime : <b>${regime}</b>${regime === "RANGE" ? " — les cassures mentent souvent ici, j'exige plus de force et je privilégie les rebonds sur les bords" : " — courant net, je suis le flux"}. Confirmation H1 : ${htfOk ? "✅ alignée" : "❌ absente — aucun ordre d'entrée sans elle"}.`, htfOk ? "info" : "warn", 300);
 
@@ -925,10 +940,10 @@ async function analyze(fullNarration = true) {
   await S("⏱️", `Timing M5 : ${microOk ? "✅ micro-vague alignée — une entrée maintenant serait propre" : "❌ micro-vague contraire — si tout le reste valide, j'attendrai qu'elle tourne avant d'ordonner"}.`, microOk ? "info" : "warn", 250);
 
   /* mémoire contextuelle : chaque signal emportera son contexte pour l'apprentissage */
-  lastCtx = { regime, sess: sess.name, score: +score.toFixed(1), conf, rsi: +r.toFixed(0), riskOff };
+  lastCtx = { regime, sess: sess.name, score: +score.toFixed(1), conf, rsi: +r.toFixed(0), riskOff, biasStable, sensTranche, biasFlips: biasFlips.length };
   if (activeLessons.some(l => l.malusKey || l.bonusKey || l.slMult)) await S("🎓", `J'applique ce que mon journal m'a appris : ${activeLessons.filter(l => l.malusKey || l.slMult).length} durcissement(s), ${activeLessons.filter(l => l.bonusKey).length} point(s) fort(s) exploité(s)${slMultLearned() > 1 ? ", stops élargis de " + Math.round((slMultLearned() - 1) * 100) + " %" : ""} — détail dans la carte Auto-analyse.`, "info", 250);
 
-  let dec = decideTrade({ score, conf, dirUp, price, atrv, target, target2, invalid, res1, sup1, agree, recentPat, evt, c, rsi: r, stretch, vwapNow: vw, regime, htfOk, microOk, sessName: sess.name });
+  let dec = decideTrade({ score, conf, dirUp, price, atrv, target, target2, invalid, res1, sup1, agree, recentPat, evt, c, rsi: r, stretch, vwapNow: vw, regime, htfOk, microOk, sessName: sess.name, biasStable, sensTranche });
 
   /* ---- anti-girouette : pas de BUY→SELL en quelques secondes ---- */
   const rawAction = dec.action;
@@ -996,7 +1011,8 @@ async function analyze(fullNarration = true) {
 
   /* instantané pour le chat : il répond avec EXACTEMENT les chiffres de cette analyse */
   AI = { dec, setups, at: Date.now(), ctx: lastCtx, atrv, dirUp, htfOk, microOk, agree,
-         res1, sup1, target, target2, evt, mtfScore, snaps, vwapNow: vw, stretch, regime };
+         res1, sup1, target, target2, evt, mtfScore, snaps, vwapNow: vw, stretch, regime,
+         biasStable, sensTranche, biasFlips: biasFlips.length };
   renderDecision(dec, setups);
   if (dec.action === "WAIT")
     await S("💼", `<b>Décision : J'ATTENDS</b> — ${dec.whyShort} Prochaine fenêtre : <b>${dec.etaTxt}</b>. Plan prêt : ${dec.planShort}`, "warn", 600);
@@ -1366,7 +1382,7 @@ function decideTrade(v) {
   ];
 
   const base = { entry, sl, slLabel, tp1, tp2, tp3, tp4, rr, rr2, rr3, rr4, rrMax, potentiel, ladder: LAD,
-    slDist, lotInfo, side, planShort, dirUp: v.dirUp, conf: v.conf, score: v.score, checks, conf13: CF };
+    slDist, lotInfo, side, planShort, dirUp: v.dirUp, conf: v.conf, score: v.score, checks, conf13: CF, biasStable: v.biasStable, sensTranche: v.sensTranche };
   /* hard = blocage de SÉCURITÉ : tant qu'il tient, aucun setup ne peut être armé.
      Sans ce drapeau, la carte proposait un trade prêt à cliquer juste sous
      « journée terminée après 2 stops » ou « NFP dans 20 min ». */
@@ -1551,6 +1567,15 @@ function renderDecision(d, setups = []) {
       </tbody>
     </table>`;
   const col = P.dirUp ? "var(--up)" : "var(--down)";
+  /* Le sens n'est fiable que si le score sort de la zone neutre. En dessous, il
+     oscille autour de zéro : le dire franchement plutôt que d'afficher un plan
+     directionnel qui donne l'illusion d'un avis. */
+  const flou = d.sensTranche === false;
+  const bandeauSens = flou
+    ? `<div class="dec-line" style="background:rgba(123,132,150,.14);border:1px solid var(--dim);border-radius:9px;padding:9px 11px;margin:9px 0;font-size:13px">⚖️ <b>SENS NON TRANCHÉ — ne te positionne sur rien.</b><br><span style="color:var(--dim)">Le score est trop près de zéro : le marché n'a choisi aucune direction. Le plan ci-dessous montre à quoi ressemblerait un trade <b>si</b> le sens se confirmait — ce n'est pas un avis. Je le fige pour qu'il arrête de changer, mais tant que ce message est là, il n'y a rien à prendre.</span></div>`
+    : d.biasStable != null
+      ? `<div class="dec-line" style="color:var(--dim);font-size:12.5px">🧭 Sens <b style="color:${col}">${P.dirUp ? "haussier" : "baissier"}</b> stable depuis <b>${d.biasStable} min</b> — je ne change de sens que si le score dépasse franchement le seuil dans l'autre direction.</div>`
+      : "";
   const vision = `<div class="dec-line" style="font-size:14px;margin-bottom:4px">🔮 <b>Ce que je vois venir :</b> <b style="color:${col}">${P.dirUp ? "HAUSSE" : "BAISSE"}</b> vers <b>${fmt(P.tp1)} $</b> puis ${fmt(P.tp2)} $ — confiance <b>${d.conf} %</b>${d.conf < 60 ? " (trop faible : je n'ordonne aucune entrée sous 60 %)" : ""}.</div>`;
   /* ---- un seul trade à la fois : si une position est déjà ouverte, ce panneau n'est qu'une préparation ---- */
   const openNote = myTrade
@@ -1597,6 +1622,7 @@ function renderDecision(d, setups = []) {
     el.innerHTML = `
       <div class="badge ${d.action === "BUY" ? "buy" : "sell"}">${d.sticky ? (d.action === "BUY" ? "🟢 SIGNAL ACHAT (BUY) ACTIF — je le suis avec toi" : "🔴 SIGNAL VENTE (SELL) ACTIF — je le suis avec toi") : (d.action === "BUY" ? "🟢 VAS-Y — ACHÈTE MAINTENANT (BUY)" : "🔴 VAS-Y — VENDS MAINTENANT (SELL)")}</div>
       ${openNote}
+      ${bandeauSens}
       ${vision}
       ${d.reasons.map(r => `<div class="dec-line">✔️ ${r}</div>`).join("")}
       ${plan}${lotRow}
@@ -1607,6 +1633,7 @@ function renderDecision(d, setups = []) {
     el.innerHTML = `
       <div class="badge arm">🟠 PRÉPARE-TOI À ${armed.side === "BUY" ? "ACHETER (BUY)" : "VENDRE (SELL)"} — ${armed.ready} % prêt</div>
       ${openNote}
+      ${bandeauSens}
       ${vision}
       <div class="dec-line"><b class="k">Setup</b> ${armed.type} — ${armed.note}</div>
       <div class="dec-line"><b class="k">Déclencheur</b> <b>${fmt(armed.trigger)} $</b> (le prix en est à ${fmt(armed.dist)} $) · estimation ${fmtEta(armed.etaMin)} — je re-vérifie toutes les 30 s, le badge passe en ${armed.side} si ça se confirme.</div>
@@ -1620,6 +1647,7 @@ function renderDecision(d, setups = []) {
       ${d.qualite && CF ? `<div class="dec-line" style="background:rgba(240,185,11,.12);border:1px solid var(--gold2);border-radius:8px;padding:8px 10px;margin:8px 0;font-size:12.5px">🎯 <b>Filtre qualité actif</b> — sécurité au vert, mais ${CF.assez ? `la qualité n'est qu'à <b>${CF.pct} %</b> (minimum ${CONF_MIN_PCT} %) : <b>${CF.n} figure(s) pour, ${CF.contre} contre</b>` : `seules <b>${CF.exprimes} figures sur ${CF.total}</b> se prononcent — pas assez de matière pour juger`}.</div>` : ""}
       ${d.hard ? `<div class="dec-line" style="background:rgba(239,83,80,.10);border:1px solid var(--down);border-radius:8px;padding:8px 10px;margin:8px 0;font-size:12.5px">🔒 <b>Blocage de sécurité actif</b> — tant qu'il tient, je n'arme <b>aucun</b> setup, même à 95 % prêt, et aucun bouton d'entrée ne s'affichera. Le radar plus bas reste informatif : <b>ne le trade pas</b>.</div>` : ""}
       ${openNote}
+      ${bandeauSens}
       ${vision}
       <div class="dec-line"><b class="k">Pourquoi</b> ${d.whyShort}</div>
       <div class="dec-line" style="color:var(--dim);font-size:12.5px">${d.whyLong}</div>
@@ -2896,7 +2924,10 @@ function rTendance() {
   const s = AI.snaps || {}, c = AI.ctx || {};
   const l = x => x == null ? "—" : x >= 2 ? "🟢 haussier" : x <= -2 ? "🔴 baissier" : "⚪ neutre";
   const one = (n, x) => `${n} ${l(x && x.score)} (${x && x.score != null ? (x.score >= 0 ? "+" : "") + x.score.toFixed(1) : "—"})`;
-  return `${one("M15", s.M15)} · ${one("H1", s.H1)} · ${one("H4", s.H4)}<br>
+  const stab = c.sensTranche === false
+    ? `⚖️ <b>Sens non tranché</b> — le score (${c.score >= 0 ? "+" : ""}${c.score}) est trop près de zéro. Je fige l'affichage pour qu'il arrête de basculer, mais il n'y a rien à prendre.<br>`
+    : `🧭 Sens <b>${AI.dirUp ? "haussier" : "baissier"}</b> stable depuis <b>${c.biasStable} min</b>${c.biasFlips > 2 ? ` (${c.biasFlips} changements dans la dernière heure — marché indécis)` : ""}.<br>`;
+  return stab + `${one("M15", s.M15)} · ${one("H1", s.H1)} · ${one("H4", s.H4)}<br>
     Régime <b>${c.regime}</b> · RSI <b>${c.rsi}</b>${c.rsi >= 70 ? " (suracheté — n'achète surtout pas ici)" : c.rsi <= 30 ? " (survendu — ne vends surtout pas ici)" : ""} · session ${c.sess}.<br>
     ${AI.agree ? "✅ Les 3 horizons sont alignés — c'est la meilleure configuration." : "⚠️ Les horizons divergent : c'est là que naissent les faux départs."}`;
 }
@@ -3014,6 +3045,7 @@ function repondre(q) {
   if (hit(t, "niveau", "support", "resistance", "objectif", "cible", "poc", "vwap", "fibo")) return rNiveaux();
   if (hit(t, "pourquoi", "explique", "comment tu", "sur quoi")) return rPourquoi();
   if (hit(t, "entrer", "rentrer", "j entre", "acheter", "vendre", "buy", "sell", "maintenant", "on y va", "je prends", "je peux")) return rEntrer();
+  if (hit(t, "ca change tout le temps", "ca bascule", "une fois buy", "un coup buy", "girouette", "stable", "ca arrete pas de changer", "sens")) return rTendance();
   if (hit(t, "tendance", "biais", "rsi", "indicateur", "timeframe", "mtf", "horizon", "direction", "haussier", "baissier")) return rTendance();
   if (hit(t, "news", "actu", "evenement", "calendrier", "geopo", "nfp", "fed", "cpi", "inflation")) return rNews();
   if (hit(t, "prix", "cours", "combien vaut", "ca vaut", "cote", "or est a")) return rPrix();
