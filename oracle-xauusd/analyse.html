@@ -251,7 +251,7 @@
   </div>
 </div>
 
-<footer>Outil d'analyse — aucune exécution d'ordre. Ceci n'est pas un conseil financier. · <b>version 2026.08.06-o</b></footer>
+<footer>Outil d'analyse — aucune exécution d'ordre. Ceci n'est pas un conseil financier. · <b>version 2026.08.06-q</b></footer>
 
 <script>
 "use strict";
@@ -978,7 +978,9 @@ async function analyze(fullNarration = true) {
       const slD2 = Math.abs(activeSig.entry - activeSig.sl) || 1;
       dec = { ...dec, action: activeSig.side, side: activeSig.side, dirUp: dirn > 0, sticky: true,
         entry: activeSig.entry, sl: activeSig.sl, tp1: activeSig.tp1, tp2: activeSig.tp2,
-        slDist: slD2, rr: Math.abs(activeSig.tp1 - activeSig.entry) / slD2, rr2: Math.abs(activeSig.tp2 - activeSig.entry) / slD2,
+        slDist: slD2, tp3: null, tp4: null, rr3: null, rr4: null, ladder: null, potentiel: false,
+        rr: Math.abs(activeSig.tp1 - activeSig.entry) / slD2, rr2: Math.abs(activeSig.tp2 - activeSig.entry) / slD2,
+        rrMax: Math.abs(activeSig.tp2 - activeSig.entry) / slD2,
         lotInfo: lotFor(slD2), // lot recalculé sur le SL DU SIGNAL (pas celui du plan du cycle courant)
         reasons: mktOpen ? [
           `Signal donné il y a ${age} min — <b>toujours valable</b> : ni la zone de stop (${fmt(activeSig.sl)} $) ni TP1 (${fmt(activeSig.tp1)} $) ne sont touchés`,
@@ -1146,83 +1148,142 @@ function crossMarket() {
    Les contrôles de sécurité disent si le trade est AUTORISÉ. Ceux-ci disent
    s'il est BON : chaque figure du graphique va-t-elle dans le sens du trade ?
    Ils ne bloquent pas — ils mesurent la qualité, élément par élément. */
-/* Minimum de figures devant aller dans le sens pour qu'un trade soit déclenché.
-   9 = « haut vol uniquement » (très sélectif) · 6 = qualité correcte · 0 = affichage seul. */
-const CONF_MIN = 9;
+/* Qualité exigée pour déclencher : part des figures qui se prononcent EN FAVEUR
+   du trade (pondérée). 70 = exigeant · 60 = équilibré · 50 = permissif.
+   MIN_EXPR = nombre minimum de figures qui doivent se prononcer pour que la note
+   ait un sens (sinon 1 figure pour / 0 contre donnerait 100 %). */
+const CONF_MIN_PCT = 65, MIN_EXPR = 5;
+
+/* Chaque figure vaut ce qu'elle vaut : un balayage de liquidité ou une structure
+   de marché pèsent plus qu'une position au-dessus du POC. */
 function confluence(dirUp, vwapNow) {
   if (!D) return null;
   const p = D.price, a = D.atrv || 1, dirn = dirUp ? 1 : -1;
   const proche = x => x != null && Math.abs(x - p) < 1.2 * a;
   const pts = [];
-  const add = (ok, nom, txt) => pts.push({ ok, nom, txt });
+  /* etat : 1 = va dans ton sens · -1 = va contre toi · 0 = figure absente (ne compte pas) */
+  const add = (etat, poids, nom, txt) => pts.push({ etat, poids, nom, txt });
 
-  const ob = (D.ob || []).filter(z => z.bull === dirUp && (proche(z.top) || proche(z.bot) || (p <= z.top && p >= z.bot)));
-  add(!!ob.length, "Order block", ob.length
-    ? `bloc ${dirUp ? "haussier" : "baissier"} ${fmt(ob[ob.length - 1].bot)}–${fmt(ob[ob.length - 1].top)} $ à portée — zone de chargement institutionnel`
-    : (D.ob || []).length ? "order blocks présents mais trop loin du prix" : "aucun order block dans le sens");
+  const obPour = (D.ob || []).filter(z => z.bull === dirUp && (proche(z.top) || proche(z.bot) || (p <= z.top && p >= z.bot)));
+  const obContre = (D.ob || []).filter(z => z.bull !== dirUp && (proche(z.top) || proche(z.bot) || (p <= z.top && p >= z.bot)));
+  add(obPour.length ? 1 : obContre.length ? -1 : 0, 3, "Order block",
+    obPour.length ? `bloc ${dirUp ? "haussier" : "baissier"} ${fmt(obPour[obPour.length - 1].bot)}–${fmt(obPour[obPour.length - 1].top)} $ à portée — zone de chargement institutionnel`
+    : obContre.length ? `bloc ${dirUp ? "baissier" : "haussier"} ${fmt(obContre[obContre.length - 1].bot)}–${fmt(obContre[obContre.length - 1].top)} $ juste devant — il te barre la route`
+    : "aucun order block à proximité");
 
-  const fvNear = (D.fvg || []).filter(z => z.bull === dirUp && (proche(z.top) || proche(z.bot)));
-  add(!!fvNear.length, "Déséquilibre (FVG)", fvNear.length
-    ? `FVG ${dirUp ? "haussier" : "baissier"} ${fmt(fvNear[fvNear.length - 1].bot)}–${fmt(fvNear[fvNear.length - 1].top)} $ non comblé à portée`
-    : "aucun FVG exploitable dans le sens à proximité");
+  const fvPour = (D.fvg || []).filter(z => z.bull === dirUp && (proche(z.top) || proche(z.bot)));
+  const fvContre = (D.fvg || []).filter(z => z.bull !== dirUp && (proche(z.top) || proche(z.bot)));
+  add(fvPour.length ? 1 : fvContre.length ? -1 : 0, 2.5, "Déséquilibre (FVG)",
+    fvPour.length ? `FVG ${dirUp ? "haussier" : "baissier"} ${fmt(fvPour[fvPour.length - 1].bot)}–${fmt(fvPour[fvPour.length - 1].top)} $ non comblé à portée`
+    : fvContre.length ? `FVG contraire à portée — le prix ira sans doute le combler d'abord`
+    : "aucun déséquilibre proche");
 
-  const sw = ((D.liq && D.liq.sweeps) || []).filter(x => x.dir === dirn && D.c.length - 1 - x.i <= 5);
-  add(!!sw.length, "Balayage de liquidité", sw.length
-    ? `stops ${dirUp ? "sous les plus bas" : "au-dessus des plus hauts"} ramassés à ${fmt(sw[sw.length - 1].p)} $ — les pros entrent après le balayage`
-    : "pas de chasse aux stops récente dans le sens");
+  const sws = ((D.liq && D.liq.sweeps) || []).filter(x => D.c.length - 1 - x.i <= 5);
+  const swP = sws.filter(x => x.dir === dirn), swC = sws.filter(x => x.dir === -dirn);
+  add(swP.length ? 1 : swC.length ? -1 : 0, 3, "Balayage de liquidité",
+    swP.length ? `stops ${dirUp ? "sous les plus bas" : "au-dessus des plus hauts"} ramassés à ${fmt(swP[swP.length - 1].p)} $ — les pros entrent après le balayage`
+    : swC.length ? `balayage en sens INVERSE à ${fmt(swC[swC.length - 1].p)} $ — le marché vient de piéger ton camp`
+    : "pas de chasse aux stops récente");
 
-  const tl = (D.tls || []).filter(t => t.isLow === dirUp && proche(t.now));
-  add(!!tl.length, "Trendline", tl.length
-    ? `oblique ${dirUp ? "haussière" : "baissière"} à ${tl[0].touches} touches, testée à ${fmt(tl[0].now)} $`
-    : "aucune oblique testée en ce moment");
+  const tlP = (D.tls || []).filter(t => t.isLow === dirUp && proche(t.now));
+  const tlC = (D.tls || []).filter(t => t.isLow !== dirUp && proche(t.now));
+  add(tlP.length ? 1 : tlC.length ? -1 : 0, 2, "Trendline",
+    tlP.length ? `oblique ${dirUp ? "haussière" : "baissière"} à ${tlP[0].touches} touches, testée à ${fmt(tlP[0].now)} $`
+    : tlC.length ? `oblique contraire à ${fmt(tlC[0].now)} $ — elle te bloque` : "aucune oblique testée");
 
   const gz = D.fib && D.fib.levels && D.fib.levels.find(l => l.r === 0.618);
-  add(!!(gz && D.fib.up === dirUp && proche(gz.p)), "Fibonacci 61,8 %", gz
-    ? (D.fib.up !== dirUp ? "le retracement en cours va dans l'autre sens"
-      : proche(gz.p) ? `golden zone ${fmt(gz.p)} $ — le prix y est` : `golden zone ${fmt(gz.p)} $, encore loin`)
-    : "pas de retracement exploitable");
+  add(gz && proche(gz.p) ? (D.fib.up === dirUp ? 1 : -1) : 0, 2, "Fibonacci 61,8 %",
+    !gz ? "pas de retracement exploitable"
+    : !proche(gz.p) ? `golden zone ${fmt(gz.p)} $, le prix n'y est pas`
+    : D.fib.up === dirUp ? `golden zone ${fmt(gz.p)} $ — le prix y est, dans ton sens` : `golden zone contraire ${fmt(gz.p)} $`);
 
   const st = D.st || { dir: 0, label: "indéterminée" };
-  add(st.dir === dirn, "Structure de marché", `${st.label}${st.dir === dirn ? "" : " — pas dans le sens du trade"}`);
+  add(st.dir === dirn ? 1 : st.dir === -dirn ? -1 : 0, 3, "Structure de marché",
+    `${st.label}${st.dir === 0 ? " — ni haussière ni baissière" : st.dir === dirn ? "" : " — CONTRE ton trade"}`);
 
   const e20 = last(D.ind.e20), e50 = last(D.ind.e50), e200 = last(D.ind.e200);
-  const emaOk = dirUp ? (e20 > e50 && e50 > e200) : (e20 < e50 && e50 < e200);
-  add(emaOk, "Empilement des moyennes", emaOk
-    ? `EMA 20/50/200 empilées dans le sens ${dirUp ? "haussier" : "baissier"}`
-    : `EMA non empilées (20 ${e20 > e50 ? ">" : "<"} 50 ${e50 > e200 ? ">" : "<"} 200)`);
+  const emaP = dirUp ? (e20 > e50 && e50 > e200) : (e20 < e50 && e50 < e200);
+  const emaC = dirUp ? (e20 < e50 && e50 < e200) : (e20 > e50 && e50 > e200);
+  add(emaP ? 1 : emaC ? -1 : 0, 2.5, "Empilement des moyennes",
+    emaP ? `EMA 20/50/200 empilées dans ton sens` : emaC ? `EMA empilées à CONTRESENS` : "EMA entremêlées — aucune tendance nette");
 
-  const vwOk = vwapNow == null ? false : (dirUp ? p > vwapNow : p < vwapNow);
-  add(vwOk, "Position vs VWAP", vwapNow == null ? "VWAP indisponible"
-    : `prix ${p > vwapNow ? "au-dessus" : "en dessous"} du VWAP ${fmt(vwapNow)} $ — ${vwOk ? "les acheteurs" : "les vendeurs"} ${vwOk ? "" : "ne "}contrôlent la séance${vwOk ? "" : " dans ton sens"}`);
+  add(vwapNow == null ? 0 : (dirUp ? p > vwapNow : p < vwapNow) ? 1 : -1, 2, "Position vs VWAP",
+    vwapNow == null ? "VWAP indisponible"
+    : `prix ${p > vwapNow ? "au-dessus" : "en dessous"} du VWAP ${fmt(vwapNow)} $ — ${(dirUp ? p > vwapNow : p < vwapNow) ? "ton camp contrôle la séance" : "l'autre camp contrôle la séance"}`);
 
   const pr = D.prof;
-  const profOk = pr ? (dirUp ? p > pr.poc : p < pr.poc) : false;
-  add(profOk, "Profil de volume", pr
-    ? `prix ${p > pr.poc ? "au-dessus" : "sous"} le POC ${fmt(pr.poc)} $ (zone la plus échangée)`
-    : "profil indisponible");
+  add(!pr ? 0 : (dirUp ? p > pr.poc : p < pr.poc) ? 1 : -1, 1.5, "Profil de volume",
+    !pr ? "profil indisponible" : `prix ${p > pr.poc ? "au-dessus" : "sous"} le POC ${fmt(pr.poc)} $ (zone la plus échangée)`);
 
-  const pat = (D.patterns || []).filter(x => x.dir === dirn && D.c.length - 1 - x.i <= 3);
-  add(!!pat.length, "Figure de bougie", pat.length
-    ? `${pat[pat.length - 1].name} ${ago(D.c, pat[pat.length - 1].i)}`
-    : "aucune figure de confirmation récente");
+  const patR = (D.patterns || []).filter(x => D.c.length - 1 - x.i <= 3);
+  const patP = patR.filter(x => x.dir === dirn), patC = patR.filter(x => x.dir === -dirn);
+  add(patP.length ? 1 : patC.length ? -1 : 0, 2, "Figure de bougie",
+    patP.length ? `${patP[patP.length - 1].name} ${ago(D.c, patP[patP.length - 1].i)}`
+    : patC.length ? `${patC[patC.length - 1].name} — figure CONTRAIRE` : "aucune figure récente");
 
   const dv = detectDivergence(D.c, D.ind.rsi);
-  add(dv === dirn, "Divergence RSI", dv === 0 ? "aucune divergence détectée"
-    : dv === dirn ? `divergence ${dv > 0 ? "haussière" : "baissière"} — l'essoufflement joue pour toi`
-    : "divergence en sens CONTRAIRE — attention");
+  add(dv === dirn ? 1 : dv === -dirn ? -1 : 0, 2.5, "Divergence RSI",
+    dv === 0 ? "aucune divergence" : dv === dirn ? `divergence ${dv > 0 ? "haussière" : "baissière"} — l'essoufflement joue pour toi` : "divergence en sens CONTRAIRE");
 
-  const srAppui = (D.sr || []).filter(l => dirUp ? (l.p < p && p - l.p < 1.5 * a) : (l.p > p && l.p - p < 1.5 * a));
-  add(!!srAppui.length, dirUp ? "Support sous le prix" : "Résistance au-dessus", srAppui.length
-    ? `${dirUp ? "support" : "résistance"} ${fmt(srAppui[0].p)} $ (${srAppui[0].n} touches) pour protéger l'entrée`
-    : `aucun ${dirUp ? "support" : "résistance"} proche pour t'appuyer`);
+  const proches = (D.sr || []).filter(l => Math.abs(l.p - p) < 1.5 * a).sort((x, y) => Math.abs(x.p - p) - Math.abs(y.p - p));
+  const n0 = proches[0];
+  add(!n0 ? 0 : (dirUp ? n0.p < p : n0.p > p) ? 1 : -1, 2, dirUp ? "Niveau d'appui" : "Niveau de résistance",
+    !n0 ? "aucun niveau proche" : `${n0.p < p ? "support" : "résistance"} ${fmt(n0.p)} $ (${n0.n} touches) — ${(dirUp ? n0.p < p : n0.p > p) ? "il te protège" : "il te barre la route"}`);
 
-  const db = (D.dbls || []).filter(x => x.dir === dirn);
-  add(!!db.length, "Figure double", db.length
-    ? `${db[db.length - 1].name} ${db[db.length - 1].done ? "confirmé" : "en formation"} — ligne de cou ${fmt(db[db.length - 1].trigger)} $`
-    : "aucun double top / double bottom dans le sens");
+  const dbP = (D.dbls || []).filter(x => x.dir === dirn), dbC = (D.dbls || []).filter(x => x.dir === -dirn);
+  add(dbP.length ? 1 : dbC.length ? -1 : 0, 2, "Figure double",
+    dbP.length ? `${dbP[dbP.length - 1].name} ${dbP[dbP.length - 1].done ? "confirmé" : "en formation"} — ligne de cou ${fmt(dbP[dbP.length - 1].trigger)} $`
+    : dbC.length ? `${dbC[dbC.length - 1].name} CONTRAIRE` : "aucune figure double");
 
-  const n = pts.filter(x => x.ok).length;
-  return { pts, n, total: pts.length, pct: Math.round(n / pts.length * 100) };
+  const pour = pts.filter(x => x.etat > 0), contre = pts.filter(x => x.etat < 0);
+  const wP = pour.reduce((t, x) => t + x.poids, 0), wC = contre.reduce((t, x) => t + x.poids, 0);
+  const exprimes = pour.length + contre.length;
+  const pct = wP + wC > 0 ? Math.round(wP / (wP + wC) * 100) : null;
+  return { pts, n: pour.length, contre: contre.length, absentes: pts.length - exprimes, exprimes,
+    total: pts.length, pct, assez: exprimes >= MIN_EXPR,
+    ok: pct != null && exprimes >= MIN_EXPR && pct >= CONF_MIN_PCT };
+}
+
+/* ================= 🎯 ÉCHELLE D'OBJECTIFS =================
+   On ne fabrique PAS un R:R élevé en éloignant la cible : on va chercher les
+   niveaux qui existent vraiment devant le prix (structure, pivots, profil de
+   volume, extensions de Fibonacci, objectif mesuré des figures doubles).
+   Le R:R final est la conséquence de ces niveaux, jamais l'inverse. */
+function targetLadder(entry, sl, dirUp) {
+  if (!D) return [];
+  const dirn = dirUp ? 1 : -1, risk = Math.abs(entry - sl) || 1, a = D.atrv || 1;
+  const cand = [];
+  const push = (p, src) => { if (p != null && !isNaN(p) && (p - entry) * dirn > 0.3 * a) cand.push({ p, src }); };
+
+  for (const l of (D.sr || [])) push(l.p, `niveau ${l.n} touches`);
+  if (D.piv) for (const k of ["R2", "R1", "P", "S1", "S2"]) push(D.piv[k], `pivot ${k}`);
+  if (D.prof) { push(D.prof.poc, "POC"); push(D.prof.vah, "VAH"); push(D.prof.val, "VAL"); }
+  if (D.fib && D.fib.hi > D.fib.lo) {
+    const amp = D.fib.hi - D.fib.lo;
+    for (const r of [1.272, 1.618, 2.0, 2.618])
+      push(dirUp ? D.fib.hi + amp * (r - 1) : D.fib.lo - amp * (r - 1), `extension Fibo ${r}`);
+  }
+  for (const d of (D.dbls || [])) if (d.dir === dirn && d.at != null && d.trigger != null)
+    push(d.trigger + dirn * Math.abs(d.at - d.trigger), `objectif mesuré ${d.name}`); // hauteur de la figure reportée
+  const ext = D.c.slice(-120);
+  if (ext.length) push(dirUp ? Math.max(...ext.map(k => k.h)) : Math.min(...ext.map(k => k.l)), "extrême des 120 bougies");
+
+  cand.sort((x, y) => (x.p - y.p) * dirn);
+  const out = [];
+  for (const c of cand) if (!out.length || Math.abs(c.p - out[out.length - 1].p) >= 0.8 * a) out.push(c); // dédoublonnage
+  /* complément en multiples de R si la structure n'offre pas 4 marches */
+  for (const m of [1.5, 2.5, 4, 6]) {
+    if (out.length >= 4) break;
+    const p = entry + dirn * m * risk;
+    if (!out.some(o => Math.abs(o.p - p) < 0.8 * a)) out.push({ p, src: `${m} R (pas de niveau au-delà)` });
+  }
+  out.sort((x, y) => (x.p - y.p) * dirn);
+  /* Un objectif doit rester ATTEIGNABLE sur l'unité de temps : au-delà de 15 ATR,
+     c'est un beau chiffre sur le papier que le prix n'ira pas chercher. C'est ce
+     plafond qui empêche de fabriquer un R:R élevé en éloignant la cible. */
+  return out.map(o => ({ ...o, rr: Math.abs(o.p - entry) / risk }))
+    .filter(o => o.rr <= 10 && Math.abs(o.p - entry) <= 15 * a)
+    .slice(0, 12);
 }
 
 /* ================= moteur de décision ================= */
@@ -1245,15 +1306,25 @@ function decideTrade(v) {
   const capD = 2.5 * v.atrv; // SL jamais > 2,5 ATR — même plafond que ton bot (validé par backtest)
   if (Math.abs(entry - sl) > capD) { sl = v.dirUp ? entry - capD : entry + capD; slLabel = "plafonné à 2,5 ATR"; }
   const slDist = Math.abs(entry - sl);
-  let tp1 = v.target, tp2 = v.target2;
-  let rr = Math.abs(tp1 - entry) / slDist;
-  if (rr < 1.2) { // niveau le plus proche trop près : viser le suivant, sinon objectif en multiples de R
-    const dirn2 = v.dirUp ? 1 : -1;
-    if (Math.abs(v.target2 - entry) / slDist >= 1.2) { tp1 = v.target2; tp2 = entry + dirn2 * Math.max(Math.abs(v.target2 - entry) * 1.6, 2.5 * slDist); }
-    else { tp1 = entry + dirn2 * 1.5 * slDist; tp2 = entry + dirn2 * 2.5 * slDist; }
-    rr = Math.abs(tp1 - entry) / slDist;
-  }
-  const rr2 = Math.abs(tp2 - entry) / slDist;
+  const dirn2 = v.dirUp ? 1 : -1;
+  /* échelle complète d'objectifs réels ; TP1 = première marche qui vaut le risque (R:R ≥ 1,2) */
+  const LADall = targetLadder(entry, sl, v.dirUp);
+  const utiles = LADall.filter(o => o.rr >= 1.2);
+  /* TP1→TP3 : les trois premières marches réelles. TP4 : la marche la PLUS LOINTAINE
+     encore crédible — c'est elle qui porte les gros R:R, et la trier par proximité
+     la faisait disparaître de l'échelle. */
+  const LAD = utiles.slice(0, 3);
+  const loin = utiles.length > 3 ? utiles[utiles.length - 1] : null;
+  if (loin && (!LAD.length || Math.abs(loin.p - LAD[LAD.length - 1].p) > 0.8 * v.atrv)) LAD.push(loin);
+  const marche = i => LAD[i] ? LAD[i].p : null;
+  let tp1 = marche(0), tp2 = marche(1), tp3 = marche(2), tp4 = marche(3);
+  if (tp1 == null) { tp1 = entry + dirn2 * 1.5 * slDist; tp2 = entry + dirn2 * 2.5 * slDist; }
+  if (tp2 == null) tp2 = entry + dirn2 * Math.max(2.5 * slDist, Math.abs(tp1 - entry) * 1.6);
+  const rrOf = p => p == null ? null : Math.abs(p - entry) / slDist;
+  let rr = rrOf(tp1), rr2 = rrOf(tp2);
+  const rr3 = rrOf(tp3), rr4 = rrOf(tp4);
+  const rrMax = Math.max(rr, rr2, rr3 || 0, rr4 || 0);
+  const potentiel = rrMax >= 4; // trade à fort potentiel : une marche réelle paie 4 R ou plus
   const lotInfo = lotFor(slDist);
   const side = v.dirUp ? "BUY" : "SELL";
   const planShort = `${side} vers ${fmt(tp1)} $, stop ${fmt(sl)} $.`;
@@ -1294,7 +1365,8 @@ function decideTrade(v) {
       ko: XM ? `${XM.resume} — c'est l'inverse de ton ${side}` : "radar indisponible" },
   ];
 
-  const base = { entry, sl, slLabel, tp1, tp2, rr, rr2, slDist, lotInfo, side, planShort, dirUp: v.dirUp, conf: v.conf, score: v.score, checks, conf13: CF };
+  const base = { entry, sl, slLabel, tp1, tp2, tp3, tp4, rr, rr2, rr3, rr4, rrMax, potentiel, ladder: LAD,
+    slDist, lotInfo, side, planShort, dirUp: v.dirUp, conf: v.conf, score: v.score, checks, conf13: CF };
   /* hard = blocage de SÉCURITÉ : tant qu'il tient, aucun setup ne peut être armé.
      Sans ce drapeau, la carte proposait un trade prêt à cliquer juste sous
      « journée terminée après 2 stops » ou « NFP dans 20 min ». */
@@ -1403,12 +1475,17 @@ function decideTrade(v) {
       `${side} dès que la micro-vague M5 tourne dans le sens (bougie M5 clôturée ${v.dirUp ? "verte ou EMA9 > EMA21" : "rouge ou EMA9 < EMA21"} en M5) — je vérifie toutes les 30 s.`);
   /* 6ter. exigence de QUALITÉ : la confluence technique doit atteindre le minimum choisi.
      Distinct d'un blocage de sécurité — mais rien n'est armé tant qu'il n'est pas atteint. */
-  if (CF && CF.n < CONF_MIN) {
-    const absents = CF.pts.filter(x => !x.ok).map(x => x.nom.toLowerCase());
-    return wait(`confluence technique à ${CF.n}/${CF.total} — ton minimum est ${CONF_MIN}.`,
-      `Tous les contrôles de sécurité sont au vert, mais le graphique n'est pas assez d'accord avec lui-même. Il manque : ${absents.slice(0, 5).join(", ")}${absents.length > 5 ? `, et ${absents.length - 5} autre(s)` : ""}. Tu as choisi de ne prendre que les trades « haut vol » : j'attends ${CONF_MIN - CF.n} figure(s) de plus.`,
+  if (CF && !CF.ok) {
+    const gene = CF.pts.filter(x => x.etat < 0).map(x => x.nom.toLowerCase());
+    return wait(
+      !CF.assez
+        ? `trop peu de figures se prononcent (${CF.exprimes} sur ${CF.total}) — le graphique est trop plat pour trancher.`
+        : `qualité du trade à ${CF.pct} % — ton minimum est ${CONF_MIN_PCT} %.`,
+      !CF.assez
+        ? `Ni order block, ni déséquilibre, ni balayage, ni figure : il n'y a pas assez de matière pour juger ce trade. J'attends que le graphique dessine quelque chose plutôt que de te faire entrer à l'aveugle.`
+        : `Les contrôles de sécurité sont au vert, mais ${CF.contre} figure(s) vont CONTRE toi : ${gene.slice(0, 4).join(", ")}${gene.length > 4 ? `, et ${gene.length - 4} autre(s)` : ""}. Les figures absentes ne comptent pas — seules celles qui se prononcent sont pesées.`,
       tfMin, null,
-      `${side} dès que ${CONF_MIN - CF.n} figure(s) supplémentaire(s) passent dans le sens — je recompte à chaque analyse (30 s).`,
+      `${side} dès que la qualité repasse au-dessus de ${CONF_MIN_PCT} % — je recompte à chaque analyse (30 s).`,
       false, true);
   }
   /* 7. feu vert */
@@ -1434,17 +1511,30 @@ function renderDecision(d, setups = []) {
   let P;
   if (armed) {
     const slDist = Math.abs(armed.trigger - armed.sl);
+    const LA = targetLadder(armed.trigger, armed.sl, armed.side === "BUY").filter(o => o.rr >= 1.2);
+    const m = i => LA[i] ? LA[i].p : null;
     P = { side: armed.side, dirUp: armed.side === "BUY", entry: armed.trigger, sl: armed.sl,
-          slLabel: "invalidation du setup", slDist, tp1: armed.tp1, tp2: armed.tp2,
-          rr: Math.abs(armed.tp1 - armed.trigger) / slDist, rr2: Math.abs(armed.tp2 - armed.trigger) / slDist,
-          lotInfo: armed.lot, atTrigger: true };
+          slLabel: "invalidation du setup", slDist,
+          tp1: m(0) != null ? m(0) : armed.tp1, tp2: m(1) != null ? m(1) : armed.tp2, tp3: m(2), tp4: m(3),
+          ladder: LA, lotInfo: armed.lot, atTrigger: true };
+    for (const [k, t] of [["rr", P.tp1], ["rr2", P.tp2], ["rr3", P.tp3], ["rr4", P.tp4]])
+      P[k] = t == null ? null : Math.abs(t - armed.trigger) / slDist;
+    P.rrMax = Math.max(P.rr || 0, P.rr2 || 0, P.rr3 || 0, P.rr4 || 0);
+    P.potentiel = P.rrMax >= 4;
   } else {
     P = { side: d.side, dirUp: d.dirUp, entry: d.entry, sl: d.sl, slLabel: d.slLabel, slDist: d.slDist,
-          tp1: d.tp1, tp2: d.tp2, rr: d.rr, rr2: d.rr2, lotInfo: d.lotInfo, atTrigger: false };
+          tp1: d.tp1, tp2: d.tp2, tp3: d.tp3, tp4: d.tp4, rr: d.rr, rr2: d.rr2, rr3: d.rr3, rr4: d.rr4,
+          rrMax: d.rrMax, potentiel: d.potentiel, ladder: d.ladder, lotInfo: d.lotInfo, atTrigger: false };
   }
   // plan actif (pour le bouton « J'ai pris ce trade ») + déclencheur surveillé tick par tick
-  window._plan = { side: P.side, entry: P.entry, sl: P.sl, tp1: P.tp1, tp2: P.tp2, lot: P.lotInfo.lot };
+  window._plan = { side: P.side, entry: P.entry, sl: P.sl, tp1: P.tp1, tp2: P.tp2, tp3: P.tp3, tp4: P.tp4, lot: P.lotInfo.lot };
   armedWatch = armed ? { side: armed.side, trigger: armed.trigger } : null;
+
+  /* d'où sort chaque objectif : un niveau réel, pas un multiple inventé */
+  const srcTP = (P, i) => P.ladder && P.ladder[i] ? ` <span style="color:var(--dim);font-size:11.5px">— ${P.ladder[i].src}</span>` : "";
+  const potBadge = P.potentiel
+    ? `<div class="dec-line" style="background:rgba(240,185,11,.14);border:1px solid var(--gold);border-radius:9px;padding:8px 11px;margin-top:9px;font-size:13px">🚀 <b>Trade à fort potentiel</b> — la dernière marche paie <b>${P.rrMax.toFixed(1)} R</b>. Sécurise TP1 puis laisse courir : la moitié du gain se fait sur les deux dernières marches.</div>`
+    : "";
 
   const lotRow = P.lotInfo.tooWide
     ? `<div class="risk-warn">⚠️ <b>Stop trop large pour ton capital</b> : même 0,01 lot risquerait ${fmt(P.lotInfo.minRiskEUR)} € (> ${fmt(P.lotInfo.riskEUR)} € = 2 % de ${CAPITAL_EUR} €). Ce trade n'est pas jouable proprement — passe ton tour ou attends une entrée plus proche du stop.</div>`
@@ -1455,8 +1545,9 @@ function renderDecision(d, setups = []) {
         <tr><td>Sens</td><td><b style="color:${P.dirUp ? "var(--up)" : "var(--down)"}">${P.dirUp ? "ACHAT" : "VENTE"} (${P.side})</b></td></tr>
         <tr><td>Entrée${P.atTrigger ? " (au déclencheur)" : d.action === "WAIT" ? " (si condition remplie)" : ""}</td><td>${fmt(P.entry)} $</td></tr>
         <tr><td>Stop loss <span style="color:var(--dim)">(${P.slLabel})</span></td><td>${fmt(P.sl)} $ (${fmt(P.slDist)} $)</td></tr>
-        <tr><td>TP1 / TP2</td><td>${fmt(P.tp1)} $ / ${fmt(P.tp2)} $</td></tr>
-        <tr><td>R:R</td><td>${P.rr.toFixed(1)} / ${P.rr2.toFixed(1)}</td></tr>
+        ${[["TP1", P.tp1, P.rr, "40 %"], ["TP2", P.tp2, P.rr2, "30 %"], ["TP3", P.tp3, P.rr3, "20 %"], ["TP4", P.tp4, P.rr4, "10 %"]]
+          .filter(([, t]) => t != null)
+          .map(([n, t, r, part], i) => `<tr><td>${n} <span style="color:var(--dim)">(sortir ${part}${i === 0 ? " + stop à l'entrée" : ""})</span>${srcTP(P, i)}</td><td>${fmt(t)} $ <b style="color:${r >= 4 ? "var(--gold)" : "var(--txt)"}">${r.toFixed(1)} R</b></td></tr>`).join("")}
       </tbody>
     </table>`;
   const col = P.dirUp ? "var(--up)" : "var(--down)";
@@ -1475,25 +1566,27 @@ function renderDecision(d, setups = []) {
     </details>` : "";
   /* confluence technique : la QUALITÉ du trade, figure par figure */
   const CF = d.conf13;
-  const qual = !CF ? null : CF.n >= 9 ? { t: "HAUT VOL", c: "var(--up)" }
-    : CF.n >= 6 ? { t: "CORRECTE", c: "var(--gold)" } : { t: "FAIBLE", c: "var(--down)" };
+  const qual = !CF || CF.pct == null ? null : CF.pct >= 80 ? { t: "HAUT VOL", c: "var(--up)" }
+    : CF.pct >= CONF_MIN_PCT ? { t: "BONNE", c: "var(--up)" }
+    : CF.pct >= 50 ? { t: "MOYENNE", c: "var(--gold)" } : { t: "FAIBLE", c: "var(--down)" };
   const conflist = CF ? `
     <details class="ctrl">
-      <summary>🧱 Confluence technique — <b>${CF.n}/${CF.total}</b> figures dans le sens · minimum exigé <b>${CONF_MIN}</b> · qualité <b style="color:${qual.c}">${qual.t}</b></summary>
-      ${CF.pts.map(x => `<div class="ctrl-l">${x.ok ? "✅" : "⚪"} <b style="color:${x.ok ? "var(--txt)" : "var(--dim)"}">${x.nom}</b><br><span style="color:var(--dim);padding-left:20px">${x.txt}</span></div>`).join("")}
+      <summary>🧱 Confluence technique — qualité <b style="color:${qual ? qual.c : "var(--dim)"}">${CF.pct == null ? "—" : CF.pct + " %"}${qual ? " (" + qual.t + ")" : ""}</b> · minimum ${CONF_MIN_PCT} % · <b style="color:var(--up)">${CF.n} pour</b> / <b style="color:var(--down)">${CF.contre} contre</b> / ${CF.absentes} absente(s)</summary>
+      ${CF.pts.map(x => `<div class="ctrl-l">${x.etat > 0 ? "✅" : x.etat < 0 ? "❌" : "⚪"} <b style="color:${x.etat > 0 ? "var(--txt)" : x.etat < 0 ? "var(--down)" : "var(--dim)"}">${x.nom}</b><br><span style="color:var(--dim);padding-left:20px">${x.txt}</span></div>`).join("")}
+      <div class="ctrl-l" style="color:var(--dim);margin-top:6px">Une figure <b>absente</b> ne compte ni pour ni contre : la note ne pèse que les figures qui se prononcent.</div>
     </details>` : "";
 
   /* la phrase sans ambiguïté : y aller ou pas, et dans quel sens.
      Le verbe est dérivé du plan AFFICHÉ (P) — jamais stocké — pour qu'il ne
      puisse pas rester sur l'ancien sens quand un signal persistant le réécrit. */
   const verbe = P.dirUp ? "ACHÈTE" : "VENDS", infinitif = P.dirUp ? "acheter" : "vendre";
-  const qualTxt = CF ? ` · confluence ${CF.n}/${CF.total} (${qual.t})` : "";
+  const qualTxt = CF && CF.pct != null ? ` · qualité ${CF.pct} % (${qual.t})` : "";
   const verdictGo = d.action !== "WAIT" && !ko.length
-    ? `<div class="go oui">✅ VAS-Y — ${verbe} MAINTENANT · les ${CK.length} contrôles sont au vert${qualTxt}</div>${CF && CF.n < 6 ? `<div class="dec-line" style="color:var(--gold);font-size:12.5px;margin-top:4px">⚠️ Rien ne bloque, mais seules ${CF.n} figures sur ${CF.total} vont dans ton sens : c'est un trade autorisé, pas un trade de qualité. Demi-lot ou passe ton tour.</div>` : ""}`
+    ? `<div class="go oui">✅ VAS-Y — ${verbe} MAINTENANT · les ${CK.length} contrôles sont au vert${qualTxt}</div>${CF && CF.contre >= 3 ? `<div class="dec-line" style="color:var(--gold);font-size:12.5px;margin-top:4px">⚠️ Qualité suffisante, mais ${CF.contre} figures vont quand même contre toi : demi-lot conseillé.</div>` : ""}`
     : d.action !== "WAIT"
       ? `<div class="go non">⚠️ ${verbe} — mais ${ko.length} contrôle(s) au rouge : lis-les avant de cliquer</div>`
       : d.qualite && CF
-        ? `<div class="go non" style="border-color:var(--gold2);color:var(--gold)">⛔ N'ENTRE PAS ENCORE — sécurité OK, mais confluence ${CF.n}/${CF.total} (il en manque ${CONF_MIN - CF.n})</div>`
+        ? `<div class="go non" style="border-color:var(--gold2);color:var(--gold)">⛔ N'ENTRE PAS ENCORE — sécurité OK, mais qualité ${CF.assez ? CF.pct + " % (minimum " + CONF_MIN_PCT + " %)" : "non mesurable : " + CF.exprimes + " figures seulement"}</div>`
         : `<div class="go non">⛔ N'ENTRE PAS ENCORE — ${ko.length} contrôle(s) au rouge${armed ? `, je te préviens dès que c'est bon pour ${infinitif}` : ""}</div>`;
   const takeBtn = label => myTrade
     ? `<div class="dec-line" style="color:var(--dim);font-size:12.5px;margin-top:8px">Bouton désactivé : clôture d'abord ton trade en cours (« Je suis sorti ») avant d'en enregistrer un nouveau.</div>`
@@ -1507,7 +1600,7 @@ function renderDecision(d, setups = []) {
       ${vision}
       ${d.reasons.map(r => `<div class="dec-line">✔️ ${r}</div>`).join("")}
       ${plan}${lotRow}
-      ${verdictGo}${checklist}${conflist}
+      ${potBadge}${verdictGo}${checklist}${conflist}
       <div class="dec-line" style="color:var(--dim);font-size:12px;margin-top:6px">Valable tant que l'analyse ne change pas (réévaluation 30 s). Si le prix a déjà bougé de plus de 0,3 ATR, attends le retour.</div>
       ${takeBtn("✅ J'ai pris ce trade — suis-le pour moi")}`;
   } else if (armed) {
@@ -1519,12 +1612,12 @@ function renderDecision(d, setups = []) {
       <div class="dec-line"><b class="k">Déclencheur</b> <b>${fmt(armed.trigger)} $</b> (le prix en est à ${fmt(armed.dist)} $) · estimation ${fmtEta(armed.etaMin)} — je re-vérifie toutes les 30 s, le badge passe en ${armed.side} si ça se confirme.</div>
       <div class="dec-line"><b class="k">Pourquoi pas tout de suite</b> ${d.whyShort}</div>
       ${plan}${lotRow}
-      ${verdictGo}${checklist}${conflist}
+      ${potBadge}${verdictGo}${checklist}${conflist}
       ${takeBtn("✅ J'ai pris ce trade au déclencheur — suis-le pour moi")}`;
   } else {
     el.innerHTML = `
       <div class="badge wait">⏳ N'ENTRE PAS MAINTENANT — ATTENDS</div>
-      ${d.qualite && CF ? `<div class="dec-line" style="background:rgba(240,185,11,.12);border:1px solid var(--gold2);border-radius:8px;padding:8px 10px;margin:8px 0;font-size:12.5px">🎯 <b>Filtre qualité actif</b> — les ${CK.length} contrôles de sécurité sont au vert, mais la confluence n'est qu'à <b>${CF.n}/${CF.total}</b> et ton minimum est <b>${CONF_MIN}</b>. Tu as choisi « haut vol uniquement » : je n'arme rien tant que le graphique n'est pas plus d'accord avec lui-même.</div>` : ""}
+      ${d.qualite && CF ? `<div class="dec-line" style="background:rgba(240,185,11,.12);border:1px solid var(--gold2);border-radius:8px;padding:8px 10px;margin:8px 0;font-size:12.5px">🎯 <b>Filtre qualité actif</b> — sécurité au vert, mais ${CF.assez ? `la qualité n'est qu'à <b>${CF.pct} %</b> (minimum ${CONF_MIN_PCT} %) : <b>${CF.n} figure(s) pour, ${CF.contre} contre</b>` : `seules <b>${CF.exprimes} figures sur ${CF.total}</b> se prononcent — pas assez de matière pour juger`}.</div>` : ""}
       ${d.hard ? `<div class="dec-line" style="background:rgba(239,83,80,.10);border:1px solid var(--down);border-radius:8px;padding:8px 10px;margin:8px 0;font-size:12.5px">🔒 <b>Blocage de sécurité actif</b> — tant qu'il tient, je n'arme <b>aucun</b> setup, même à 95 % prêt, et aucun bouton d'entrée ne s'affichera. Le radar plus bas reste informatif : <b>ne le trade pas</b>.</div>` : ""}
       ${openNote}
       ${vision}
@@ -1533,7 +1626,7 @@ function renderDecision(d, setups = []) {
       <div class="dec-line"><b class="k">Dans combien de temps</b> <b>${d.etaTxt}</b> — je réanalyse toutes les 30 s, ce panneau changera de couleur dès que ce sera jouable.</div>
       <div class="dec-line"><b class="k">Condition d'entrée</b> ${d.condition}</div>
       ${plan}${lotRow}
-      ${verdictGo}${checklist}${conflist}`;
+      ${potBadge}${verdictGo}${checklist}${conflist}`;
   }
   lastAction = d.action;
 }
@@ -2361,7 +2454,7 @@ let myTrade = null;
 try { myTrade = JSON.parse(localStorage.getItem(TRADE_KEY) || "null"); } catch {}
 window.takeTrade = function () {
   const pl = window._plan; if (!pl) return;
-  myTrade = { side: pl.side, entry: D ? D.price : pl.entry, sl: pl.sl, tp1: pl.tp1, tp2: pl.tp2, lot: pl.lot || MIN_LOT, t0: Date.now(), be: false, tp1done: false, ratio: gRatio };
+  myTrade = { side: pl.side, entry: D ? D.price : pl.entry, sl: pl.sl, tp1: pl.tp1, tp2: pl.tp2, tp3: pl.tp3, tp4: pl.tp4, lot: pl.lot || MIN_LOT, t0: Date.now(), be: false, tp1done: false, ratio: gRatio };
   localStorage.setItem(TRADE_KEY, JSON.stringify(myTrade));
   journalTake(myTrade);
   renderTrade(myTrade.entry);
@@ -2438,14 +2531,20 @@ function renderTrade(p) {
   let order, oc = "";
   if (!mktOpen) { order = `🕒 <b>Marché fermé — suivi gelé.</b> Ton SL/TP réel ne peut PAS être touché : ton broker n'exécute pas. Le P&L ci-dessus est indicatif (proxy PAXG), pas ton vrai résultat. Je reprends le suivi à la réouverture.`; oc = "var(--gold)"; }
   else if ((p - slEff) * dirn <= 0) { order = myTrade.be ? `🛑 Break-even touché → <b>SORS</b> — trade protégé, zéro perte.` : `🛑 STOP touché → <b>SORS MAINTENANT</b>. C'est le système qui protège ton capital, pas un échec.`; oc = "var(--down)"; }
-  else if (myTrade.tp1done && (p - myTrade.tp2) * dirn >= 0) { order = `🏆 TP2 ATTEINT → <b>SORS TOUT</b>. Trade terminé, bravo.`; oc = "var(--up)"; }
-  else if (myTrade.tp1done) { order = `✅ TP1 atteint → <b>prends la moitié</b> et mets ton SL à l'entrée (${fmt(myTrade.entry)} $). Le reste vise TP2 ${fmt(myTrade.tp2)} $.`; oc = "var(--up)"; }
+  else if (myTrade.tp1done && myTrade.tp4 != null && (p - myTrade.tp4) * dirn >= 0) { order = `🏆 TP4 ATTEINT (${fmt(myTrade.tp4)} $) → <b>SORS TOUT</b>. Tu es allé au bout de l'échelle, bravo.`; oc = "var(--up)"; }
+  else if (myTrade.tp1done && myTrade.tp3 != null && (p - myTrade.tp3) * dirn >= 0) { order = `🏆 TP3 atteint → <b>sors encore 20 %</b> et remonte le stop sous le dernier creux. Il reste TP4 ${myTrade.tp4 != null ? fmt(myTrade.tp4) + " $" : "—"}.`; oc = "var(--up)"; }
+  else if (myTrade.tp1done && (p - myTrade.tp2) * dirn >= 0) { order = myTrade.tp3 != null ? `🏆 TP2 atteint → <b>sors 30 %</b>, garde le reste pour TP3 ${fmt(myTrade.tp3)} $ avec le stop remonté.` : `🏆 TP2 ATTEINT → <b>SORS TOUT</b>. Trade terminé, bravo.`; oc = "var(--up)"; }
+  else if (myTrade.tp1done) { order = `✅ TP1 atteint → <b>sors 40 %</b> et mets ton SL à l'entrée (${fmt(myTrade.entry)} $). Le reste vise TP2 ${fmt(myTrade.tp2)} $${myTrade.tp3 != null ? `, puis TP3 ${fmt(myTrade.tp3)} $` : ""}.`; oc = "var(--up)"; }
   else if (lastAction && lastAction !== "WAIT" && lastAction !== myTrade.side) { order = `⚠️ Le signal s'est <b>INVERSÉ</b> → sors maintenant, ne discute pas avec le marché.`; oc = "var(--down)"; }
-  else { order = `⏳ En cours — laisse travailler. Prochaine étape : TP1 à ${fmt(myTrade.tp1)} $. Ne touche à rien.`; }
+  else {
+    const suivante = [["TP1", myTrade.tp1], ["TP2", myTrade.tp2], ["TP3", myTrade.tp3], ["TP4", myTrade.tp4]]
+      .filter(([, t]) => t != null && (t - p) * dirn > 0)[0];
+    order = `⏳ En cours — laisse travailler. Prochaine étape : ${suivante ? `${suivante[0]} à ${fmt(suivante[1])} $` : "tous les objectifs sont dépassés, sécurise"}. Ne touche à rien.`;
+  }
   document.getElementById("tradeBody").innerHTML = `
     <div class="dec-line"><span class="tag ${myTrade.side === "BUY" ? "up" : "down"}">${myTrade.side}</span> entré à <b>${fmt(myTrade.entry)} $</b> · lot ${myTrade.lot.toFixed(2)}
       · P&L flottant : <b class="chg ${pnlEUR >= 0 ? "up" : "down"}">${pnlEUR >= 0 ? "+" : ""}${pnlEUR.toFixed(2)} €</b> (${prog >= 0 ? "+" : ""}${prog.toFixed(2)} R)</div>
-    <div class="dec-line" style="font-size:12.5px;color:var(--dim)">SL ${myTrade.be ? "au break-even " + fmt(myTrade.entry) : fmt(myTrade.sl)} $ · TP1 ${fmt(myTrade.tp1)} $ · TP2 ${fmt(myTrade.tp2)} $</div>
+    <div class="dec-line" style="font-size:12.5px;color:var(--dim)">SL ${myTrade.be ? "au break-even " + fmt(myTrade.entry) : fmt(myTrade.sl)} $ · ${[["TP1", myTrade.tp1], ["TP2", myTrade.tp2], ["TP3", myTrade.tp3], ["TP4", myTrade.tp4]].filter(([, t]) => t != null).map(([n, t]) => `${n} ${fmt(t)} $${(p - t) * dirn >= 0 ? " ✅" : ""}`).join(" · ")}</div>
     <div class="dec-line" style="font-weight:700${oc ? ";color:" + oc : ""}">${order}</div>
     <button onclick="exitTrade()" style="margin-top:6px;background:var(--card2);color:var(--txt);border:1px solid var(--border);border-radius:8px;padding:6px 12px;cursor:pointer">🚪 Je suis sorti</button>`;
 }
@@ -2857,10 +2956,10 @@ function rFlux() {
 function rConfluence() {
   const CF = AI && AI.dec && AI.dec.conf13;
   if (!CF) return PAS_ENCORE;
-  const q = CF.n >= 9 ? "HAUT VOL" : CF.n >= 6 ? "CORRECTE" : "FAIBLE";
-  return `Confluence technique : <b>${CF.n}/${CF.total}</b> figures vont dans le sens du trade — qualité <b>${q}</b>.<br>`
-    + CF.pts.map(x => `${x.ok ? "✅" : "⚪"} <b>${x.nom}</b> — <span style="color:var(--dim)">${x.txt}</span>`).join("<br>")
-    + `<br><span style="color:var(--dim)">Ton minimum est fixé à <b>${CONF_MIN}/${CF.total}</b> : en dessous, aucun trade n'est déclenché ni armé, même avec les 14 contrôles de sécurité au vert.${CF.n < CONF_MIN ? ` Il en manque <b>${CONF_MIN - CF.n}</b>.` : ""}</span>`;
+  const q = CF.pct == null ? "non mesurable" : CF.pct >= 80 ? "HAUT VOL" : CF.pct >= CONF_MIN_PCT ? "BONNE" : CF.pct >= 50 ? "MOYENNE" : "FAIBLE";
+  return `Qualité du trade : <b>${CF.pct == null ? "—" : CF.pct + " %"}</b> (${q}) — <b>${CF.n} figure(s) pour</b>, ${CF.contre} contre, ${CF.absentes} absente(s).<br>`
+    + CF.pts.map(x => `${x.etat > 0 ? "✅" : x.etat < 0 ? "❌" : "⚪"} <b>${x.nom}</b> — <span style="color:var(--dim)">${x.txt}</span>`).join("<br>")
+    + `<br><span style="color:var(--dim)">Minimum exigé : <b>${CONF_MIN_PCT} %</b> avec au moins ${MIN_EXPR} figures qui se prononcent. Les figures absentes ne comptent ni pour ni contre.</span>`;
 }
 
 /* ---- les marchés qui font bouger l'or ---- */
@@ -2872,6 +2971,18 @@ function rMarches() {
     + (X.manquants ? `<br><span style="color:var(--dim)">${X.manquants} marché(s) sans donnée horaire : je ne les compte pas plutôt que de deviner.</span>` : "");
 }
 
+/* ---- les objectifs et leur R:R ---- */
+function rObjectifs() {
+  const d = AI && AI.dec;
+  if (!d) return PAS_ENCORE;
+  const L = [["TP1", d.tp1, d.rr], ["TP2", d.tp2, d.rr2], ["TP3", d.tp3, d.rr3], ["TP4", d.tp4, d.rr4]].filter(x => x[1] != null);
+  let t = `Plan ${d.side} — entrée ${fmt(d.entry)} $, stop ${fmt(d.sl)} $ (risque ${fmt(d.slDist)} $).<br>`
+    + L.map(([n, p, r], i) => `🎯 <b>${n}</b> ${fmt(p)} $ — <b>${r.toFixed(1)} R</b>${d.ladder && d.ladder[i] ? ` <span style="color:var(--dim)">(${d.ladder[i].src})</span>` : ""}`).join("<br>");
+  t += `<br>${d.potentiel ? `🚀 <b>Fort potentiel : ${d.rrMax.toFixed(1)} R</b> sur la dernière marche.` : `Meilleur objectif réel : ${d.rrMax ? d.rrMax.toFixed(1) : "—"} R.`}`;
+  t += `<br><span style="color:var(--dim)">Je ne fabrique jamais un R:R en éloignant la cible : chaque marche est un niveau qui existe sur le graphique (structure, pivot, POC, extension de Fibonacci, objectif mesuré). Quand la structure n'offre rien au-delà, je le dis.</span>`;
+  return t;
+}
+
 function rAide() {
   return `Je réponds avec les chiffres de l'analyse en cours. Essaie :<br>
     • « <b>je fais quoi sur mon trade ?</b> » · « <b>je sors ?</b> »<br>
@@ -2881,6 +2992,7 @@ function rAide() {
     • « <b>où sont les niveaux ?</b> » · « <b>c'est quoi la tendance ?</b> »<br>
     • « <b>pourquoi ça a bougé ?</b> » · « <b>tu es bien en direct ?</b> »<br>
     • « <b>la confluence ?</b> » (order blocks, FVG, structure…) · « <b>les autres marchés ?</b> »<br>
+    • « <b>les objectifs ?</b> » (TP1 à TP4 et leur R:R)<br>
     • « <b>mes stats ?</b> » · « <b>des news ?</b> » · « <b>le prix ?</b> »`;
 }
 
@@ -2892,6 +3004,7 @@ function repondre(q) {
     "pourquoi cette baisse", "pourquoi cette hausse", "baisse brutale", "hausse brutale", "mouvement brutal",
     "chute", "spike", "ca s est envole", "ca a plonge", "ca a decolle", "pourquoi ca bouge autant")) return rSpike();
   if (hit(t, "direct", "temps reel", "flux", "a jour", "connexion", "tu suis", "ca marche encore", "tu es la", "fige")) return rFlux();
+  if (hit(t, "objectif", "tp1", "tp2", "tp3", "tp4", "r:r", "rr", "ratio", "potentiel", "combien je peux gagner", "gain")) return rObjectifs();
   if (hit(t, "confluence", "order block", "orderblock", "ob ", "fvg", "figures", "qualite", "tout est verifie", "tout verifie", "les controles", "checklist")) return rConfluence();
   if (hit(t, "petrole", "wti", "vix", "taux", "10 ans", "bitcoin", "dollar", "dxy", "autres marches", "marches lies", "correlation", "macro")) return rMarches();
   if (hit(t, "mon trade", "ma position", "je sors", "je sort", "sortir", "je garde", "avis", "je fais quoi", "que faire", "je coupe", "couper", "ca vaut le coup de garder")) return rTrade();
@@ -2918,7 +3031,7 @@ document.getElementById("chatSend").addEventListener("click", () => {
 document.getElementById("chatIn").addEventListener("keydown", e => {
   if (e.key === "Enter") { chatAsk(e.target.value); e.target.value = ""; }
 });
-const CHIPS = ["je fais quoi sur mon trade ?", "la confluence ?", "les autres marchés ?", "pourquoi ça a bougé ?", "je peux entrer maintenant ?", "tu es bien en direct ?", "pourquoi tu attends ?", "mon stop est bon ?", "combien je risque ?", "les niveaux ?", "mes stats ?"];
+const CHIPS = ["je fais quoi sur mon trade ?", "les objectifs ?", "la confluence ?", "les autres marchés ?", "pourquoi ça a bougé ?", "je peux entrer maintenant ?", "tu es bien en direct ?", "pourquoi tu attends ?", "mon stop est bon ?", "combien je risque ?", "les niveaux ?", "mes stats ?"];
 document.getElementById("chatChips").innerHTML = CHIPS.map(c => `<button type="button">${c}</button>`).join("");
 document.getElementById("chatChips").addEventListener("click", e => { const b = e.target.closest("button"); if (b) chatAsk(b.textContent); });
 

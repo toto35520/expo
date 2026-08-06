@@ -231,3 +231,52 @@ Sous ce seuil, `decideTrade()` renvoie une attente marquée `qualite: true` :
 distincte d'un blocage de sécurité, mais tout aussi ferme côté rendu — aucun
 setup armé, aucun bouton d'entrée, et un encart ambre indiquant combien de
 figures manquent. Le seuil se change en modifiant le seul chiffre `CONF_MIN`.
+
+## Refonte — qualité mesurée sur ce qui se prononce, et échelle d'objectifs
+
+Version `2026.08.06-q`.
+
+### La confluence comptait les absences comme des oppositions
+
+Sur les treize figures, cinq sont toujours évaluables (structure, EMA, VWAP,
+profil de volume, niveau d'appui) et huit sont événementielles — un order block,
+un balayage de liquidité ou une divergence n'existent que par intermittence.
+Exiger 9/13 revenait donc à exiger les cinq permanentes **plus** quatre des huit
+événementielles simultanément : quelques occasions par semaine au mieux.
+
+Surtout, « pas d'order block à proximité » était compté comme un point **contre**
+le trade. Une figure absente n'est pas une figure défavorable.
+
+`confluence()` distingue désormais trois états — pour, contre, absente — et
+pondère chaque figure. La note est la part **pondérée** des figures qui se
+prononcent en faveur du trade, avec un minimum de `MIN_EXPR` figures exprimées
+pour que la note ait un sens. Seuil : `CONF_MIN_PCT = 65 %`.
+
+Mesuré : marché aligné sans figure événementielle → 100 % sur 5 figures
+exprimées, le trade passe. Configuration contraire → 12 %, bloquée.
+
+### Échelle d'objectifs TP1 → TP4
+
+`targetLadder()` collecte les niveaux qui existent réellement devant le prix —
+supports/résistances pondérés par les touches, pivots journaliers, POC/VAH/VAL,
+extensions de Fibonacci 1.272 à 2.618, objectif mesuré des figures doubles,
+extrême des 120 dernières bougies — les dédoublonne à 0,8 ATR et calcule le R:R
+de chaque marche.
+
+TP1 à TP3 sont les trois premières marches au-dessus de 1,2 R ; **TP4 est la
+marche la plus lointaine encore crédible** — tri par proximité, elle
+disparaissait, alors que c'est elle qui porte les gros R:R.
+
+Deux garde-fous empêchent de fabriquer un R:R en éloignant la cible : R:R
+plafonné à 10, et distance plafonnée à 15 ATR (au-delà, le prix n'ira pas
+chercher l'objectif sur cette unité de temps). Un trade est marqué « fort
+potentiel » quand une marche réelle paie 4 R ou plus.
+
+Le tableau affiche chaque objectif avec son R:R, son origine et la part à
+sortir (40/30/20/10 %). Le suivi de trade gère les quatre paliers.
+
+### Bug corrigé : `srcTP` utilisé avant sa déclaration
+
+Le helper d'origine des objectifs était déclaré après le tableau qui l'utilise —
+zone morte temporelle : `renderDecision()` levait une `ReferenceError` à chaque
+rendu de plan. Détecté en rendant la carte dans un navigateur.
