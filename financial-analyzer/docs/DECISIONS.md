@@ -1905,3 +1905,239 @@ résultat « déséquilibre positif, pivots négatifs » n'est pas incohérent :
 dépend pas des pivots, et ce cas signifierait que les **événements de déplacement** portent une
 information que les **niveaux** ne portent pas — conclusion plausible qui réorienterait la
 pondération du système.
+
+---
+
+## ADR-093 — Effet minimal économiquement utile et puissance démontrée avant chaque gate
+
+**Statut** : figé (addendum interlude 4)
+
+**Contexte.** Un résultat non significatif peut traduire un échantillon insuffisant, une variance
+élevée, des observations dépendantes, une censure excessive, ou un effet réel inférieur à la
+résolution expérimentale — pas une absence d'effet.
+
+**Décision.** Chaque gate déclare `δ_MEU = C_total + M_sécurité`, exprimé dans l'unité économique
+finale, et démontre une puissance suffisante pour cette taille d'effet. Le regroupement par
+événement, séance, zone et événement macro est obligatoire ; la taille effective d'échantillon
+remplace le nombre de lignes ; les méthodes supposant l'indépendance sont exclues. Un rapport de
+puissance complet est publié avant le gate, et la puissance cible n'est jamais réduite après coup.
+
+**Conséquences.** Une amélioration de log-loss sans conséquence économique mesurable ne valide
+aucun moteur. Complément ajouté : `δ_MEU` s'accompagne d'un plancher de fréquence `f_min`, le
+critère portant sur l'espérance nette **par unité de temps** et non par occurrence — un effet réel
+survenant deux fois par an n'est ni exploitable ni validable. Ce plancher est calculable avant
+tout test, à partir du seul historique d'occurrences.
+
+---
+
+## ADR-094 — L'inutilité se démontre par test d'équivalence
+
+**Statut** : figé (addendum interlude 4)
+
+**Contexte.** Échouer à rejeter une hypothèse nulle ne prouve pas qu'elle est vraie.
+
+**Décision.** Conclure qu'un moteur n'apporte rien exige de démontrer que son effet est contenu
+dans `[−δ_MEU, +δ_MEU]`, l'intervalle de confiance devant y être entièrement inclus. L'échec d'un
+test de significativité ne suffit jamais.
+
+**Conséquences.** Rend le verdict `FAIL_EQUIVALENT_TO_ZERO` opposable, et interdit de le confondre
+avec un simple manque de preuve.
+
+---
+
+## ADR-095 — Six verdicts distincts, aux conséquences distinctes
+
+**Statut** : figé (addendum interlude 4)
+
+**Contexte.** Un protocole qui ne dispose que de « ça marche » et « ça ne marche pas » attribuera
+l'un des deux même quand il ne sait pas.
+
+**Décision.** `PASS_USEFUL_EFFECT`, `FAIL_EQUIVALENT_TO_ZERO`, `INDETERMINATE_UNDERPOWERED`,
+`INDETERMINATE_WIDE_INTERVAL`, `PROTOCOL_INVALID`, `HOLDOUT_COMPROMISED`. `FOUNDATION_FAILED`
+exige simultanément équivalence à zéro, contrôle négatif réussi, puissance vérifiée et intégrité
+du jeu réservé.
+
+**Conséquences.** Un `INDETERMINATE` met le poids de production à zéro **par prudence**, sans
+constituer une preuve d'absence et sans justifier la suppression de la spécification. Poids nul et
+moteur réfuté deviennent deux états différents.
+
+---
+
+## ADR-096 — Contrôle négatif temporellement et structurellement contraint
+
+**Statut** : figé (addendum interlude 4) · précise l'ADR-091
+
+**Contexte.** Une permutation totalement aléatoire détruirait l'autocorrélation, la saisonnalité,
+les grappes de volatilité et l'exposition — rendant le contrôle trop facile à passer et sans
+valeur diagnostique.
+
+**Décision.** L'étiquette négative conserve tout ce que le protocole prétend contrôler et ne
+détruit que l'information spécifique testée : permutation par blocs, réattribution de pivots entre
+instants comparables, pseudo-zones de mêmes caractéristiques. Le pipeline complet est exécuté
+jusqu'au verdict. Un effet détecté sur étiquette vide invalide le protocole et **suspend tous les
+résultats positifs obtenus avec le même pipeline**.
+
+**Conséquences.** Liste de causes à instruire en cas d'échec : fuite temporelle, appariement,
+exposition, dépendances, sélection après observation, censure, réutilisation du jeu réservé,
+coûts asymétriques, double comptage.
+
+---
+
+## ADR-097 — Audit de l'appariement : balance, support commun, sensibilité
+
+**Statut** : figé (addendum interlude 4)
+
+**Contexte.** L'échantillonneur de contrôles appariés décide de tous les résultats. Un appariement
+défaillant fabrique ou masque des effets.
+
+**Décision.** Balance mesurée sur toutes les variables d'appariement, seuils préenregistrés,
+`MATCHING_INVALID` en cas d'échec. Le modèle de résultat ne sert jamais à corriger un appariement
+défaillant. Positivité vérifiée : sans support commun, les événements sont exclus et la conclusion
+précise sa population réelle. Analyse de sensibilité estimant la force qu'aurait dû avoir un
+facteur non observé pour expliquer l'effet.
+
+**Conséquences.** Un résultat fragile à un faible biais résiduel ne reçoit pas le poids d'un
+résultat robuste.
+
+---
+
+## ADR-098 — Ouverture unique du jeu réservé et dette de holdout
+
+**Statut** : figé (addendum interlude 4) · précise l'ADR-092
+
+**Contexte.** Trois gates séquentiels consommeraient le jeu réservé avant le verdict final.
+
+**Décision.** Le jeu réservé est ouvert **une seule fois**, pour la chaîne figée entière, après gel
+des objets, population, horizons, coûts, métriques, contrôles, modèles, seuils, politique de
+censure et versions logicielles. Événement d'audit obligatoire. Toute ouverture supplémentaire
+crée une **dette de holdout** publiée, effaçable uniquement par un jeu temporel jamais observé, une
+réplication sur une autre source, une période future, ou un marché comparable défini à l'avance.
+
+**Conséquences.** Complément ajouté sur la **constitution** du jeu : un tirage aléatoire est
+insuffisant, l'autocorrélation et le chevauchement de régimes faisant fuir l'information. Le jeu
+réservé est une **période contiguë postérieure**, séparée par un intervalle tampon au moins égal à
+la plus longue dépendance modélisée. La forme la plus solide reste une période **future non encore
+survenue** au moment du gel, ce qui rend la fuite matériellement impossible.
+
+---
+
+## ADR-099 — La courbe de seuil est un objet fonctionnel unique
+
+**Statut** : figé (addendum interlude 4)
+
+**Contexte.** Analyser un balayage comme une collection de tests indépendants, puis retenir le
+meilleur seuil, recrée exactement la multiplicité que le balayage cherchait à éviter.
+
+**Décision.** Le résultat est une fonction, examinée sur sa forme, sa régularité, sa dérivée, sa
+monotonie, sa stabilité entre périodes et régimes, avec **bandes de confiance simultanées** et
+comptage des événements restants à chaque valeur. Un pic isolé absent des périodes voisines est
+présumé artefact. Le seuil opérationnel est choisi après analyse, en optimisant un critère
+préspécifié sous contraintes de puissance, d'effectif, de perte maximale, de stabilité et de
+calibration.
+
+**Conséquences.** Interdit de choisir le seuil pour maximiser un chiffre affiché.
+
+---
+
+## ADR-100 — Gate fondateur de la famille microstructure
+
+**Statut** : figé (addendum interlude 4)
+
+**Contexte.** Six moteurs partagent une source événementielle unique. Avant d'affiner leur
+sémantique, il faut savoir si leur information survit à la latence réelle de l'architecture.
+
+**Décision.** Le gate compare l'**effet résiduel après latence de bout en bout** au seuil
+économiquement utile. Verdicts : `LATENCY_VIABLE`, `LATENCY_NON_VIABLE`, `LATENCY_INDETERMINATE`,
+`LATENCY_REGIME_DEPENDENT`. Un verdict négatif ne supprime pas les moteurs : il peut conduire à
+rapprocher le calcul du marché, réduire la latence, viser un horizon plus lent, agréger le signal,
+ou le reclasser en variable de contexte.
+
+**Conséquences.** Asymétrie imposée : un résultat **positif** obtenu sur un signal grossier est
+conclusif — un raffinement ne peut qu'améliorer. Un résultat **négatif** sur signal grossier ne
+l'est pas, un signal bruité ayant une décroissance apparente raccourcie ; il rend
+`LATENCY_INDETERMINATE`, sauf s'il provient du pré-test de phase 0, qui ne dépend d'aucune
+définition de signal.
+
+---
+
+## ADR-101 — La priorité d'un test se mesure au coût de se tromper sans lui
+
+**Statut** : figé (addendum interlude 4)
+
+**Contexte.** Un gain informationnel estimé avant le test n'est qu'une croyance, et une croyance
+optimiste justifie toujours de continuer.
+
+**Décision.** La priorité est déterminée par le rapport entre le coût de l'erreur évitable et le
+coût du test. Le coût de se tromper inclut développement inutile, données, maintenance, faux
+sentiment de diversification, double comptage, risque d'exécution, capital perdu et retard sur les
+composants essentiels. Ordre retenu : Q19, Q36, Q1, contrôles négatifs, puissance, gates
+structurels, nouvelles familles.
+
+**Conséquences.** Un test peu coûteux capable de ramener une famille entière à zéro a une valeur
+élevée **parce que** son résultat est inconnu.
+
+---
+
+## ADR-102 — La latence se mesure conditionnellement aux états où le signal se déclenche
+
+**Statut** : figé (protocole Q19) · décision ajoutée
+
+**Contexte.** Les signaux de microstructure se déclenchent lors de rafales d'événements — c'est
+précisément alors que la file de décodage s'allonge, que le courtier est le plus sollicité et que
+les recotations apparaissent. La distribution marginale de la latence sous-estime donc
+systématiquement la latence subie au moment utile.
+
+**Décision.** Chaque échantillon de latence porte son état de marché concomitant — débit
+d'événements, régime de volatilité, tranche de session, fenêtre de publication, phase de rollover.
+La grandeur entrant dans le gate est le centile **conditionnel à la rafale**, non le centile
+marginal. Deux termes de latence habituellement omis sont mesurés explicitement : la
+**dissémination** entre l'appariement et la publication du flux, qui peut dominer sur un flux
+agrégé ou différé, et la **cadence d'évaluation**, qui ajoute systématiquement la moitié de sa
+période en moyenne.
+
+**Conséquences.** L'écart entre latence marginale et conditionnelle est un résultat en soi : élevé,
+il révèle une infrastructure qui se dégrade quand elle est sollicitée.
+
+---
+
+## ADR-103 — La fenêtre d'horizon rentable remplace la demi-vie
+
+**Statut** : figé (protocole Q19) · décision ajoutée
+
+**Contexte.** Une décroissance exponentielle depuis un maximum situé à l'instant du signal est une
+double hypothèse fragile. Pour beaucoup de signaux l'avantage **croît** d'abord, le mouvement
+devant se développer, ce qui rend la formule de demi-vie inapplicable.
+
+**Décision.** La grandeur publiée est l'ensemble des durées de détention pour lesquelles
+l'avantage net dépasse les coûts. Trois formes informatives : vide (non exploitable), bornée avec
+une borne inférieure strictement positive (il faut attendre après l'entrée), ou classique.
+L'avantage est **intégré sur la distribution de latence** mesurée, non évalué à un point — évaluer
+à la médiane surestime, au 99ᵉ centile sous-estime, et la queue est épaisse.
+
+**Conséquences.** Le coût de la latence est asymétrique selon le type d'ordre : au marché il se
+paie en glissement, terme certain de `C_total` ; à cours limité il se paie en non-exécution, qui
+est une **observation censurée** et non une perte. Les deux régimes sont mesurés et rapportés
+séparément.
+
+---
+
+## ADR-104 — La boucle d'ordre se mesure en production, jamais en démonstration
+
+**Statut** : figé (protocole Q19) · décision ajoutée
+
+**Contexte.** Les environnements de démonstration acheminent souvent les ordres par une
+infrastructure distincte, exécutent au prix affiché sans file réelle, ne produisent ni rejet ni
+recotation ni exécution partielle, et n'exposent à aucune sélection adverse. La latence qu'ils
+mesurent peut différer de celle de production d'un ordre de grandeur.
+
+**Décision.** Mesure en deux niveaux sur compte réel. **Niveau A** : ordres à cours limité placés
+loin du marché puis annulés immédiatement, mesurant l'aller-retour émission → accusé et
+annulation → confirmation sur l'infrastructure de production, à coût quasi nul — dans le respect
+des limites de débit et des conditions du courtier. **Niveau B** : un nombre restreint d'ordres au
+marché à taille minimale, seul moyen de mesurer l'exécution effective, le glissement et le taux de
+rejet. Le dimensionnement vise un intervalle de confiance sur un centile élevé, **par bucket
+d'état de marché** ; un bucket sous-échantillonné est déclaré tel plutôt que moyenné.
+
+**Conséquences.** Une mesure conduite en démonstration rend `PROTOCOL_INVALID`. Toute modification
+d'hébergement ou de courtier invalide les campagnes antérieures, d'où une version
+d'infrastructure attachée à chaque échantillon.
