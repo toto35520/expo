@@ -3308,7 +3308,9 @@ temps ; sa largeur peut alors légitimement décider.
 **Conséquences.** Le constructeur refuse une politique `ANYTIME_VALID` sans `ρ` déclaré, et une
 politique `FIXED_HORIZON` sans durée gelée — sans elle, l'arrêt ne peut être que dépendant des
 données. La séquence retenue est le mélange normal de Robbins au niveau des **grappes**, avec
-`σ² = 1/4` (Hoeffding). Elle est volontairement conservatrice, et son coût est asymétrique :
+`σ² = 1/4` (Hoeffding). *(L'estimande que cette formulation implique — une moyenne par grappe —
+est explicité et corrigé par l'ADR-195 : il ne coïncide pas avec la latence subie par un
+événement.)* Elle est volontairement conservatrice, et son coût est asymétrique :
 exclure demande une marge large donc peu de grappes ; conclure « non exclu » demande une marge
 fine contre `q = 0,95`, donc un échantillon bien plus grand. Cette asymétrie est cohérente avec
 le statut des deux verdicts, et `clusters_for_separation()` la rend chiffrable avant la campagne.
@@ -3322,7 +3324,13 @@ le statut des deux verdicts, et `clusters_for_separation()` la rend chiffrable a
 **Décision.** **Q61-A** est la borne oracle de la phase 0 : `U_capture(L, h, c)`, mouvement
 encore capturable après latence, construit en offrant la direction connue d'avance et la
 sortie parfaite. Si `U_capture ≤ C_floor`, la cellule est exclue — `LATENCY_COST_ORACLE_EXCLUDED`
-— sans qu'aucun moteur prédictif n'existe. **Q61-B** est le budget `L_max` d'un moteur validé,
+— sans qu'aucun moteur prédictif n'existe.
+
+> **Correction.** La séparation Q61-A / Q61-B tient. La **règle d'exclusion**, elle, était
+> fausse : `U_capture` y était lu comme un quantile (p90), et un quantile sous le plancher
+> n'établit rien sur la queue survivante — précisément là où vit une stratégie sélective.
+> L'ADR-191 retire cette lecture et l'ADR-192 la remplace par trois impossibilités.
+> `LATENCY_COST_ORACLE_EXCLUDED` n'existe plus comme verdict. **Q61-B** est le budget `L_max` d'un moteur validé,
 dérivé de `edge_j(L, h, c)`.
 
 **Conséquences.** Q61-B **ne bloque pas** le premier verdict réel. La phase 0 doit précisément
@@ -3437,3 +3445,167 @@ seulement qu'il reste physiquement et économiquement assez d'espace pour justif
 d'un signal. L'intersection publiée est
 `D_cost ∩ D_passive_latency ∩ D_capturability`, et aucun de ses trois termes ne dépend d'un
 signal.
+
+---
+
+> **Renumérotation.** Les décisions proposées ADR-189 à ADR-196 dans l'addendum « Oracle,
+> estimand séquentiel et coût plancher » entrent en collision avec ADR-189 et ADR-190, déjà
+> figées. Elles sont enregistrées sous ADR-191 à ADR-198 :
+>
+> | Proposé | Enregistré | Objet |
+> | --- | --- | --- |
+> | ADR-189 | **ADR-191** | un quantile oracle n'exclut jamais seul |
+> | ADR-190 | **ADR-192** | trois niveaux d'exclusion oracle |
+> | ADR-191 | **ADR-193** | politique de chevauchement des opportunités |
+> | ADR-192 | **ADR-194** | Q63 est une borne inférieure, pas une estimation |
+> | ADR-193 | **ADR-195** | trois estimandes nommés séparément |
+> | ADR-194 | **ADR-196** | le regroupement ne change pas l'estimande |
+> | ADR-195 | **ADR-197** | anytime-valid seulement si les hypothèses tiennent |
+> | ADR-196 | **ADR-198** | repli vers l'horizon fixe plutôt qu'une garantie invalide |
+
+---
+
+## ADR-191 — Un quantile de capturabilité oracle n'exclut jamais à lui seul
+
+**Statut** : figé et implémenté (Q61-A) · **corrige la règle d'exclusion introduite avec l'ADR-183**
+
+**Décision.** `Q₀.₉₀(Capture_oracle) ≤ C_floor` ne permet pas de conclure à l'exclusion. Elle
+permet seulement d'affirmer qu'au moins 90 % de la population étudiée ne possède pas assez de
+mouvement selon cette définition de l'oracle. Les quantiles restent publiés — p50, p75, p90,
+p95, p99 — comme **diagnostics**.
+
+**Conséquences.** Les 10 % restants peuvent contenir exactement la stratégie sélective
+recherchée. Si 90 % des situations sont impossibles mais que 10 % permettent à l'oracle de
+gagner largement après frais, un moteur qui ne trade que ces 10 % conserve de la valeur.
+Exclure sur un percentile supprimerait précisément le type de moteur que le projet cherche :
+peu de trades, mais bons. Un quantile ne produit une exclusion que rattaché explicitement à une
+exigence de fréquence — le quantile pertinent est alors lié à `1 − f_min/λ_opp`, jamais choisi
+arbitrairement.
+
+---
+
+## ADR-192 — L'exclusion oracle repose sur trois impossibilités, jamais sur un percentile
+
+**Statut** : figé et implémenté (Q61-A)
+
+**Décision.** Trois niveaux, et un surplus défini par opportunité : `S_i = G_i − C_floor`,
+`I_i = 1[S_i > δ_MEU]`.
+
+| Niveau | Condition | Verdict |
+| --- | --- | --- |
+| A — impossibilité universelle | `sup_i S_i ≤ δ_MEU` | `ORACLE_UNIVERSALLY_NON_VIABLE` |
+| B — impossibilité par fréquence | `f_oracle_rentable < f_min` | `ORACLE_FREQUENCY_NON_VIABLE` |
+| C — impossibilité économique | `V_oracle_max < J_min` | `ORACLE_ECONOMIC_CAPACITY_NON_VIABLE` |
+
+**Conséquences.** Le niveau A n'affirme jamais que le taux d'opportunités rentables est **nul** :
+avec zéro succès sur `n` tirages, la borne de Clopper-Pearson vaut `1 − α^(1/n)` et ne descend
+pas à zéro. Le niveau B utilise la borne **supérieure** du taux, de sorte que l'exclusion reste
+conservatrice. Le niveau C compare la valeur sous plafond de capacité, avec une marge de
+sécurité déclarée. `ORACLE_NOT_EXCLUDED` ne signifie jamais qu'un signal existe : seulement
+qu'il reste assez d'espace pour le chercher.
+
+---
+
+## ADR-193 — Les opportunités oracle sont soumises à une politique de chevauchement
+
+**Statut** : figé et implémenté (Q61-A)
+
+**Décision.** `OpportunitySet` déclare horizon, cooldown, concurrence maximale, contrainte de
+capital et politique de recouvrement. `DISJOINT_WINDOWS` résout exactement l'ordonnancement
+pondéré d'intervalles ; `CAPACITY_CONSTRAINED_ORACLE` retient au plus
+`concurrence × ⌊durée / (horizon + cooldown)⌋` positions.
+
+**Conséquences.** Traiter chaque tick comme une opportunité indépendante puis sommer les profits
+oracle gonflerait artificiellement `V_oracle_max` **et** `f_oracle_rentable` : un seul mouvement
+peut produire 500 horodatages et 500 fenêtres alors qu'un système réel n'aurait pris qu'une
+position. La sélection détermine **combien de tirages indépendants** le système obtient — elle
+n'écarte pas les opportunités non rentables, sans quoi « zéro rentable sur N admissibles »
+n'aurait plus de dénominateur.
+
+---
+
+## ADR-194 — Q63 est une borne inférieure du coût inévitable, par cellule et type d'ordre
+
+**Statut** : figé et implémenté (Q63)
+
+**Décision.** `C_floor` n'est ni le coût central estimé, ni le coût prudent. Pour que
+l'exclusion tienne, `C_réel ≥ C_floor` doit être défendable. Un composant estimé entre par sa
+borne inférieure. Les crédits sont **signés** : un swap ou une remise favorable rend un
+composant négatif, et le plancher retient la convention la plus favorable compatible avec la
+cellule.
+
+**Conséquences.** Le plancher dépend du type d'ordre. Pour un ordre agressif il peut inclure
+commission certaine, franchissement déjà nécessaire et observé, frais fixes et financement
+inévitable. Pour un ordre **passif**, le spread ne peut pas y entrer automatiquement — un ordre
+passif peut obtenir un prix différent du scénario agressif — et le plancher se réduit aux frais
+réellement certains. La sélection adverse appartient au coût réel mais n'entre dans le plancher
+que si une borne inférieure positive est démontrée. Transformer un crédit possible en coût
+positif pour faciliter une exclusion est interdit, et le constructeur le refuse. Les deux côtés
+de la comparaison partagent unité, taille, type d'ordre, prix de référence, aller-retour,
+horizon, séance et instrument.
+
+---
+
+## ADR-195 — Event-weighted, cluster-weighted et session-weighted sont trois estimandes
+
+**Statut** : figé et implémenté (Q59) · **corrige l'estimande implicite de l'ADR-182**
+
+**Décision.** Les trois quantités sont nommées séparément et publiées séparément. Aucune ne
+remplace silencieusement les autres.
+
+**Conséquences.** L'écart est massif, pas marginal. Deux rafales — l'une de 10 événements tous
+sous le seuil, l'autre de 1 000 événements à moitié sous le seuil — donnent 0,75 par grappe
+contre 0,505 par événement. Pour une décision opérationnelle la grandeur naturelle est
+généralement `EVENT_WEIGHTED`, conditionnée à la cellule ; mais si un moteur produit au plus une
+décision par rafale, `CLUSTER_WEIGHTED` devient plus pertinent. La phase 0 publie les deux plutôt
+que de choisir. La séquence par événement exige un plafond de taille de grappe déclaré à
+l'avance, faute de quoi la variable n'est pas bornée et la frontière ne s'applique pas.
+
+---
+
+## ADR-196 — Le regroupement traite la dépendance, il ne change pas la population cible
+
+**Statut** : figé et implémenté (Q59)
+
+**Décision.** Séparation fondamentale : `estimand ≠ méthode de variance`. Le regroupement en
+grappes sert à traiter la dépendance statistique ; il ne peut pas modifier la population étudiée
+au seul motif de rendre les observations indépendantes.
+
+**Conséquences.** La grappe reste l'unité d'**indépendance** — donc la taille d'échantillon de
+l'inférence — sans devenir pour autant l'unité de **pondération**, qui relève de l'estimande
+choisi séparément.
+
+---
+
+## ADR-197 — Anytime-valid n'est accordé qu'aux cellules dont les hypothèses tiennent
+
+**Statut** : figé et implémenté (Q59-A) · précise l'ADR-182
+
+**Décision.** Découper une série temporelle en blocs ne rend pas les blocs indépendants. Avant
+qu'une grappe entre dans l'inférence séquentielle, `ClusterQualification` publie définition,
+règle de réarmement, écart minimal, distributions de taille et de durée, et diagnostics
+d'autocorrélation. Sans dépendance maîtrisée ni stationnarité vérifiée, le statut devient
+`SEQUENTIAL_ASSUMPTIONS_UNVERIFIED`.
+
+**Conséquences.** Deux blocs consécutifs peuvent partager charge processeur, file persistante,
+régime de marché, connexion, événement macro ou volatilité. De bonnes simulations i.i.d. ne
+rétablissent pas une garantie dont l'hypothèse est fausse. Les statuts séquentiels —
+`SEQUENTIAL_VALID`, `SEQUENTIAL_ASSUMPTIONS_UNVERIFIED`, `SEQUENTIAL_INVALID` — sont
+**orthogonaux** à la validité de la mesure : une excellente mesure peut porter une inférence
+séquentielle non qualifiée. La non-stationnarité entre séances, régimes et versions logicielles
+est une raison supplémentaire de conserver des cellules homogènes et versionnées.
+
+---
+
+## ADR-198 — Une cellule non qualifiée retombe sur l'horizon fixe, elle n'est pas perdue
+
+**Statut** : figé et implémenté (Q59-A)
+
+**Décision.** Lorsque les hypothèses de l'inférence séquentielle ne sont pas défendables, le
+protocole bascule vers `FIXED_HORIZON` plutôt que d'émettre une garantie invalide. Q59-A devient
+donc `ANYTIME_VALID_WHEN_QUALIFIED` avec repli, plutôt qu'un choix global.
+
+**Conséquences.** Une cellule dont la dépendance ne permet pas encore de défendre la séquence
+n'est pas éliminée : elle change de protocole. Le choix conservateur reste préférable — une
+méthode plus grossière mais comprise vaut mieux qu'une méthode plus fine mal maîtrisée — mais il
+s'applique cellule par cellule, pas à la campagne entière.

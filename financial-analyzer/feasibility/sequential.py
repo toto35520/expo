@@ -47,20 +47,46 @@ class InferenceValidity(str, Enum):
     SEQUENTIAL_INFERENCE_INVALID = "SEQUENTIAL_INFERENCE_INVALID"
 
 
-class ClusterWeighting(str, Enum):
-    """Ce que la séquence de confiance estime réellement.
+class Estimand(str, Enum):
+    """**Quelle question** la séquence de confiance répond — indépendamment de la méthode
+    employée pour traiter la dépendance.
 
-    La distinction n'est pas cosmétique : une rafale de 300 cotations et un bloc calme
-    de 12 cotations ne pèsent pas pareil selon la convention, et les deux quantités
-    répondent à des questions différentes.
+    C'est une séparation fondamentale : le regroupement en grappes sert à gérer la
+    variance, il ne doit **jamais** changer silencieusement la population cible.
+
+        estimand  ≠  méthode de variance
+
+    L'écart n'est pas cosmétique. Deux rafales — l'une de 10 événements tous sous le
+    seuil, l'autre de 1 000 événements à moitié sous le seuil — donnent :
+
+        CDF par grappe      (1 + 0,5) / 2      = 0,75
+        CDF par événement   510 / 1 010        ≈ 0,505
+
+    Les deux sont justes. Elles ne répondent pas à la même question.
     """
 
-    #: Chaque grappe pèse également. C'est l'estimande de la séquence de confiance :
-    #: l'unité d'indépendance est la grappe, donc l'unité de poids aussi.
-    EQUAL_PER_CLUSTER = "EQUAL_PER_CLUSTER"
-    #: Chaque observation pèse également. C'est le quantile empirique usuel — descriptif,
-    #: sans garantie séquentielle.
-    EQUAL_PER_OBSERVATION = "EQUAL_PER_OBSERVATION"
+    #: « Quelle latence subit un événement déclencheur tiré dans la population
+    #: opérationnelle ? » — grandeur naturelle d'une décision par événement.
+    EVENT_WEIGHTED = "EVENT_WEIGHTED"
+    #: « Quelle est la performance d'un épisode de rafale typique ? » — pertinent si un
+    #: moteur produit au plus une décision par rafale.
+    CLUSTER_WEIGHTED = "CLUSTER_WEIGHTED"
+    #: « Quelle est la performance d'une séance typique ? »
+    SESSION_WEIGHTED = "SESSION_WEIGHTED"
+
+
+class SequentialQualification(str, Enum):
+    """Statut des **hypothèses** de la procédure séquentielle.
+
+    Orthogonal à la qualité de la mesure : une excellente mesure peut porter une
+    inférence séquentielle non qualifiée.
+    """
+
+    SEQUENTIAL_VALID = "SEQUENTIAL_VALID"
+    #: Dépendance ou non-stationnarité non écartées. La garantie anytime-valid ne peut
+    #: pas être revendiquée ; le protocole retombe sur l'horizon fixe.
+    SEQUENTIAL_ASSUMPTIONS_UNVERIFIED = "SEQUENTIAL_ASSUMPTIONS_UNVERIFIED"
+    SEQUENTIAL_INVALID = "SEQUENTIAL_INVALID"
 
 
 # ------------------------------------------------- séquence de confiance sous-gaussienne
@@ -108,7 +134,7 @@ def rho_for_target(target_clusters: int, sigma_squared: float = 0.25) -> float:
 
 @dataclass(frozen=True)
 class ConfidenceSequence:
-    """Intervalle valide **à tout instant** pour une proportion au niveau des grappes."""
+    """Intervalle valide **à tout instant**, pour un estimande explicitement nommé."""
 
     n_clusters: int
     n_observations: int
@@ -117,7 +143,10 @@ class ConfidenceSequence:
     upper: float
     alpha: float
     rho: float
-    weighting: ClusterWeighting = ClusterWeighting.EQUAL_PER_CLUSTER
+    estimand: Estimand = Estimand.CLUSTER_WEIGHTED
+    qualification: SequentialQualification = (
+        SequentialQualification.SEQUENTIAL_ASSUMPTIONS_UNVERIFIED
+    )
 
     @property
     def width(self) -> float:
@@ -126,14 +155,20 @@ class ConfidenceSequence:
     def excludes(self, value: float) -> bool:
         return value < self.lower or value > self.upper
 
+    @property
+    def anytime_valid_claimable(self) -> bool:
+        """Le label ne s'accorde qu'aux cellules dont les hypothèses tiennent."""
+        return self.qualification is SequentialQualification.SEQUENTIAL_VALID
+
 
 def cluster_fractions(
     values: Sequence[float], clusters: Sequence[str], threshold: float
-) -> tuple[np.ndarray, int]:
-    """Fraction d'observations sous le seuil, **par grappe**.
+) -> tuple[np.ndarray, np.ndarray]:
+    """Fraction sous le seuil et effectif, **par grappe**.
 
-    Réduire chaque grappe à une valeur unique est ce qui rend le nombre de grappes — et
-    non le nombre d'observations — la taille d'échantillon de l'inférence.
+    La grappe est l'unité d'indépendance, donc l'unité d'échantillon de l'inférence.
+    Elle n'est pas pour autant l'unité de **pondération** : celle-ci relève de
+    l'estimande, choisi séparément.
     """
     by_cluster: dict[str, list[float]] = {}
     for v, c in zip(values, clusters):
@@ -141,7 +176,17 @@ def cluster_fractions(
     fractions = np.array(
         [float(np.mean(np.asarray(vs) <= threshold)) for vs in by_cluster.values()]
     )
-    return fractions, sum(len(v) for v in by_cluster.values())
+    sizes = np.array([len(vs) for vs in by_cluster.values()], dtype=float)
+    return fractions, sizes
+
+
+def event_weighted_fraction(
+    values: Sequence[float], clusters: Sequence[str], threshold: float
+) -> float:
+    """CDF par événement — estimation ponctuelle descriptive, sans garantie séquentielle."""
+    fractions, sizes = cluster_fractions(values, clusters, threshold)
+    total = sizes.sum()
+    return float((fractions * sizes).sum() / total) if total else float("nan")
 
 
 def threshold_confidence_sequence(
@@ -150,29 +195,131 @@ def threshold_confidence_sequence(
     threshold: float,
     alpha: float,
     rho: float,
+    estimand: Estimand = Estimand.CLUSTER_WEIGHTED,
+    max_cluster_size: int | None = None,
+    qualification: SequentialQualification = (
+        SequentialQualification.SEQUENTIAL_ASSUMPTIONS_UNVERIFIED
+    ),
 ) -> ConfidenceSequence:
     """Séquence de confiance pour `F(seuil)` — la proportion sous un seuil **fixe**.
 
-    Le choix du seuil fixe est ce qui rend la construction simple et valide : aucune
-    inversion sur une grille de quantiles, donc aucune correction d'union à payer. Or la
-    décision d'exclusion porte précisément sur un seuil fixe — la latence admissible.
-    """
-    fractions, n_obs = cluster_fractions(values, clusters, threshold)
-    n = fractions.size
-    if n == 0:
-        return ConfidenceSequence(0, 0, float("nan"), 0.0, 1.0, alpha, rho)
+    Le seuil fixe est ce qui rend la construction simple et valide : aucune inversion
+    sur une grille de quantiles, donc aucune correction d'union à payer. La décision
+    d'exclusion porte précisément sur un seuil fixe.
 
-    estimate = float(fractions.mean())
+    Sous `CLUSTER_WEIGHTED`, chaque grappe pèse également. Sous `EVENT_WEIGHTED`, la
+    grappe reste l'unité d'indépendance mais pèse proportionnellement à son effectif :
+    l'estimande devient un rapport de moyennes, et la borne exige un plafond de taille
+    de grappe **déclaré à l'avance** pour que la variable reste bornée.
+    """
+    fractions, sizes = cluster_fractions(values, clusters, threshold)
+    n = fractions.size
+    n_obs = int(sizes.sum())
+    if n == 0:
+        return ConfidenceSequence(0, 0, float("nan"), 0.0, 1.0, alpha, rho,
+                                  estimand, qualification)
+
     radius = normal_mixture_radius(n, alpha, rho)
+
+    if estimand is Estimand.EVENT_WEIGHTED:
+        if max_cluster_size is None:
+            raise SequentialError(
+                "L'estimande par événement exige un plafond de taille de grappe déclaré "
+                "à l'avance : sans lui la variable n'est pas bornée, et la frontière "
+                "sous-gaussienne ne s'applique pas."
+            )
+        if sizes.max() > max_cluster_size:
+            raise SequentialError(
+                f"Grappe de {int(sizes.max())} observations au-dessus du plafond déclaré "
+                f"({max_cluster_size}). L'adapter après coup reviendrait à régler la "
+                "borne contre les données qu'elle borne."
+            )
+        y = fractions * sizes / max_cluster_size
+        m = sizes / max_cluster_size
+        mean_m = float(m.mean())
+        if mean_m <= 0.0:
+            return ConfidenceSequence(n, n_obs, float("nan"), 0.0, 1.0, alpha, rho,
+                                      estimand, qualification)
+        mean_y = float(y.mean())
+        estimate = mean_y / mean_m
+        lower = (mean_y - radius) / mean_m
+        upper = (mean_y + radius) / mean_m
+    else:
+        estimate = float(fractions.mean())
+        lower = estimate - radius
+        upper = estimate + radius
+
     return ConfidenceSequence(
         n_clusters=n,
         n_observations=n_obs,
         estimate=estimate,
-        lower=max(0.0, estimate - radius),
-        upper=min(1.0, estimate + radius),
+        lower=max(0.0, lower),
+        upper=min(1.0, upper),
         alpha=alpha,
         rho=rho,
+        estimand=estimand,
+        qualification=qualification,
     )
+
+
+# ------------------------------------------- qualification des hypothèses de grappe
+
+
+def autocorrelation(x: Sequence[float], lag: int = 1) -> float:
+    """Autocorrélation d'ordre `lag`, calculée au niveau des grappes."""
+    a = np.asarray(x, dtype=float)
+    if a.size <= lag + 1:
+        return float("nan")
+    a = a - a.mean()
+    denominator = float((a * a).sum())
+    if denominator == 0.0:
+        return 0.0
+    return float((a[:-lag] * a[lag:]).sum() / denominator)
+
+
+@dataclass(frozen=True)
+class ClusterQualification:
+    """Ce qui doit être publié **avant** qu'une grappe entre dans l'inférence.
+
+    Découper une série temporelle en blocs ne rend pas les blocs indépendants : deux
+    blocs consécutifs peuvent partager charge processeur, file persistante, régime de
+    marché, connexion, événement macro ou volatilité. Une séquence valide sous hypothèse
+    de martingale perd sa garantie si cette hypothèse est fausse — et de bonnes
+    simulations i.i.d. ne la rétablissent pas.
+    """
+
+    cluster_definition: str
+    reset_rule: str
+    minimum_gap_ns: int
+    n_clusters: int
+    size_p50: float
+    size_p95: float
+    duration_p50_ns: float
+    acf1_fraction: float
+    acf1_value: float
+    acf1_load: float
+    stationarity_checked: bool
+    max_abs_acf_tolerated: float = 0.20
+
+    @property
+    def dependence_within_tolerance(self) -> bool:
+        acfs = (self.acf1_fraction, self.acf1_value, self.acf1_load)
+        return all(
+            not math.isnan(a) and abs(a) <= self.max_abs_acf_tolerated for a in acfs
+        )
+
+    def qualify(self) -> SequentialQualification:
+        """Accorde — ou non — le droit de revendiquer `ANYTIME_VALID`.
+
+        Le refus ne perd pas la cellule : elle repasse au protocole à horizon fixe.
+        Conserver la revendication séquentielle serait, lui, émettre une garantie sans
+        fondement.
+        """
+        if self.n_clusters < 2:
+            return SequentialQualification.SEQUENTIAL_INVALID
+        if not self.stationarity_checked or not self.dependence_within_tolerance:
+            return SequentialQualification.SEQUENTIAL_ASSUMPTIONS_UNVERIFIED
+        return SequentialQualification.SEQUENTIAL_VALID
 
 
 class ThresholdVerdict(str, Enum):
@@ -242,8 +389,9 @@ def fixed_horizon_interval(
     échange contre le droit d'arrêter quand on veut. L'utiliser après un arrêt dépendant
     des données rend la garantie fausse, pas seulement optimiste.
     """
-    fractions, n_obs = cluster_fractions(values, clusters, threshold)
+    fractions, sizes = cluster_fractions(values, clusters, threshold)
     n = fractions.size
+    n_obs = int(sizes.sum())
     if n == 0:
         return ConfidenceSequence(0, 0, float("nan"), 0.0, 1.0, alpha, float("nan"))
     estimate = float(fractions.mean())
@@ -252,6 +400,7 @@ def fixed_horizon_interval(
         n_clusters=n, n_observations=n_obs, estimate=estimate,
         lower=max(0.0, estimate - radius), upper=min(1.0, estimate + radius),
         alpha=alpha, rho=float("nan"),
+        qualification=SequentialQualification.SEQUENTIAL_VALID,
     )
 
 
@@ -275,13 +424,33 @@ def interval_for_mode(
     threshold: float,
     alpha: float,
     rho: float | None,
+    estimand: Estimand = Estimand.CLUSTER_WEIGHTED,
+    max_cluster_size: int | None = None,
+    clusters_qualified: SequentialQualification = (
+        SequentialQualification.SEQUENTIAL_ASSUMPTIONS_UNVERIFIED
+    ),
 ) -> ConfidenceSequence:
-    """Choisit la méthode imposée par le mode déclaré — jamais l'inverse."""
+    """Choisit la méthode imposée par le mode déclaré — jamais l'inverse.
+
+    `ANYTIME_VALID` n'est honoré que sur une cellule dont la dépendance et la stabilité
+    sont défendables. Sinon la cellule **retombe sur l'horizon fixe** plutôt que
+    d'émettre une garantie invalide : elle n'est pas perdue, elle change de protocole.
+    """
     if mode is InferenceMode.ANYTIME_VALID:
         if rho is None:
             raise SequentialError(
                 "ANYTIME_VALID exige un ρ déclaré à l'avance : le choisir après coup "
                 "reviendrait à ajuster la frontière contre les données qu'elle borne."
             )
-        return threshold_confidence_sequence(values, clusters, threshold, alpha, rho)
+        if clusters_qualified is SequentialQualification.SEQUENTIAL_VALID:
+            return threshold_confidence_sequence(
+                values, clusters, threshold, alpha, rho,
+                estimand=estimand, max_cluster_size=max_cluster_size,
+                qualification=clusters_qualified,
+            )
+        fallback = fixed_horizon_interval(values, clusters, threshold, alpha)
+        return ConfidenceSequence(
+            **{**fallback.__dict__, "estimand": estimand,
+               "qualification": clusters_qualified}
+        )
     return fixed_horizon_interval(values, clusters, threshold, alpha)

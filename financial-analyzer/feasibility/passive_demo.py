@@ -37,7 +37,13 @@ from .passive_campaign import (  # noqa: E402
     NS_PER_MS,
     NS_PER_SECOND,
     BlockingChoice,
+    CapturabilityScope,
     ClusterAssigner,
+    CostFloor,
+    OpportunitySet,
+    OracleCapture,
+    OrderType,
+    OverlapPolicy,
     EvaluationMode,
     HostLoad,
     MarketContext,
@@ -52,8 +58,9 @@ from .passive_campaign import (  # noqa: E402
     hourly_report,
     is_stable,
     PassiveVerdict,
+    assess_oracle,
     oracle_capturable,
-    oracle_exclusion,
+    oracle_verdict,
     phase0_state,
     stability_trace,
     summarise_by_cell,
@@ -197,28 +204,46 @@ def main() -> None:
 
     # ---- Q61-A : exclusion signal-agnostique, sans aucun Lmax inventé
     rng = random.Random(11)
-    n = 6_000
-    ts = np.arange(n, dtype=np.int64) * 10 * MS
+    n = 90_000
+    ts = np.arange(n, dtype=np.int64) * 20 * MS          # 30 minutes de cotations
     prices = 2400.0 + np.cumsum(
         np.array([rng.gauss(0, 0.02) for _ in range(n)], dtype=float)
     )
     starts = np.arange(100, n - 200, 45)
-    cluster_ids = np.arange(n) // 150
-    COST_FLOOR = 0.35          # plancher de coûts aller-retour, en dollars l'once
+    cluster_ids = np.arange(n) // 1_500
+    HORIZON = 500 * MS
+    cost_floor = CostFloor(
+        order_type=OrderType.AGGRESSIVE,
+        certain_commission=0.30, mandatory_fees=0.05,
+        source="valeur de démonstration — à remplacer par le barème contractuel (Q63)",
+    )
+    F_MIN = 4 / 86_400.0           # quatre occasions par jour
+    J_MIN = 20.0 / 86_400.0        # contribution minimale par seconde
+    DELTA_MEU = 0.05
 
     print("-" * 78)
     print("PHASE 0 PAR CELLULE — exclusion sans qu'aucun signal ne soit défini")
-    print(f"horizon 500 ms · plancher de coûts {COST_FLOOR:.2f} $/oz")
+    print(f"horizon 500 ms · plancher de coûts {cost_floor.value:.2f} $/oz"
+          f" · δ_MEU {DELTA_MEU:.2f} · f_min {F_MIN * 86_400:.0f}/jour")
+    print(f"période observée : {(ts[-1] - ts[0]) / NS_PER_SECOND / 60:.0f} min"
+          f" — toute fréquence par jour en est une extrapolation")
     print()
     for cell in sorted(summaries, key=lambda c: c.label):
         sample = capturability_input(
             [o for o in observations if o.cell == cell], clock
         )
         capture = oracle_capturable(
-            ts, prices, starts, sample.latency_samples_ns, 500 * MS,
+            ts, prices, starts, sample.latency_samples_ns, HORIZON,
             sample.scope, cluster_ids=cluster_ids,
         )
-        oracle, why = oracle_exclusion(capture, COST_FLOOR)
+        opportunities = OpportunitySet(
+            starts_ns=capture.starts_ns, horizon_ns=HORIZON, span_ns=capture.span_ns,
+            cooldown_ns=0, max_concurrent_positions=1,
+            overlap_policy=OverlapPolicy.DISJOINT_WINDOWS,
+            session=cell.session, cell_label=cell.label,
+        )
+        assessment = assess_oracle(capture, cost_floor, opportunities, DELTA_MEU)
+        oracle, why = oracle_verdict(assessment, F_MIN, J_MIN)
         state, state_why = phase0_state(
             cost_excluded=False,
             passive=PassiveVerdict.PASSIVE_LATENCY_INDETERMINATE
@@ -226,12 +251,48 @@ def main() -> None:
             PassiveVerdict.PASSIVE_LATENCY_NOT_EXCLUDED,
             oracle=oracle,
         )
+        q = assessment.quantiles
         print(f"  {cell.burst_state.value:<12} {state.value}")
         print(f"    borne locale p95 : {summaries[cell].bound.p95 / MS:.1f} ms"
               f"   ({sample.result_name})")
-        print(f"    {why}")
+        print(f"    capture oracle   : p50 {q.p50:.3f} · p90 {q.p90:.3f} · p99 {q.p99:.3f}"
+              f" · max {q.maximum:.3f}   ← diagnostics, aucun n'exclut à lui seul")
+        print(f"    opportunités     : {assessment.selected} retenues sur "
+              f"{assessment.opportunities} départs (chevauchement écarté)")
+        print(f"    oracle-rentables : {assessment.profitable}"
+              f"   taux ≤ {assessment.profitable_rate_upper:.2%}"
+              f"   fréquence ≤ {assessment.profitable_frequency_upper * 86_400:.1f}/jour")
+        print(f"    verdict oracle   : {oracle.value}")
+        print(f"      {why}")
         print(f"    → {state_why}")
         print()
+
+    # ---- contre-exemple : pourquoi un quantile seul n'exclut jamais
+    tail_gross = np.array([0.20] * 920 + [3.00] * 80)
+    tail_starts = np.arange(1_000, dtype=np.int64) * NS_PER_SECOND
+    tail = OracleCapture(tail_starts, tail_gross, HORIZON,
+                         CapturabilityScope.POST_RECEIVE_ONLY,
+                         span_ns=1_000 * NS_PER_SECOND, clusters=50,
+                         exhausted_fraction=0.0)
+    tail_set = OpportunitySet(starts_ns=tail_starts, horizon_ns=HORIZON,
+                              span_ns=1_000 * NS_PER_SECOND,
+                              overlap_policy=OverlapPolicy.CAPACITY_CONSTRAINED_ORACLE)
+    tail_assessment = assess_oracle(tail, cost_floor, tail_set, DELTA_MEU)
+    tail_verdict, tail_why = oracle_verdict(tail_assessment, F_MIN, J_MIN)
+
+    print("-" * 78)
+    print("CONTRE-EXEMPLE — 92 % de situations impossibles, 8 % très favorables")
+    print(f"  capture oracle p90 : {tail.quantiles.p90:.3f}"
+          f"  ≤  plancher de coûts {cost_floor.value:.2f}")
+    print("  le raccourci « p90 ≤ plancher ⇒ exclusion » aurait supprimé cette cellule.")
+    print(f"  or {tail_assessment.profitable} opportunités sur "
+          f"{tail_assessment.selected} dégagent un surplus, la plus favorable de "
+          f"{tail_assessment.max_surplus:.2f}.")
+    print(f"  verdict correct : {tail_verdict.value}")
+    print(f"    {tail_why}")
+    print()
+    print("  C'est précisément le profil d'une stratégie sélective : rare, mais réelle.")
+    print()
 
     choice = BlockingChoice(
         block_ns=30 * NS_PER_SECOND,

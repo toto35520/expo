@@ -35,15 +35,22 @@ from feasibility.passive_campaign import (
     CapturabilityScope,
     ComparisonDesign,
     HorizonEndPolicy,
+    CostFloor,
+    OracleCapture,
     OracleVerdict,
+    OpportunitySet,
+    OrderType,
+    OverlapPolicy,
     Phase0State,
+    assess_oracle,
+    clopper_pearson_upper,
     block_sensitivity,
     blocking_is_robust,
     compare_cadence,
     inference_validity,
     observer_overhead,
     oracle_capturable,
-    oracle_exclusion,
+    oracle_verdict,
     phase0_state,
     CampaignCell,
     CampaignError,
@@ -720,82 +727,243 @@ def price_path(n=4_000, seed=3, drift=0.02):
     return ts, prices
 
 
+def floor_(value=0.35, order_type=OrderType.AGGRESSIVE, **kw) -> CostFloor:
+    base = dict(order_type=order_type, certain_commission=value, mandatory_fees=0.0,
+                source="barème contractuel du courtier, v1")
+    return CostFloor(**{**base, **kw})
+
+
+def opportunities(starts, span_ns, **kw) -> OpportunitySet:
+    base = dict(starts_ns=starts, horizon_ns=500 * MS, span_ns=span_ns)
+    return OpportunitySet(**{**base, **kw})
+
+
+def capture_for(latency_ns, n=4_000, seed=3, drift=0.02, horizon=500 * MS):
+    ts, prices = price_path(n, seed, drift)
+    starts = np.arange(50, n - 200, 40)
+    cap = oracle_capturable(
+        ts, prices, starts, np.full(60, latency_ns, dtype=np.int64), horizon,
+        CapturabilityScope.POST_RECEIVE_ONLY, cluster_ids=np.arange(n) // 100,
+    )
+    return cap, ts
+
+
 def test_the_oracle_is_computed_without_any_signal_definition():
-    """Direction connue d'avance et sortie parfaite : aucun moteur prédictif ne peut
-    faire mieux, ce qui rend l'exclusion concluante avant toute construction."""
-    ts, prices = price_path()
-    starts = np.arange(50, 3_500, 40)
-    cap = oracle_capturable(ts, prices, starts, np.full(60, 20 * MS, dtype=np.int64),
-                            500 * MS, CapturabilityScope.POST_RECEIVE_ONLY,
-                            cluster_ids=np.arange(ts.size) // 100)
-    assert cap.events == starts.size
-    assert cap.capture.p90 > 0.0
+    """Direction connue d'avance et sortie parfaite : aucun moteur ne peut faire mieux."""
+    cap, _ = capture_for(20 * MS)
+    assert cap.gross.size > 0
+    assert cap.quantiles.p90 > 0.0
     assert cap.exhausted_fraction == 0.0
 
 
 def test_a_latency_beyond_the_horizon_captures_nothing_but_stays_in_the_sample():
-    ts, prices = price_path()
-    starts = np.arange(50, 3_500, 40)
-    cap = oracle_capturable(ts, prices, starts, np.full(60, 900 * MS, dtype=np.int64),
-                            500 * MS, CapturabilityScope.POST_RECEIVE_ONLY,
-                            cluster_ids=np.arange(ts.size) // 100)
+    cap, _ = capture_for(900 * MS)
     assert cap.exhausted_fraction == 1.0
-    assert cap.capture.p90 == 0.0
-    assert cap.events == starts.size
+    assert cap.quantiles.p90 == 0.0
+    assert cap.gross.size > 0
 
 
 def test_the_oracle_captures_less_as_latency_grows():
-    ts, prices = price_path()
-    starts = np.arange(50, 3_500, 40)
-    clusters = np.arange(ts.size) // 100
-    fast = oracle_capturable(ts, prices, starts, np.full(60, 10 * MS, dtype=np.int64),
-                             500 * MS, CapturabilityScope.POST_RECEIVE_ONLY,
-                             cluster_ids=clusters)
-    slow = oracle_capturable(ts, prices, starts, np.full(60, 400 * MS, dtype=np.int64),
-                             500 * MS, CapturabilityScope.POST_RECEIVE_ONLY,
-                             cluster_ids=clusters)
-    assert slow.capture.p90 < fast.capture.p90
+    fast, _ = capture_for(10 * MS)
+    slow, _ = capture_for(400 * MS)
+    assert slow.quantiles.p90 < fast.quantiles.p90
 
 
-def test_an_oracle_below_the_cost_floor_excludes_without_a_predictive_engine():
-    ts, prices = price_path()
-    starts = np.arange(50, 3_500, 40)
-    cap = oracle_capturable(ts, prices, starts, np.full(60, 450 * MS, dtype=np.int64),
-                            500 * MS, CapturabilityScope.POST_RECEIVE_ONLY,
-                            cluster_ids=np.arange(ts.size) // 100)
-    verdict, why = oracle_exclusion(cap, cost_floor=50.0)
-    assert verdict is OracleVerdict.LATENCY_COST_ORACLE_EXCLUDED
-    assert "direction connue d'avance" in why
+# ---- le cœur de la correction : un quantile n'exclut jamais à lui seul
 
 
-def test_an_oracle_above_the_floor_only_justifies_looking_for_a_signal():
-    ts, prices = price_path()
-    starts = np.arange(50, 3_500, 40)
-    cap = oracle_capturable(ts, prices, starts, np.full(60, 10 * MS, dtype=np.int64),
-                            500 * MS, CapturabilityScope.POST_RECEIVE_ONLY,
-                            cluster_ids=np.arange(ts.size) // 100)
-    verdict, why = oracle_exclusion(cap, cost_floor=0.0001)
+def test_a_low_quantile_never_excludes_when_the_tail_survives():
+    """92 % des situations impossibles, 8 % très favorables : `p90 ≤ coût plancher` est
+    vrai, et pourtant un moteur qui ne trade que ces 8 % garde de la valeur. C'est
+    exactement le type de stratégie sélective que la phase 0 ne doit pas supprimer."""
+    gross = np.array([0.20] * 920 + [3.00] * 80)
+    starts = np.arange(1_000, dtype=np.int64) * NS_PER_SECOND
+    cap = OracleCapture(starts, gross, 500 * MS, CapturabilityScope.POST_RECEIVE_ONLY,
+                        span_ns=1_000 * NS_PER_SECOND, clusters=50,
+                        exhausted_fraction=0.0)
+
+    assert cap.quantiles.p90 <= 0.35              # le raccourci précédent aurait exclu
+
+    a = assess_oracle(cap, floor_(0.35),
+                      opportunities(starts, 1_000 * NS_PER_SECOND,
+                                    overlap_policy=OverlapPolicy.CAPACITY_CONSTRAINED_ORACLE),
+                      delta_meu=0.05)
+    verdict, why = oracle_verdict(a, minimum_frequency_per_second=1 / 86_400,
+                                  minimum_contribution_per_second=1e-9)
     assert verdict is OracleVerdict.ORACLE_NOT_EXCLUDED
-    assert "ne dit rien de son existence" in why
+    assert "ne dit rien de la capacité d'un moteur" in why
+
+
+def test_level_a_excludes_only_when_even_the_best_opportunity_fails():
+    """Impossibilité universelle : aucune opportunité ne survit avec connaissance
+    parfaite du futur."""
+    gross = np.full(600, 0.10)
+    starts = np.arange(600, dtype=np.int64) * NS_PER_SECOND
+    cap = OracleCapture(starts, gross, 500 * MS, CapturabilityScope.POST_RECEIVE_ONLY,
+                        span_ns=600 * NS_PER_SECOND, clusters=40, exhausted_fraction=0.0)
+    a = assess_oracle(cap, floor_(0.35), opportunities(starts, 600 * NS_PER_SECOND),
+                      delta_meu=0.05)
+    verdict, why = oracle_verdict(a, 1 / 86_400, 1e-9)
+    assert verdict is OracleVerdict.ORACLE_UNIVERSALLY_NON_VIABLE
+    assert "connaissance parfaite du futur" in why
+
+
+def test_level_a_never_claims_the_rate_is_zero():
+    """Avec zéro succès observé, le taux réel reste borné, pas nul."""
+    gross = np.full(600, 0.10)
+    starts = np.arange(600, dtype=np.int64) * NS_PER_SECOND
+    cap = OracleCapture(starts, gross, 500 * MS, CapturabilityScope.POST_RECEIVE_ONLY,
+                        span_ns=600 * NS_PER_SECOND, clusters=40, exhausted_fraction=0.0)
+    a = assess_oracle(cap, floor_(0.35), opportunities(starts, 600 * NS_PER_SECOND),
+                      delta_meu=0.05)
+    assert a.profitable == 0
+    assert 0.0 < a.profitable_rate_upper < 0.02
+
+
+def test_level_b_excludes_when_opportunities_are_too_rare():
+    """Des opportunités existent, mais aucune stratégie réelle n'atteindrait la
+    fréquence exigée."""
+    gross = np.array([0.10] * 998 + [5.00] * 2)
+    starts = np.arange(1_000, dtype=np.int64) * NS_PER_SECOND
+    cap = OracleCapture(starts, gross, 500 * MS, CapturabilityScope.POST_RECEIVE_ONLY,
+                        span_ns=1_000 * NS_PER_SECOND, clusters=40, exhausted_fraction=0.0)
+    a = assess_oracle(cap, floor_(0.35), opportunities(starts, 1_000 * NS_PER_SECOND),
+                      delta_meu=0.05)
+    verdict, why = oracle_verdict(a, minimum_frequency_per_second=50.0,
+                                  minimum_contribution_per_second=1e-9)
+    assert verdict is OracleVerdict.ORACLE_FREQUENCY_NON_VIABLE
+    assert "trop rarement" in why or "plancher" in why
+
+
+def test_level_c_excludes_on_economic_capacity():
+    gross = np.array([0.10] * 900 + [0.45] * 100)
+    starts = np.arange(1_000, dtype=np.int64) * NS_PER_SECOND
+    cap = OracleCapture(starts, gross, 500 * MS, CapturabilityScope.POST_RECEIVE_ONLY,
+                        span_ns=1_000 * NS_PER_SECOND, clusters=40, exhausted_fraction=0.0)
+    a = assess_oracle(cap, floor_(0.35), opportunities(starts, 1_000 * NS_PER_SECOND),
+                      delta_meu=0.01)
+    verdict, why = oracle_verdict(a, minimum_frequency_per_second=1 / 86_400,
+                                  minimum_contribution_per_second=1_000.0)
+    assert verdict is OracleVerdict.ORACLE_ECONOMIC_CAPACITY_NON_VIABLE
+    assert "capacité économique" in why
 
 
 def test_too_few_clusters_leaves_the_oracle_indeterminate():
-    ts, prices = price_path()
-    starts = np.arange(50, 300, 40)
-    cap = oracle_capturable(ts, prices, starts, np.full(10, 10 * MS, dtype=np.int64),
-                            500 * MS, CapturabilityScope.POST_RECEIVE_ONLY,
-                            cluster_ids=np.zeros(ts.size, dtype=int))
-    assert oracle_exclusion(cap, 0.01)[0] is OracleVerdict.ORACLE_INDETERMINATE
+    starts = np.arange(60, dtype=np.int64) * NS_PER_SECOND
+    cap = OracleCapture(starts, np.full(60, 1.0), 500 * MS,
+                        CapturabilityScope.POST_RECEIVE_ONLY,
+                        span_ns=60 * NS_PER_SECOND, clusters=3, exhausted_fraction=0.0)
+    a = assess_oracle(cap, floor_(0.35), opportunities(starts, 60 * NS_PER_SECOND),
+                      delta_meu=0.05)
+    assert oracle_verdict(a, 1 / 86_400, 1e-9)[0] is OracleVerdict.ORACLE_INDETERMINATE
+
+
+# ---- §7-9 : un mouvement ne compte qu'une fois
+
+
+def test_five_hundred_ticks_of_one_move_are_not_five_hundred_opportunities():
+    """Sans politique de chevauchement, un seul mouvement gonflerait la fréquence et la
+    valeur économique de l'oracle."""
+    starts = np.arange(500, dtype=np.int64) * MS       # 500 départs en 0,5 s
+    surplus = np.full(500, 1.0)
+    disjoint = opportunities(starts, 500 * MS)
+    assert disjoint.select(surplus).size == 1
+
+
+def test_the_capacity_bounds_how_many_positions_the_oracle_can_take():
+    starts = np.arange(1_000, dtype=np.int64) * NS_PER_SECOND
+    o = opportunities(starts, 1_000 * NS_PER_SECOND, cooldown_ns=500 * MS,
+                      max_concurrent_positions=2,
+                      overlap_policy=OverlapPolicy.CAPACITY_CONSTRAINED_ORACLE)
+    assert o.capacity == 2 * (1_000 * NS_PER_SECOND) // (500 * MS + 500 * MS)
+    # La capacité est un plafond : la sélection ne dépasse ni ce plafond ni le stock.
+    assert o.select(np.full(1_000, 1.0)).size == min(o.capacity, 1_000)
+
+    narrow = opportunities(starts, 1_000 * NS_PER_SECOND, horizon_ns=100 * NS_PER_SECOND,
+                           max_concurrent_positions=1,
+                           overlap_policy=OverlapPolicy.CAPACITY_CONSTRAINED_ORACLE)
+    assert narrow.capacity == 10
+    assert narrow.select(np.full(1_000, 1.0)).size == 10
+
+
+def test_disjoint_selection_prefers_the_valuable_windows():
+    starts = np.array([0, 100 * MS, 600 * MS], dtype=np.int64)
+    surplus = np.array([0.1, 5.0, 0.2])
+    kept = opportunities(starts, NS_PER_SECOND).select(surplus)
+    assert 1 in kept.tolist()
+
+
+def test_concurrency_and_span_must_be_declared_sanely():
+    starts = np.arange(10, dtype=np.int64) * NS_PER_SECOND
+    with pytest.raises(CampaignError, match="position simultanée"):
+        opportunities(starts, NS_PER_SECOND, max_concurrent_positions=0)
+    with pytest.raises(CampaignError, match="durée d'observation"):
+        opportunities(starts, 0)
+
+
+# ---- §11-15 : Q63, le plancher de coûts
+
+
+def test_a_cost_floor_needs_a_source():
+    with pytest.raises(CampaignError, match="source déclarée"):
+        CostFloor(OrderType.AGGRESSIVE, 0.3, 0.0, source="  ")
+
+
+def test_a_passive_order_cannot_put_the_crossing_in_its_floor():
+    """Un ordre passif peut obtenir un prix différent du scénario agressif."""
+    with pytest.raises(CampaignError, match="ordre passif"):
+        floor_(order_type=OrderType.PASSIVE, observed_crossing=0.2)
+    passive = floor_(0.05, order_type=OrderType.PASSIVE)
+    assert passive.value == 0.05
+
+
+def test_a_credit_is_signed_and_lowers_the_floor():
+    """Transformer un crédit possible en coût positif pour faciliter une exclusion est
+    interdit."""
+    plain = floor_(0.30)
+    with_credit = floor_(0.30, signed_credits=-0.08)
+    assert with_credit.value < plain.value
+
+
+def test_an_estimated_component_must_enter_by_its_lower_bound():
+    with pytest.raises(CampaignError, match="borne inférieure"):
+        floor_(0.30, estimated_components_use_lower_bound=False)
+
+
+def test_the_floor_is_a_lower_bound_not_a_central_estimate():
+    aggressive = floor_(0.30, observed_crossing=0.10, mandatory_fees=0.02)
+    assert aggressive.value == pytest.approx(0.42)
+
+
+# ---- bornes exactes
+
+
+def test_the_rate_upper_bound_matches_the_rule_of_three_at_zero_successes():
+    assert clopper_pearson_upper(0, 100, 0.05) == pytest.approx(1 - 0.05 ** 0.01)
+    assert clopper_pearson_upper(0, 1_000, 0.05) < clopper_pearson_upper(0, 100, 0.05)
+
+
+def test_the_rate_upper_bound_always_exceeds_the_point_estimate():
+    for k, n in ((1, 100), (10, 200), (37, 900)):
+        assert clopper_pearson_upper(k, n, 0.05) > k / n
+
+
+def test_the_rate_upper_bound_is_one_when_nothing_is_known():
+    assert clopper_pearson_upper(0, 0, 0.05) == 1.0
+    assert clopper_pearson_upper(5, 5, 0.05) == 1.0
 
 
 # ============================================= §21 — état consolidé de la phase 0
 
 
-def test_phase0_can_exclude_before_any_signal_exists():
-    state, why = phase0_state(False, PassiveVerdict.PASSIVE_LATENCY_NOT_EXCLUDED,
-                              OracleVerdict.LATENCY_COST_ORACLE_EXCLUDED)
+@pytest.mark.parametrize("oracle", [
+    OracleVerdict.ORACLE_UNIVERSALLY_NON_VIABLE,
+    OracleVerdict.ORACLE_FREQUENCY_NON_VIABLE,
+    OracleVerdict.ORACLE_ECONOMIC_CAPACITY_NON_VIABLE,
+])
+def test_phase0_can_exclude_before_any_signal_exists(oracle):
+    state, _ = phase0_state(False, PassiveVerdict.PASSIVE_LATENCY_NOT_EXCLUDED, oracle)
     assert state is Phase0State.PHASE0_EXCLUDED_BY_ORACLE_CAPTURABILITY
-    assert "oracle" in why
 
 
 def test_cost_exclusion_dominates_every_latency_argument():
@@ -806,7 +974,7 @@ def test_cost_exclusion_dominates_every_latency_argument():
 
 def test_an_invalid_measurement_authorises_nothing():
     state, _ = phase0_state(True, PassiveVerdict.PASSIVE_MEASUREMENT_INVALID,
-                            OracleVerdict.LATENCY_COST_ORACLE_EXCLUDED)
+                            OracleVerdict.ORACLE_UNIVERSALLY_NON_VIABLE)
     assert state is Phase0State.PHASE0_MEASUREMENT_INVALID
 
 

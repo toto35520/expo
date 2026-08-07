@@ -13,13 +13,17 @@ import numpy as np
 import pytest
 
 from feasibility.sequential import (
-    ClusterWeighting,
+    ClusterQualification,
+    Estimand,
     InferenceMode,
     InferenceValidity,
     SequentialError,
+    SequentialQualification,
+    autocorrelation,
     ThresholdVerdict,
     cluster_fractions,
     clusters_for_separation,
+    event_weighted_fraction,
     fixed_horizon_interval,
     interval_for_mode,
     normal_mixture_radius,
@@ -119,9 +123,9 @@ def test_an_ordinary_interval_loses_its_guarantee_under_the_same_adversary():
 
 def test_the_sample_size_is_the_number_of_clusters_not_observations():
     values, clusters = clustered(40, 50, 0.9)
-    fractions, n_obs = cluster_fractions(values, clusters, 100.0)
+    fractions, sizes = cluster_fractions(values, clusters, 100.0)
     assert fractions.size == 40
-    assert n_obs == 2_000
+    assert int(sizes.sum()) == 2_000
 
 
 def test_a_burst_does_not_narrow_the_interval_by_its_length():
@@ -134,9 +138,115 @@ def test_a_burst_does_not_narrow_the_interval_by_its_length():
     assert many_.width < few.width
 
 
-def test_the_estimand_is_declared_as_cluster_weighted():
-    cs = threshold_confidence_sequence(*clustered(30, 20, 0.9), 100.0, 0.05, 25.0)
-    assert cs.weighting is ClusterWeighting.EQUAL_PER_CLUSTER
+def test_the_two_estimands_answer_different_questions():
+    """Deux rafales très inégales : la CDF par grappe et la CDF par événement divergent
+    fortement, et les deux sont justes. Le regroupement ne doit pas choisir en silence."""
+    values = [5.0] * 10 + [5.0] * 500 + [500.0] * 500
+    clusters = ["A"] * 10 + ["B"] * 1_000
+
+    by_cluster = threshold_confidence_sequence(values, clusters, 100.0, 0.05, 25.0)
+    assert by_cluster.estimand is Estimand.CLUSTER_WEIGHTED
+    assert abs(by_cluster.estimate - 0.75) < 1e-9
+
+    by_event = event_weighted_fraction(values, clusters, 100.0)
+    assert abs(by_event - 510 / 1010) < 1e-9
+    assert abs(by_cluster.estimate - by_event) > 0.2
+
+
+def test_the_event_weighted_sequence_needs_a_declared_cluster_cap():
+    """Sans plafond, la variable n'est pas bornée et la frontière ne s'applique pas."""
+    values, clusters = clustered(30, 20, 0.9)
+    with pytest.raises(SequentialError, match="plafond"):
+        threshold_confidence_sequence(values, clusters, 100.0, 0.05, 25.0,
+                                      estimand=Estimand.EVENT_WEIGHTED)
+
+
+def test_a_cluster_above_the_declared_cap_is_refused_not_accommodated():
+    values, clusters = clustered(30, 50, 0.9)
+    with pytest.raises(SequentialError, match="plafond déclaré"):
+        threshold_confidence_sequence(values, clusters, 100.0, 0.05, 25.0,
+                                      estimand=Estimand.EVENT_WEIGHTED,
+                                      max_cluster_size=20)
+
+
+def test_the_event_weighted_sequence_brackets_its_own_estimand():
+    values = [5.0] * 10 + [5.0] * 500 + [500.0] * 500
+    clusters = ["A"] * 10 + ["B"] * 1_000
+    cs = threshold_confidence_sequence(values, clusters, 100.0, 0.05, rho_for_target(50),
+                                       estimand=Estimand.EVENT_WEIGHTED,
+                                       max_cluster_size=1_000)
+    assert cs.estimand is Estimand.EVENT_WEIGHTED
+    assert cs.lower <= event_weighted_fraction(values, clusters, 100.0) <= cs.upper
+
+
+# ============================================= qualification des hypothèses
+
+
+def qualification(**kw) -> ClusterQualification:
+    base = dict(
+        cluster_definition="rafale au-dessus du seuil, bloc de 30 s sinon",
+        reset_rule="retour sous seuil maintenu 3 s",
+        minimum_gap_ns=3_000_000_000,
+        n_clusters=120, size_p50=25.0, size_p95=180.0,
+        duration_p50_ns=8_000_000_000,
+        acf1_fraction=0.05, acf1_value=0.04, acf1_load=0.06,
+        stationarity_checked=True,
+    )
+    return ClusterQualification(**{**base, **kw})
+
+
+def test_independent_looking_clusters_earn_the_anytime_valid_label():
+    assert qualification().qualify() is SequentialQualification.SEQUENTIAL_VALID
+
+
+def test_persistent_dependence_withholds_the_label():
+    """Découper en blocs ne rend pas les blocs indépendants : deux blocs consécutifs
+    peuvent partager charge, file, régime, connexion ou volatilité."""
+    q = qualification(acf1_load=0.65)
+    assert not q.dependence_within_tolerance
+    assert q.qualify() is SequentialQualification.SEQUENTIAL_ASSUMPTIONS_UNVERIFIED
+
+
+def test_unchecked_stationarity_withholds_the_label():
+    assert qualification(stationarity_checked=False).qualify() is (
+        SequentialQualification.SEQUENTIAL_ASSUMPTIONS_UNVERIFIED
+    )
+
+
+def test_too_few_clusters_is_outright_invalid():
+    assert qualification(n_clusters=1).qualify() is (
+        SequentialQualification.SEQUENTIAL_INVALID
+    )
+
+
+def test_an_unqualified_cell_falls_back_instead_of_being_lost():
+    """Elle n'est pas perdue : elle change de protocole. Garder la revendication
+    séquentielle serait émettre une garantie sans fondement."""
+    values, clusters = clustered(100, 20, 0.9)
+    cs = interval_for_mode(
+        InferenceMode.ANYTIME_VALID, values, clusters, 100.0, 0.05,
+        rho_for_target(100),
+        clusters_qualified=SequentialQualification.SEQUENTIAL_ASSUMPTIONS_UNVERIFIED,
+    )
+    assert not cs.anytime_valid_claimable
+    assert math.isnan(cs.rho)          # la borne appliquée est celle de l'horizon fixe
+
+    qualified = interval_for_mode(
+        InferenceMode.ANYTIME_VALID, values, clusters, 100.0, 0.05,
+        rho_for_target(100),
+        clusters_qualified=SequentialQualification.SEQUENTIAL_VALID,
+    )
+    assert qualified.anytime_valid_claimable
+    assert qualified.width > cs.width
+
+
+def test_autocorrelation_detects_a_persistent_series():
+    drifting = [float(i) for i in range(60)]
+    alternating = [0.0, 1.0] * 30
+    assert autocorrelation(drifting) > 0.8
+    assert autocorrelation(alternating) < -0.8
+    assert math.isnan(autocorrelation([1.0, 2.0]))
+    assert autocorrelation([3.0] * 20) == 0.0
 
 
 def test_an_empty_sample_claims_nothing():
@@ -212,7 +322,8 @@ def test_anytime_valid_survives_a_data_dependent_stop():
 def test_the_mode_chooses_the_method_never_the_other_way_round():
     values, clusters = clustered(100, 20, 0.9)
     seq = interval_for_mode(InferenceMode.ANYTIME_VALID, values, clusters, 100.0,
-                            0.05, rho_for_target(100))
+                            0.05, rho_for_target(100),
+                            clusters_qualified=SequentialQualification.SEQUENTIAL_VALID)
     fixed = interval_for_mode(InferenceMode.FIXED_HORIZON, values, clusters, 100.0,
                               0.05, None)
     assert seq.width > fixed.width

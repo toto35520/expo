@@ -12,7 +12,7 @@ latence et rareté des occurrences.
 | --- | --- |
 | `docs/` | spécification, journal de décisions (`DECISIONS.md`), registre des questions (`QUESTIONS.md`) |
 | `feasibility/` | **code exécutable** : les deux phases 0 et leur intersection |
-| `tests/` | 387 tests, un par garde-fou |
+| `tests/` | 428 tests, un par garde-fou |
 | `calendar-sources/` | dossier de preuve : sources normatives du calendrier |
 | `connector-capability/` | fiches Q57/Q58 : ce que les horloges et le connecteur permettent d'affirmer |
 
@@ -20,7 +20,7 @@ latence et rareté des occurrences.
 
 ```bash
 cd financial-analyzer
-python3 -m pytest tests/ -q          # 387 tests
+python3 -m pytest tests/ -q          # 428 tests
 python3 -m feasibility.report        # carte de faisabilité (données synthétiques)
 python3 -m feasibility.passive_demo  # campagne passive Q51-A de bout en bout
 ```
@@ -128,6 +128,12 @@ Trois refus structurels valent d'être connus avant de brancher :
   connue d'avance, sortie parfaite — ne couvre plus les coûts après la latence observée, la
   cellule tombe. Aucun `Lmax` n'est inventé, donc aucune croyance sur l'alpha n'entre dans un
   test conçu pour en être indépendant ;
+- mais **un quantile n'exclut jamais à lui seul**. Que 92 % des situations soient sous le
+  plancher de coûts ne dit rien des 8 % restantes — qui sont exactement ce qu'un moteur
+  sélectif apprendrait à retenir. L'exclusion passe par l'impossibilité universelle, la
+  fréquence maximale exploitable, ou la capacité économique sous contraintes ;
+- un même mouvement ne compte qu'**une fois** : 500 horodatages d'une seule impulsion
+  donnent une opportunité, pas cinq cents ;
 - une grappe est attribuée à **chaque** observation, y compris hors rafale — deux cotations
   calmes séparées de 50 ms ne sont pas indépendantes non plus.
 

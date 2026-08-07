@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 from collections.abc import Iterable, Sequence
 from dataclasses import dataclass, field
 from enum import Enum
@@ -925,30 +926,187 @@ def latency_budget_ns(summary: BoundSummary, admissible: AdmissibleLatency) -> i
 # ------------------------------------ Q61-A — borne oracle, indépendante de tout signal
 
 
-@dataclass(frozen=True)
-class OracleCapture:
-    """`U_capture(L, h, c)` — borne **optimiste** du mouvement encore capturable.
+class OverlapPolicy(str, Enum):
+    """Comment les opportunités se disputent le même mouvement.
 
-    Construite en offrant gratuitement au système ce qu'aucun signal réel ne possède :
-    la direction connue à l'avance et l'instant de sortie parfait à l'intérieur de la
-    fenêtre restante. Aucun moteur prédictif ne peut faire mieux, ce qui est exactement
-    ce qui rend une exclusion concluante sans avoir défini le moindre signal.
+    Interdit de traiter chaque tick comme une opportunité indépendante puis de sommer
+    les profits oracle : un seul mouvement peut produire 500 horodatages, 500 fenêtres
+    et 500 « opportunités » alors qu'un système réel n'aurait pris qu'une position.
     """
 
-    events: int
-    clusters: int
+    #: Aucune nouvelle opportunité tant que la fenêtre précédente est active.
+    DISJOINT_WINDOWS = "DISJOINT_WINDOWS"
+    #: Toutes les opportunités existent, mais l'oracle doit choisir un sous-ensemble
+    #: compatible avec concurrence, capital, cooldown et capacité d'ordres.
+    CAPACITY_CONSTRAINED_ORACLE = "CAPACITY_CONSTRAINED_ORACLE"
+
+
+@dataclass(frozen=True)
+class OpportunitySet:
+    """Ensemble d'opportunités admissibles, sous contraintes déclarées."""
+
+    starts_ns: np.ndarray
+    horizon_ns: int
+    span_ns: int
+    cooldown_ns: int = 0
+    max_concurrent_positions: int = 1
+    overlap_policy: OverlapPolicy = OverlapPolicy.DISJOINT_WINDOWS
+    session: str = ""
+    cell_label: str = ""
+
+    def __post_init__(self) -> None:
+        if self.max_concurrent_positions < 1:
+            raise CampaignError("au moins une position simultanée est nécessaire")
+        if self.span_ns <= 0:
+            raise CampaignError("la durée d'observation doit être positive")
+
+    @property
+    def occupancy_ns(self) -> int:
+        """Temps qu'une position immobilise : sa fenêtre plus son délai de réarmement."""
+        return self.horizon_ns + self.cooldown_ns
+
+    @property
+    def capacity(self) -> int:
+        """Nombre **maximal** de positions que l'oracle peut prendre sur la période.
+
+        Aucune sélection ne peut dépasser ce plafond : c'est ce qui empêche de compter
+        plusieurs fois le même mouvement.
+        """
+        return max(1, self.max_concurrent_positions * int(self.span_ns // self.occupancy_ns))
+
+    def select(self, surplus: np.ndarray) -> np.ndarray:
+        """Indices retenus par l'oracle sous la politique déclarée.
+
+        `DISJOINT_WINDOWS` résout exactement l'ordonnancement pondéré d'intervalles :
+        l'oracle choisit le meilleur ensemble sans recouvrement. C'est le plus
+        conservateur et le plus simple à défendre.
+        """
+        # La sélection dit **combien de tirages indépendants** le système obtient, pas
+        # lesquels sont rentables. Écarter ici les opportunités non rentables détruirait
+        # le dénominateur : « zéro rentable sur N admissibles » est précisément ce que
+        # l'impossibilité universelle doit pouvoir affirmer.
+        if self.overlap_policy is OverlapPolicy.CAPACITY_CONSTRAINED_ORACLE:
+            best = np.argsort(-surplus)
+            return np.sort(best[: self.capacity])
+
+        order = np.argsort(self.starts_ns)
+        ends = self.starts_ns[order] + self.occupancy_ns
+        starts = self.starts_ns[order]
+        weights = np.maximum(surplus[order], 0.0)
+
+        # Ordonnancement pondéré d'intervalles : best[k] = valeur optimale des k premiers.
+        predecessor = np.searchsorted(ends, starts, side="right") - 1
+        best = np.zeros(starts.size + 1)
+        for k in range(1, starts.size + 1):
+            skip = best[k - 1]
+            take = weights[k - 1] + best[predecessor[k - 1] + 1]
+            best[k] = max(skip, take)
+
+        chosen: list[int] = []
+        k = starts.size
+        while k > 0:
+            take = weights[k - 1] + best[predecessor[k - 1] + 1]
+            # Égalité tranchée en faveur de la prise : avec des surplus tous nuls ou
+            # négatifs, l'ensemble retenu reste maximal en nombre de créneaux.
+            if take >= best[k - 1]:
+                chosen.append(int(order[k - 1]))
+                k = predecessor[k - 1] + 1
+            else:
+                k -= 1
+        return np.array(sorted(chosen), dtype=int)
+
+
+# ------------------------------------------------------------- Q63 — coût plancher
+
+
+class OrderType(str, Enum):
+    AGGRESSIVE = "AGGRESSIVE"
+    PASSIVE = "PASSIVE"
+
+
+@dataclass(frozen=True)
+class CostFloor:
+    """Q63 — borne **inférieure** du coût réellement inévitable (ADR-192).
+
+    Ce n'est ni le coût central estimé, ni le coût prudent. Pour que l'exclusion tienne,
+    `C_réel ≥ C_floor` doit être défendable — donc mieux vaut sous-estimer les coûts que
+    les surestimer.
+
+    Les crédits sont **signés** : un swap ou une remise favorable rend un composant
+    négatif, et le plancher doit retenir la convention la plus favorable compatible avec
+    la cellule. Transformer un crédit possible en coût positif pour faciliter une
+    exclusion est interdit.
+    """
+
+    order_type: OrderType
+    #: Commission certaine, contractuellement connue.
+    certain_commission: float
+    #: Frais obligatoires incontournables.
+    mandatory_fees: float
+    #: Franchissement déjà nécessaire et observé. **Interdit pour un ordre passif** :
+    #: celui-ci peut obtenir un prix différent du scénario agressif.
+    observed_crossing: float = 0.0
+    #: Financement inévitable si l'horizon traverse la frontière. Signé.
+    unavoidable_financing: float = 0.0
+    #: Crédits signés — remises, swaps favorables. Négatifs par convention.
+    signed_credits: float = 0.0
+    unit: str = "USD/oz"
+    source: str = ""
+    estimated_components_use_lower_bound: bool = True
+
+    def __post_init__(self) -> None:
+        if not self.source.strip():
+            raise CampaignError(
+                "Un plancher de coûts sans source déclarée ne peut pas être distingué "
+                "d'une valeur choisie pour obtenir l'exclusion souhaitée."
+            )
+        if self.order_type is OrderType.PASSIVE and self.observed_crossing > 0.0:
+            raise CampaignError(
+                "Le franchissement ne peut pas entrer dans le plancher d'un ordre "
+                "passif : celui-ci peut obtenir un prix différent du scénario agressif. "
+                "Son plancher se limite aux frais réellement certains."
+            )
+        if not self.estimated_components_use_lower_bound:
+            raise CampaignError(
+                "Un composant estimé entre dans le plancher par sa borne inférieure, "
+                "jamais par son estimation centrale : pour une exclusion "
+                "signal-agnostique, sous-estimer les coûts est le sens conservateur."
+            )
+
+    @property
+    def value(self) -> float:
+        return (
+            self.certain_commission + self.mandatory_fees + self.observed_crossing
+            + self.unavoidable_financing + self.signed_credits
+        )
+
+
+# -------------------------------------------------------- capture et surplus oracle
+
+
+@dataclass(frozen=True)
+class OracleCapture:
+    """`G_i^oracle` — capture brute maximale après latence, par opportunité.
+
+    Construite en offrant au système la direction parfaite, la meilleure sortie de la
+    fenêtre et aucune erreur prédictive. Elle conserve en revanche les contraintes
+    qu'aucun oracle ne peut contourner : latence déjà subie, prix réellement disponibles,
+    horizon, capacité — sans quoi elle cesserait d'être une borne supérieure **du système
+    étudié**.
+    """
+
+    starts_ns: np.ndarray
+    gross: np.ndarray
     horizon_ns: int
     scope: CapturabilityScope
-    #: Excursion favorable maximale après latence, en unité de prix.
-    capture: Quantiles
-    #: Part des événements où la latence dépasse l'horizon — capture nulle, jamais exclue
-    #: de l'échantillon.
+    span_ns: int
+    clusters: int
     exhausted_fraction: float
 
     @property
-    def optimistic_capture(self) -> float:
-        """Lecture favorable de la borne : c'est elle qui doit échouer pour exclure."""
-        return self.capture.p90
+    def quantiles(self) -> Quantiles:
+        """Diagnostics. Un quantile seul n'exclut jamais rien (ADR-189)."""
+        return Quantiles.of(self.gross.tolist())
 
 
 def oracle_capturable(
@@ -963,96 +1121,228 @@ def oracle_capturable(
 ) -> OracleCapture:
     """Excursion favorable maximale atteignable **après** avoir attendu la latence.
 
-    Pour chaque événement : on se place à `t0 + L`, puis on prend la plus grande
-    excursion favorable dans la fenêtre restante, dans **la meilleure des deux
-    directions**. C'est un oracle, pas une prédiction.
-
-    Si `L ≥ h`, la capture vaut zéro et l'événement **reste dans l'échantillon** : le
+    Si `L ≥ h`, la capture vaut zéro et l'opportunité **reste dans l'échantillon** : la
     retirer ne conserverait que les cas où l'on avait eu le temps d'agir (ADR-159).
     """
     rng = rng or np.random.default_rng(0)
     if event_starts.size == 0 or latency_samples_ns.size == 0:
-        return OracleCapture(0, 0, horizon_ns, scope, Quantiles.of([]), float("nan"))
+        return OracleCapture(np.array([], dtype=np.int64), np.array([]), horizon_ns,
+                             scope, 0, 0, float("nan"))
 
     drawn = rng.choice(latency_samples_ns, size=event_starts.size, replace=True)
-    captures: list[float] = []
+    gross: list[float] = []
     exhausted = 0
 
     for start, lat in zip(event_starts, drawn):
         t0 = timestamps_ns[start]
         if lat >= horizon_ns:
-            captures.append(0.0)
+            gross.append(0.0)
             exhausted += 1
             continue
         i_act = int(np.searchsorted(timestamps_ns, t0 + int(lat), side="left"))
         i_end = int(np.searchsorted(timestamps_ns, t0 + horizon_ns, side="right"))
         if i_act >= i_end or i_act >= prices.size:
-            captures.append(0.0)
+            gross.append(0.0)
             exhausted += 1
             continue
         window = prices[i_act:i_end]
         entry = prices[i_act]
-        captures.append(float(max(window.max() - entry, entry - window.min())))
+        gross.append(float(max(window.max() - entry, entry - window.min())))
 
     clusters = (
         int(np.unique(cluster_ids[event_starts]).size) if cluster_ids is not None
-        else len(captures)
+        else len(gross)
     )
+    span = int(timestamps_ns[-1] - timestamps_ns[0]) if timestamps_ns.size > 1 else 0
     return OracleCapture(
-        events=len(captures),
-        clusters=clusters,
+        starts_ns=timestamps_ns[event_starts],
+        gross=np.asarray(gross, dtype=float),
         horizon_ns=horizon_ns,
         scope=scope,
-        capture=Quantiles.of(captures),
-        exhausted_fraction=exhausted / len(captures),
+        span_ns=span,
+        clusters=clusters,
+        exhausted_fraction=exhausted / len(gross),
+    )
+
+
+def clopper_pearson_upper(successes: int, trials: int, alpha: float) -> float:
+    """Borne supérieure exacte du taux — indispensable pour exclure prudemment.
+
+    Sans elle, « aucune opportunité rentable observée » se lirait comme « le taux est
+    nul », alors qu'il n'est que **borné**. Avec zéro succès sur `n` tirages, la borne
+    vaut `1 − α^(1/n)` : elle ne descend jamais à zéro.
+    """
+    if trials <= 0:
+        return 1.0
+    if successes >= trials:
+        return 1.0
+    if successes == 0:
+        return 1.0 - alpha ** (1.0 / trials)
+    if successes > 4_000:
+        # Repli conservateur : Hoeffding, valide sans limite de taille.
+        return min(1.0, successes / trials + math.sqrt(math.log(1.0 / alpha) / (2 * trials)))
+
+    def cdf(p: float) -> float:
+        return sum(
+            math.comb(trials, i) * p**i * (1.0 - p) ** (trials - i)
+            for i in range(successes + 1)
+        )
+
+    lo, hi = successes / trials, 1.0
+    for _ in range(80):
+        mid = (lo + hi) / 2.0
+        if cdf(mid) > alpha:
+            lo = mid
+        else:
+            hi = mid
+    return hi
+
+
+@dataclass(frozen=True)
+class OracleAssessment:
+    """Ce que le perfect oracle pourrait extraire, sous contraintes."""
+
+    opportunities: int
+    selected: int
+    profitable: int
+    profitable_rate: float
+    profitable_rate_upper: float
+    #: Fréquence maximale d'opportunités oracle-rentables, par seconde.
+    profitable_frequency: float
+    profitable_frequency_upper: float
+    max_surplus: float
+    #: Valeur économique maximale par unité de temps, sous plafond de capacité.
+    capacity_value_per_second: float
+    capacity: int
+    cost_floor: float
+    delta_meu: float
+    quantiles: Quantiles
+    clusters: int
+
+
+def assess_oracle(
+    capture: OracleCapture,
+    cost_floor: CostFloor,
+    opportunities: OpportunitySet,
+    delta_meu: float,
+    alpha: float = 0.05,
+) -> OracleAssessment:
+    """Surplus, fréquence et capacité économique de l'oracle (§3-4).
+
+        S_i = G_i − C_floor        I_i = 1[ S_i > δ_MEU ]
+
+    Toutes les grandeurs passent par la sélection sous contraintes : sans elle, un seul
+    mouvement compterait autant de fois qu'il a produit d'horodatages.
+    """
+    surplus = capture.gross - cost_floor.value
+    selected = opportunities.select(surplus)
+    kept = surplus[selected] if selected.size else np.array([])
+
+    profitable = int((kept > delta_meu).sum())
+    n = int(selected.size)
+    rate = profitable / n if n else 0.0
+    rate_upper = clopper_pearson_upper(profitable, n, alpha) if n else 1.0
+
+    span_s = capture.span_ns / NS_PER_SECOND if capture.span_ns else float("nan")
+    frequency = profitable / span_s if span_s and span_s > 0 else float("nan")
+    frequency_upper = (
+        rate_upper * n / span_s if span_s and span_s > 0 else float("nan")
+    )
+
+    value = float(kept[kept > 0.0].sum()) if kept.size else 0.0
+    return OracleAssessment(
+        opportunities=int(capture.gross.size),
+        selected=n,
+        profitable=profitable,
+        profitable_rate=rate,
+        profitable_rate_upper=rate_upper,
+        profitable_frequency=frequency,
+        profitable_frequency_upper=frequency_upper,
+        max_surplus=float(surplus.max()) if surplus.size else float("nan"),
+        capacity_value_per_second=value / span_s if span_s and span_s > 0 else float("nan"),
+        capacity=opportunities.capacity,
+        cost_floor=cost_floor.value,
+        delta_meu=delta_meu,
+        quantiles=capture.quantiles,
+        clusters=capture.clusters,
     )
 
 
 class OracleVerdict(str, Enum):
-    #: Même l'oracle ne couvre pas le plancher de coûts. Exclusion sans moteur prédictif.
-    LATENCY_COST_ORACLE_EXCLUDED = "LATENCY_COST_ORACLE_EXCLUDED"
+    #: Même l'opportunité oracle la plus favorable ne couvre pas les exigences.
+    ORACLE_UNIVERSALLY_NON_VIABLE = "ORACLE_UNIVERSALLY_NON_VIABLE"
+    #: Des opportunités existent, mais trop rarement pour atteindre le plancher exigé.
+    ORACLE_FREQUENCY_NON_VIABLE = "ORACLE_FREQUENCY_NON_VIABLE"
+    #: L'oracle ne produit pas assez de valeur par unité de temps sous contraintes.
+    ORACLE_ECONOMIC_CAPACITY_NON_VIABLE = "ORACLE_ECONOMIC_CAPACITY_NON_VIABLE"
+    #: Des opportunités suffisamment favorables subsistent. **Ne signifie pas** qu'un
+    #: signal pourra les identifier.
     ORACLE_NOT_EXCLUDED = "ORACLE_NOT_EXCLUDED"
     ORACLE_INDETERMINATE = "ORACLE_INDETERMINATE"
 
 
-def oracle_exclusion(
-    capture: OracleCapture,
-    cost_floor: float,
+def oracle_verdict(
+    assessment: OracleAssessment,
+    minimum_frequency_per_second: float,
+    minimum_contribution_per_second: float,
     min_clusters: int = 20,
+    capacity_safety_factor: float = 2.0,
 ) -> tuple[OracleVerdict, str]:
-    """Exclusion signal-agnostique (§6, ADR-183).
+    """Exclusion oracle à trois niveaux (ADR-190).
 
-        U_capture ≤ C_floor  ⇒  LATENCY_COST_ORACLE_EXCLUDED
-
-    L'argument est plus fort qu'un `Lmax` arbitraire : même un détecteur extrêmement
-    favorable ne dispose plus d'un mouvement suffisant après la latence observée. Aucune
-    croyance sur l'alpha n'y entre.
-
-    `cost_floor` est le coût aller-retour **le plus bas plausible** : utiliser une
-    estimation centrale rendrait l'exclusion moins conservatrice qu'annoncé.
+    **Un quantile ne produit jamais d'exclusion à lui seul.** Que 90 % de la population
+    soit sous le plancher de coûts n'établit rien sur les 10 % restants — qui sont
+    précisément ceux qu'un moteur sélectif apprendrait à retenir. L'exclusion passe donc
+    par l'impossibilité universelle, la fréquence maximale exploitable, ou la capacité
+    économique maximale sous contraintes.
     """
-    if capture.events == 0:
-        return OracleVerdict.ORACLE_INDETERMINATE, "aucun événement exploitable"
-    if capture.clusters < min_clusters:
+    if assessment.selected == 0:
+        return OracleVerdict.ORACLE_INDETERMINATE, "aucune opportunité admissible"
+    if assessment.clusters < min_clusters:
         return (
             OracleVerdict.ORACLE_INDETERMINATE,
-            f"{capture.clusters} grappes indépendantes sur {min_clusters} requises",
+            f"{assessment.clusters} grappes indépendantes sur {min_clusters} requises",
         )
 
-    optimistic = capture.optimistic_capture
-    if optimistic <= cost_floor:
+    # Niveau A — même la meilleure opportunité observée ne dégage pas de surplus.
+    if assessment.max_surplus <= assessment.delta_meu:
         return (
-            OracleVerdict.LATENCY_COST_ORACLE_EXCLUDED,
-            f"capture oracle p90 = {optimistic:.4f} ≤ plancher de coûts {cost_floor:.4f} "
-            f"à l'horizon {format_ns(capture.horizon_ns)} — direction connue d'avance et "
-            f"sortie parfaite comprises ; {capture.exhausted_fraction:.0%} des événements "
-            "sont déjà épuisés au moment où l'on pourrait agir",
+            OracleVerdict.ORACLE_UNIVERSALLY_NON_VIABLE,
+            f"surplus oracle maximal {assessment.max_surplus:.4f} ≤ seuil "
+            f"{assessment.delta_meu:.4f} sur {assessment.selected} opportunités — aucune "
+            f"ne survit même avec connaissance parfaite du futur ; le taux réel reste "
+            f"borné par {assessment.profitable_rate_upper:.2%}, non nul par construction",
         )
+
+    # Niveau B — des opportunités existent, mais trop rarement.
+    if assessment.profitable_frequency_upper < minimum_frequency_per_second:
+        return (
+            OracleVerdict.ORACLE_FREQUENCY_NON_VIABLE,
+            f"fréquence oracle-rentable bornée par "
+            f"{assessment.profitable_frequency_upper * 86_400:.2f}/jour, sous le plancher "
+            f"de {minimum_frequency_per_second * 86_400:.2f}/jour — aucune stratégie "
+            "réelle ne peut atteindre la fréquence exigée",
+        )
+
+    # Niveau C — la capacité économique maximale reste sous la contribution requise.
+    if (
+        assessment.capacity_value_per_second * capacity_safety_factor
+        < minimum_contribution_per_second
+    ):
+        return (
+            OracleVerdict.ORACLE_ECONOMIC_CAPACITY_NON_VIABLE,
+            f"capacité économique oracle {assessment.capacity_value_per_second * 86_400:.2f}"
+            f"/jour (marge ×{capacity_safety_factor:g}) sous la contribution requise "
+            f"{minimum_contribution_per_second * 86_400:.2f}/jour, avec au plus "
+            f"{assessment.capacity} positions sur la période",
+        )
+
     return (
         OracleVerdict.ORACLE_NOT_EXCLUDED,
-        f"capture oracle p90 = {optimistic:.4f} au-dessus du plancher {cost_floor:.4f} — "
-        "il reste physiquement assez d'espace pour justifier la recherche d'un signal, "
-        "ce qui ne dit rien de son existence",
+        f"{assessment.profitable} opportunités oracle-rentables sur "
+        f"{assessment.selected} retenues, surplus maximal {assessment.max_surplus:.4f} — "
+        "il reste assez d'espace pour justifier la recherche d'un signal, ce qui ne dit "
+        "rien de la capacité d'un moteur à les identifier",
     )
 
 
@@ -1272,6 +1562,8 @@ class Phase0State(str, Enum):
 
     PHASE0_EXCLUDED_BY_COST = "PHASE0_EXCLUDED_BY_COST"
     PHASE0_EXCLUDED_BY_PASSIVE_LATENCY = "PHASE0_EXCLUDED_BY_PASSIVE_LATENCY"
+    #: Impossibilité universelle, par fréquence, ou par capacité économique — jamais
+    #: par un simple quantile (ADR-189).
     PHASE0_EXCLUDED_BY_ORACLE_CAPTURABILITY = "PHASE0_EXCLUDED_BY_ORACLE_CAPTURABILITY"
     #: Il reste physiquement et économiquement assez d'espace pour **justifier la
     #: recherche** d'un signal. Ne signifie jamais qu'un bon trade est possible.
@@ -1305,10 +1597,18 @@ def phase0_state(
             Phase0State.PHASE0_EXCLUDED_BY_PASSIVE_LATENCY,
             "la borne passive exclut, courtier supposé instantané",
         )
-    if oracle is OracleVerdict.LATENCY_COST_ORACLE_EXCLUDED:
+    oracle_exclusions = {
+        OracleVerdict.ORACLE_UNIVERSALLY_NON_VIABLE:
+            "aucune opportunité ne survit même avec connaissance parfaite du futur",
+        OracleVerdict.ORACLE_FREQUENCY_NON_VIABLE:
+            "des opportunités existent, mais trop rarement pour le plancher de fréquence",
+        OracleVerdict.ORACLE_ECONOMIC_CAPACITY_NON_VIABLE:
+            "la capacité économique de l'oracle reste sous la contribution requise",
+    }
+    if oracle in oracle_exclusions:
         return (
             Phase0State.PHASE0_EXCLUDED_BY_ORACLE_CAPTURABILITY,
-            "même un détecteur oracle ne couvre plus les coûts après la latence observée",
+            oracle_exclusions[oracle],
         )
     if (
         passive is PassiveVerdict.PASSIVE_LATENCY_INDETERMINATE
