@@ -12,7 +12,7 @@ latence et rareté des occurrences.
 | --- | --- |
 | `docs/` | spécification, journal de décisions (`DECISIONS.md`), registre des questions (`QUESTIONS.md`) |
 | `feasibility/` | **code exécutable** : les deux phases 0 et leur intersection |
-| `tests/` | 499 tests, un par garde-fou |
+| `tests/` | 516 tests, un par garde-fou |
 | `calendar-sources/` | dossier de preuve : sources normatives du calendrier |
 | `connector-capability/` | fiches Q57/Q58 : ce que les horloges et le connecteur permettent d'affirmer |
 
@@ -20,7 +20,7 @@ latence et rareté des occurrences.
 
 ```bash
 cd financial-analyzer
-python3 -m pytest tests/ -q          # 499 tests
+python3 -m pytest tests/ -q          # 516 tests
 python3 -m feasibility.report        # carte de faisabilité (données synthétiques)
 python3 -m feasibility.passive_demo  # campagne passive Q51-A de bout en bout
 ```
@@ -167,6 +167,30 @@ positives — alors que le second cas produit davantage de signaux.
 
 C'est le premier moment du projet où laisser tourner le système une journée produit plus de
 valeur que lui ajouter mille lignes de code.
+
+## La cible économique — Q1-v1, figée
+
+`feasibility/mandate.py` déclare `Q1-GOLD-RECOMMENDATION-V1`, empreinte `c1127d72f9fcced6` :
+
+```
+rôle             RECOMMENDATION — aucun ordre émis
+unité            R, avec 1R = 0,50 % de l'equity
+J_min            +0,10 R / séance   →  +6 R sur 60 séances
+δ_MEU            +0,20 R / trade
+risque           ≤ 1R par trade, ≤ 2R simultané, ≤ 12R de perte de validation
+```
+
+L'unité `R` est ce qui empêche de calibrer l'analyseur sur un compte à 75 €, 500 € ou
+10 000 € : la qualité du signal s'exprime en risque planifié, et l'exécution décide ensuite si
+le capital suit. Un lot minimum incompatible produit `EXECUTION_NOT_COMPATIBLE_WITH_CAPITAL`,
+jamais `BAD_SIGNAL`.
+
+Avec `EV = δ_MEU`, **0,5 trade par séance suffit** à atteindre la cible : c'est ce qui la rend
+compatible avec de longues séries de `NO TRADE`.
+
+> **Consigne de séquencement (ADR-250).** Après Q1, Q64, Q63 et Q65, aucune nouvelle couche
+> méthodologique tant qu'une véritable session exploratoire XAU/USD n'a pas été enregistrée.
+> Le laboratoire est assez construit ; il lui faut maintenant du marché.
 
 ## Ce que produit `feasibility`
 

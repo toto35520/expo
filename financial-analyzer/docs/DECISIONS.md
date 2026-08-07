@@ -4345,3 +4345,98 @@ l'empreinte ; toute divergence produit `PROTOCOL_DRIFT` et ouvre un nouveau segm
 code, Q64 ou le calendrier, et continuer à classer les observations suivantes `NORMATIVE` au
 motif qu'elles étaient postérieures. La protection compte d'autant plus que Q1 est précisément
 la prochaine chose à figer.
+
+---
+
+## ADR-245 — Q1-v1 est figée : `Q1-GOLD-RECOMMENDATION-V1`
+
+**Statut** : **figé et implémenté** · `feasibility/mandate.py`, empreinte `c1127d72f9fcced6`
+
+**Décision.** Le mandat économique normatif est déclaré :
+
+| | |
+| --- | --- |
+| rôle | `RECOMMENDATION` — aucun ordre émis |
+| unité primaire | `R`, avec `1R` = 0,50 % de l'equity |
+| `J_min` | +0,10 R par séance, soit +6 R sur 60 séances |
+| `δ_MEU` | +0,20 R par trade accepté |
+| horizon | 60 séances |
+| risque par trade | ≤ 1R · risque simultané ≤ 2R · perte de validation ≤ 12R |
+
+**Conséquences.** L'unité `R` est ce qui empêche de calibrer l'analyseur sur un compte de
+75 €, 500 € ou 10 000 € : la qualité du signal s'exprime en risque planifié, et l'exécution
+décide ensuite si le capital suit. Un lot minimum incompatible produit
+`EXECUTION_NOT_COMPATIBLE_WITH_CAPITAL`, jamais `BAD_SIGNAL`.
+
+Deux lectures dérivées sont publiées plutôt que subies : avec `EV = δ_MEU`, **0,5 trade par
+séance suffit** — c'est ce qui rend la cible atteignable par un système très sélectif ; et le
+budget de perte vaut **2,0 ×** la cible sur l'horizon.
+
+---
+
+## ADR-246 — Le rôle `RECOMMENDATION` retire Q42 du chemin critique du signal
+
+**Statut** : figé (Q1-v1) · précise l'ADR-178
+
+**Décision.** En v1, le verdict scientifique porte sur *information → analyse → décision prête
+→ trade théorique sous le modèle d'exécution gelé*, et non sur *ordre réel → ACK → fill*.
+`AUTO_EXECUTION` est un **rôle différent**, exigeant Q1-V2 et la qualification Q42.
+
+**Conséquences.** Q42 cesse d'être requise pour qualifier la capacité d'un moteur à produire
+une décision. Elle reste nécessaire pour affirmer qu'un signal est exécutable automatiquement
+avec cette EV nette : `SIGNAL QUALITY ≠ AUTOMATED EXECUTION QUALITY`, deux gates séparés.
+
+---
+
+## ADR-247 — Q64 dérive ses seuils du mandat, elle ne les fixe pas
+
+**Statut** : figé et implémenté (Q64) · applique l'ADR-222
+
+**Décision.** `EconomicFrequencyRequirement.from_mandate()` lit `J_min` dans Q1 et le divise
+par une borne supérieure d'espérance, en portant la version **et l'empreinte** du mandat dans
+sa provenance.
+
+**Conséquences.** La chaîne est complète : Q1 déclare, Q64 dérive, le verdict cite l'empreinte.
+Changer un seuil sans changer la version devient visible, et un moteur rare est protégé par
+construction — meilleure est la borne d'espérance, moins il faut de trades.
+
+---
+
+## ADR-248 — Le risque simultané de 2R est une contrainte de politique
+
+**Statut** : figé (Q1-v1 + Q65) · applique l'ADR-206
+
+**Décision.** `MAX_PLANNED_OPEN_RISK = 2R` est classé `POLICY_CONSTRAINT`. Il n'entre jamais
+dans le `PHYSICAL_ORACLE`.
+
+**Conséquences.** L'utiliser pour supprimer une famille de moteurs ferait passer une décision
+d'architecture pour une limite du marché. Il appartient au `POLICY_ORACLE`, qui répond à
+« notre système tel que nous avons décidé de le construire est-il viable ? ».
+
+---
+
+## ADR-249 — `1R` est le risque planifié, jamais la perte maximale
+
+**Statut** : figé (Q1-v1)
+
+**Décision.** Le rapport publie distribution des pertes, Expected Shortfall, pire trade, pire
+journée, perte maximale, séries de pertes, et **pertes de gap et de glissement**.
+
+**Conséquences.** Gaps et glissement produisent des pertes supérieures à 1R. Présenter le
+risque planifié comme une perte maximale certaine serait la même erreur que toutes celles déjà
+corrigées : transformer une hypothèse favorable en fait. L'écart se **mesure**.
+
+---
+
+## ADR-250 — Plus de nouvelle couche méthodologique avant une session réelle
+
+**Statut** : figé · consigne de séquencement
+
+**Décision.** Après Q1, Q64, Q63 et Q65, aucune nouvelle couche théorique n'est construite tant
+qu'une véritable session exploratoire XAU/USD n'a pas été enregistrée.
+
+**Conséquences.** Le laboratoire compte 250 décisions, 516 tests et six passes d'audit sur la
+seule couche Q51/Q66. Les défauts trouvés étaient réels, mais chacun devenait plus fin pour un
+risque plus théorique — pendant que la collecte, dont les données **ne se reconstruisent pas
+après coup**, n'avait toujours pas commencé. Le prochain travail utile n'est pas une
+méthode : c'est du marché.

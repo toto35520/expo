@@ -633,6 +633,25 @@ class EconomicFrequencyRequirement:
             )
 
     @classmethod
+    def from_mandate(
+        cls, mandate, ev_upper_r: float, sessions_per_second: float
+    ) -> "EconomicFrequencyRequirement":
+        """Dérive l'exigence directement du mandat Q1 — la seule source légitime.
+
+        `sessions_per_second` convertit la cadence par séance du mandat en cadence par
+        seconde ; il vient du calendrier, pas d'une estimation.
+        """
+        per_session = mandate.necessary_frequency_per_session(ev_upper_r)
+        return cls(
+            value_per_second=per_session * sessions_per_second,
+            q1_reference=f"{mandate.version} ({mandate.fingerprint})",
+            derived_from=(
+                f"J_min = {mandate.j_min_per_session_r:g} R/séance ÷ EV_U = "
+                f"{ev_upper_r:g} R → {per_session:g} trade/séance"
+            ),
+        )
+
+    @classmethod
     def from_ev_upper_bound(
         cls, thresholds: "EconomicThresholds", ev_upper: float, q1_reference: str
     ) -> "EconomicFrequencyRequirement":

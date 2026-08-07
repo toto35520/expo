@@ -1,8 +1,94 @@
-# Q1 — Cible économique du système
+# Q1-v1 — Cible économique normative du Gold Analyzer
 
-> Statut : **structure figée, valeurs à déclarer.** Q1 était jusqu'ici « emplacement du
-> code et pile technique ». Elle est devenue le préalable au premier verdict normatif :
-> sans elle, Q64 ne serait qu'une série de nombres commodes.
+> Statut : **figée**. `Q1-GOLD-RECOMMENDATION-V1`, empreinte `c1127d72f9fcced6`.
+> Code : `feasibility/mandate.py`, 17 tests dédiés.
+>
+> Toute modification de `J_min`, `δ_MEU`, du risque par trade, de la limite de perte, de
+> l'horizon d'évaluation, du rôle ou de l'unité de performance crée **V2**, non
+> applicable rétroactivement au holdout précédent.
+
+---
+
+## 0. Les valeurs
+
+| | | |
+| --- | --- | --- |
+| rôle | `RECOMMENDATION` | n'émet aucun ordre |
+| unité primaire | `R` | risque planifié jusqu'à l'invalidation |
+| `1R` | 0,50 % de l'equity | jamais un montant fixe |
+| `J_min` | **+0,10 R / séance** | soit +6 R sur 60 séances |
+| `δ_MEU` | **+0,20 R / trade** | plancher de matérialité |
+| horizon | **60 séances** | une journée n'est pas l'unité économique |
+| risque / trade | ≤ 1R | l'EV se juge avant la taille |
+| risque simultané | ≤ 2R | **contrainte de politique** |
+| perte de validation | ≤ 12R | *risk gate* |
+
+Deux lectures dérivées, publiées parce qu'elles sont faciles à subir sans les avoir
+choisies :
+
+```
+si chaque trade vaut exactement δ_MEU  →  0,5 trade par séance suffit
+budget de perte / cible sur l'horizon  →  12R / 6R = 2,0 ×
+```
+
+La première est ce qui rend la cible **atteignable par un système très sélectif** : un
+trade qualifiant toutes les deux séances. La seconde dit que le budget de perte vaut le
+double de la cible atteignable — exigeant, mais assumé.
+
+---
+
+## 0 bis. Le rôle, et ce qu'il retire du chemin critique
+
+```
+ROLE = RECOMMENDATION
+```
+
+Le verdict scientifique de v1 porte sur :
+
+```
+information disponible → analyse → décision prête
+→ trade théorique exécutable selon le modèle d'exécution gelé
+```
+
+et **pas encore** sur `ordre réel → ACK → fill réel`.
+
+Conséquence directe : **Q42 n'est pas nécessaire pour qualifier la capacité du moteur à
+produire une décision.** Elle le reste pour affirmer qu'un signal est exécutable
+automatiquement avec cette EV nette. Les deux gates sont séparés :
+
+```
+SIGNAL QUALITY   ≠   AUTOMATED EXECUTION QUALITY
+```
+
+`AUTO_EXECUTION` est un rôle différent, qui exigera Q1-V2 et la qualification Q42
+correspondante.
+
+---
+
+## 0 ter. Pourquoi l'unité est R et non l'euro
+
+Un même signal ne doit pas paraître meilleur parce que le compte est plus gros.
+
+```
+capital    100 €  →  1R = 0,50 €
+capital  1 000 €  →  1R = 5 €
+capital 10 000 €  →  1R = 50 €
+```
+
+Aucun de ces montants n'entre dans un seuil. Les grandeurs microstructurelles restent
+dans leur unité native — `USD/oz` pour prix et spread, `USD/lot` pour la commission,
+`ns` pour la latence — et la conversion en R n'intervient que lorsque le trade possède
+entrée, stop, dimensionnement et spécification de contrat.
+
+Si le lot minimum du courtier empêche de respecter le risque :
+
+```
+SIGNAL_VALID  +  EXECUTION_NOT_COMPATIBLE_WITH_CAPITAL
+```
+
+et **jamais** `BAD_SIGNAL`. Le constructeur du mandat le distingue par type.
+
+---
 
 ---
 
@@ -191,5 +277,38 @@ La collecte exploratoire Q50 / Q51-A / Q57 **n'attend rien de tout cela** : `Dat
 sépare la collecte du verdict, et seule la période postérieure au gel soutient la première
 conclusion normative.
 
-> Une fois Q1 figée, la première campagne normative aura un critère de réussite qui ne
-> pourra plus être choisi après avoir vu les résultats.
+> Q1 étant figée, la première campagne normative a désormais un critère de réussite qui
+> ne peut plus être choisi après avoir vu les résultats.
+
+---
+
+## 8. Le critère final
+
+```
+max  EV_net,R
+
+sous    perte ≤ 12R
+        risque par trade ≤ 1R
+        EV du trade accepté suffisamment matérielle devant δ_MEU = 0,20R
+        J sur 60 séances ≥ 6R
+        NO TRADE autorisé sans pénalité
+```
+
+## 9. Ce que ces nombres ne signifient pas
+
+Ils ne disent pas que le système gagnera 6R par trimestre, qu'il doit trader chaque jour,
+qu'un trade à +0,20R est garanti, ni qu'une perte de 12R surviendra.
+
+Ils définissent **la barre minimale exigée avant de considérer qu'une complexité
+supplémentaire vaut la peine d'exister.**
+
+## 10. Le critère d'un moteur
+
+Un moteur n'est pas validé parce qu'il porte un nom — BOS, FVG, Order Block, CVD, macro.
+Il doit démontrer un apport **incrémental** :
+
+```
+EV(M_base + M_j) − EV(M_base)   suffisamment positif devant δ_MEU
+```
+
+Sinon il est `DESCRIPTIVE_ONLY`, ou supprimé.
