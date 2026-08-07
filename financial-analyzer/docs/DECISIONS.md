@@ -3497,6 +3497,12 @@ arbitrairement.
 | B — impossibilité par fréquence | `f_oracle_rentable < f_min` | `ORACLE_FREQUENCY_NON_VIABLE` |
 | C — impossibilité économique | `V_oracle_max < J_min` | `ORACLE_ECONOMIC_CAPACITY_NON_VIABLE` |
 
+> **Correction (ADR-199).** Le niveau A tel qu'énoncé ici est un **maximum empirique**. Il
+> démontre qu'aucune des opportunités observées n'a survécu, pas qu'aucune ne le peut. Le nom
+> `ORACLE_UNIVERSALLY_NON_VIABLE` lui est retiré et réservé à une borne analytique sur tout le
+> domaine admissible. Les niveaux B et C sont inchangés — sous réserve, pour C, qu'au moins un
+> survivant ait été observé.
+
 **Conséquences.** Le niveau A n'affirme jamais que le taux d'opportunités rentables est **nul** :
 avec zéro succès sur `n` tirages, la borne de Clopper-Pearson vaut `1 − α^(1/n)` et ne descend
 pas à zéro. Le niveau B utilise la borne **supérieure** du taux, de sorte que l'exclusion reste
@@ -3587,6 +3593,10 @@ règle de réarmement, écart minimal, distributions de taille et de durée, et 
 d'autocorrélation. Sans dépendance maîtrisée ni stationnarité vérifiée, le statut devient
 `SEQUENTIAL_ASSUMPTIONS_UNVERIFIED`.
 
+> **Correction (ADR-202).** Des diagnostics favorables ne suffisent pas non plus. Une
+> autocorrélation faible est une absence de contre-preuve, pas une preuve ; la qualification
+> exige désormais un argument positif déclaré.
+
 **Conséquences.** Deux blocs consécutifs peuvent partager charge processeur, file persistante,
 régime de marché, connexion, événement macro ou volatilité. De bonnes simulations i.i.d. ne
 rétablissent pas une garantie dont l'hypothèse est fausse. Les statuts séquentiels —
@@ -3609,3 +3619,166 @@ donc `ANYTIME_VALID_WHEN_QUALIFIED` avec repli, plutôt qu'un choix global.
 n'est pas éliminée : elle change de protocole. Le choix conservateur reste préférable — une
 méthode plus grossière mais comprise vaut mieux qu'une méthode plus fine mal maîtrisée — mais il
 s'applique cellule par cellule, pas à la campagne entière.
+
+---
+
+## ADR-199 — L'impossibilité universelle est démontrée, jamais observée
+
+**Statut** : figé et implémenté (Q61-A) · **corrige le niveau A de l'ADR-192**
+
+**Décision.** `ORACLE_UNIVERSALLY_NON_VIABLE` est réservé au cas où une borne
+**déterministe ou analytique** établit `sup{ S^oracle(ω) : ω ∈ Ω_admissible } ≤ δ_MEU` sur tout
+le domaine étudié : horizon inférieur à une latence minimale certaine, limite physique du prix
+capturable, contrainte contractuelle, ou combinaison de bornes mathématiques. Le constructeur
+refuse une impossibilité déclarée sans argument. L'absence de survivant dans un échantillon
+produit un verdict distinct, `ORACLE_NO_SURVIVOR_OBSERVED`, qui **n'exclut pas**.
+
+**Conséquences.** `max S_i < δ_MEU` sur 1 994 opportunités démontre qu'aucune des 1 994
+observées n'a survécu — pas qu'aucune opportunité future ne le peut. La clause de
+Clopper-Pearson ajoutée précédemment reconnaissait déjà cette différence sans en tirer la
+conséquence. Le verdict empirique devient conclusif uniquement par la fréquence : si
+`p_U × λ_opp < f_min`, alors `ORACLE_FREQUENCY_NON_VIABLE` est justifié — ce qui est
+scientifiquement bien plus fort que d'appeler « universel » un zéro observé. Le niveau C est
+également fermé sans survivant : une valeur mesurée nulle par absence d'observation n'est pas
+une capacité nulle.
+
+---
+
+## ADR-200 — Une borne de rareté n'est exacte que si l'hypothèse de Bernoulli est défendable
+
+**Statut** : figé et implémenté (Q61-A)
+
+**Décision.** `1 − α^(1/N)` est exacte pour des essais de Bernoulli **indépendants** de
+probabilité commune. Trois qualités de borne sont publiées : `RAW_EVENT_BOUND` (diagnostic
+seulement), `QUALIFIED_INDEPENDENT_BOUND` (hypothèses défendables), `DEPENDENCE_ROBUST_BOUND`
+(portée sur les épisodes indépendants). Le verdict n'utilise jamais une borne brute.
+
+**Conséquences.** `disjoint ≠ indépendant` : même avec des fenêtres disjointes, plusieurs
+opportunités partagent régime, séance, tendance, événement macro, volatilité et état de
+liquidité. Sur la démonstration, passer de la borne brute (1 994 opportunités) à la borne
+robuste (60 épisodes) fait passer le taux borné de 0,15 % à 4,87 % — un facteur 32. C'est le
+prix honnête de ne pas supposer l'indépendance.
+
+---
+
+## ADR-201 — `OpportunitySet` définit l'admissibilité économique, pas l'indépendance
+
+**Statut** : figé et implémenté (Q61-A) · précise l'ADR-193
+
+**Décision.** La sélection définit les opportunités **économiquement admissibles**. Elle ne
+revendique aucune indépendance statistique, laquelle relève de `ClusterQualification` ou d'une
+procédure explicitement adaptée à la dépendance.
+
+**Conséquences.** Même séparation fondamentale que `estimand ≠ méthode de variance` :
+
+```
+définition des opportunités  ≠  modèle de variance et d'inférence
+```
+
+---
+
+## ADR-202 — Les diagnostics ne qualifient pas à eux seuls une procédure séquentielle
+
+**Statut** : figé et implémenté (Q59-A) · **corrige le critère de l'ADR-197**
+
+**Décision.** Une faible autocorrélation empirique ne démontre pas les hypothèses nécessaires à
+une séquence de confiance : une série peut afficher `ACF ≈ 0` et rester dépendante, et un test
+de stationnarité qui ne rejette pas ne prouve pas la stationnarité. `ClusterQualification` exige
+donc un `assumption_proof` — construction du processus, méthode explicitement robuste à la
+dépendance observée, ou démonstration. Sans lui, le statut reste
+`SEQUENTIAL_ASSUMPTIONS_UNVERIFIED` **même avec tous les diagnostics favorables**.
+
+**Conséquences.** Une absence de contre-preuve n'est pas une preuve. Transformer l'une en
+l'autre est exactement l'erreur que le projet cherche à éliminer depuis le début.
+
+---
+
+## ADR-203 — La première campagne normative utilise un protocole à horizon fixe
+
+**Statut** : figé et implémenté (Q59-A)
+
+**Décision.** `PRIMARY_INFERENCE = FIXED_HORIZON` pour le premier échantillon réel destiné à
+produire un verdict. Le mode `ANYTIME_VALID_EXPERIMENTAL` tourne **en parallèle**, calculé et
+publié, sans valeur normative. `ANYTIME_VALID` deviendra normatif après validation suffisante de
+ses hypothèses, ou adoption d'une méthode explicitement robuste à la dépendance observée.
+
+**Conséquences.** Cela ne retire rien au module séquentiel : il devient un outil expérimental
+sur données réelles, ce qu'aucune simulation ne remplace.
+
+---
+
+## ADR-204 — La collecte commence avant le gel ; seul l'après-gel soutient le verdict
+
+**Statut** : figé et implémenté (Q51-A)
+
+**Décision.** `DataStatus` sépare `EXPLORATORY` de `NORMATIVE`. La collecte Q50/Q51-A démarre
+immédiatement ; `ProtocolFreeze` marque l'instant à partir duquel une période contiguë devient
+normative.
+
+**Conséquences.** Aucune donnée n'est perdue, et aucune décision statistique n'est prise après
+avoir vu son résultat. Les seuils économiques ne bloquent donc pas le démarrage — ils bloquent
+seulement le premier verdict.
+
+---
+
+## ADR-205 — Une exclusion globale utilise le plancher le plus favorable autorisé
+
+**Statut** : figé et implémenté (Q63)
+
+**Décision.** `C_floor^any = inf { C_floor(o) : o ∈ O_autorisés }`. Un verdict portant sur un
+seul mode d'exécution utilise le plancher de ce mode ; une conclusion prétendant éliminer **tout
+moteur possible** doit laisser à l'oracle le choix de l'exécution la plus favorable autorisée.
+
+**Conséquences.** Sinon on éliminerait une famille parce que les ordres au marché coûtent trop
+cher, alors qu'une exécution passive compatible resterait viable. Le module refuse de comparer
+des planchers exprimés dans des unités différentes.
+
+---
+
+## ADR-206 — Deux oracles : contraintes incontournables, et décisions d'architecture
+
+**Statut** : figé et implémenté (Q65)
+
+**Décision.** Chaque contrainte est classée `HARD_CONSTRAINT` ou `POLICY_CONSTRAINT`. Le
+`PHYSICAL_ORACLE` ne retient que les premières — horaires, prix réellement cotés, latence déjà
+subie, capital réel, contraintes du courtier, taille de contrat. Le `POLICY_ORACLE` ajoute les
+secondes — un seul trade simultané, cooldown, type d'ordre, risque maximal, séances retenues.
+
+**Conséquences.** Le cooldown est le cas dangereux : choisi arbitrairement, il réduit
+`V_oracle_max` et peut **fabriquer** une exclusion qui porterait sur notre architecture et non
+sur le marché. `physical_view()` retire les contraintes de politique ; c'est cette vue qui doit
+servir à prétendre éliminer tout moteur possible. Les deux oracles répondent à deux questions
+différentes et ne se confondent jamais.
+
+---
+
+## ADR-207 — Q64 dérive ses seuils de Q1 et distingue trois grandeurs
+
+**Statut** : figé et implémenté (Q64)
+
+**Décision.** `EconomicThresholds` exige une référence Q1 explicite — objectif économique, unité
+de performance, capital de référence, tolérance de risque, horizon d'évaluation, rôle du
+système. Elle distingue `δ_MEU` (valeur nette par occurrence), `f_stat_min` (fréquence permettant
+une validation statistique) et `f_econ_min` (dérivable de `J_min / δ_MEU`), et déclare une cible
+principale dont les autres grandeurs dérivent.
+
+**Conséquences.** Exiger simultanément `δ_MEU = +0,20 R`, `f_min = 3/jour` et `J_min = +0,60 R/jour`
+code trois fois la même exigence ; `redundancy_warning` le signale. Les seuils ne doivent pas
+être choisis parce qu'ils produisent une taille d'échantillon commode — cela inverserait le
+raisonnement. Q1 redevient donc un préalable au **verdict**, sans être un préalable à la
+collecte.
+
+---
+
+## ADR-208 — L'estimand d'un moteur se déclare avant son gate
+
+**Statut** : figé (Q59-E ouverte) · confirme l'ADR-195
+
+**Décision.** La phase 0 conserve et publie plusieurs estimandes — par événement, par grappe, par
+séance, et par capacité lorsqu'elle est disponible. Elle n'impose prématurément ni
+`EVENT_WEIGHTED` ni `CLUSTER_WEIGHTED`. Chaque moteur déclare le sien avant son gate.
+
+**Conséquences.** La bonne réponse dépend de la sémantique du moteur : évalué à chaque mise à
+jour, un déclenchement unique par épisode de déplacement, ou un maximum de N décisions par
+séance appellent des estimandes différents. Figer aujourd'hui produirait une décision qu'on
+regretterait lorsque les moteurs existeront.

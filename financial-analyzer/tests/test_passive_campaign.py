@@ -35,8 +35,16 @@ from feasibility.passive_campaign import (
     CapturabilityScope,
     ComparisonDesign,
     HorizonEndPolicy,
+    AnalyticalImpossibility,
+    BoundQuality,
+    ConstraintClass,
     CostFloor,
+    DataStatus,
+    EconomicTarget,
+    EconomicThresholds,
+    ProtocolFreeze,
     OracleCapture,
+    OracleKind,
     OracleVerdict,
     OpportunitySet,
     OrderType,
@@ -44,6 +52,8 @@ from feasibility.passive_campaign import (
     Phase0State,
     assess_oracle,
     clopper_pearson_upper,
+    most_favourable_floor,
+    rarity_bound,
     block_sensitivity,
     blocking_is_robust,
     compare_cadence,
@@ -794,30 +804,145 @@ def test_a_low_quantile_never_excludes_when_the_tail_survives():
     assert "ne dit rien de la capacité d'un moteur" in why
 
 
-def test_level_a_excludes_only_when_even_the_best_opportunity_fails():
-    """Impossibilité universelle : aucune opportunité ne survit avec connaissance
-    parfaite du futur."""
+def no_survivor_case():
     gross = np.full(600, 0.10)
     starts = np.arange(600, dtype=np.int64) * NS_PER_SECOND
     cap = OracleCapture(starts, gross, 500 * MS, CapturabilityScope.POST_RECEIVE_ONLY,
                         span_ns=600 * NS_PER_SECOND, clusters=40, exhausted_fraction=0.0)
-    a = assess_oracle(cap, floor_(0.35), opportunities(starts, 600 * NS_PER_SECOND),
-                      delta_meu=0.05)
+    return cap, assess_oracle(cap, floor_(0.35),
+                              opportunities(starts, 600 * NS_PER_SECOND), delta_meu=0.05)
+
+
+def test_zero_survivors_observed_is_not_an_impossibility():
+    """« Je n'en ai pas vu » ne devient jamais « cela n'existe pas ». Un échantillon
+    fini borne une fréquence, il ne démontre pas une absence."""
+    _, a = no_survivor_case()
     verdict, why = oracle_verdict(a, 1 / 86_400, 1e-9)
+    assert verdict is OracleVerdict.ORACLE_NO_SURVIVOR_OBSERVED
+    assert not verdict.excludes
+    assert "ne démontre pas l'absence" in why
+
+
+def test_universal_impossibility_requires_a_demonstrated_argument():
+    """Réservée à une borne analytique sur tout le domaine admissible."""
+    _, a = no_survivor_case()
+    proven = AnalyticalImpossibility(
+        holds=True, supremum=0.0,
+        argument="horizon inférieur à la latence minimale certaine du chemin",
+        declared_by="protocole Q19",
+    )
+    verdict, why = oracle_verdict(a, 1 / 86_400, 1e-9, analytical=proven)
     assert verdict is OracleVerdict.ORACLE_UNIVERSALLY_NON_VIABLE
-    assert "connaissance parfaite du futur" in why
+    assert verdict.excludes
+    assert "domaine admissible" in why
 
 
-def test_level_a_never_claims_the_rate_is_zero():
+def test_an_impossibility_without_argument_cannot_be_declared():
+    with pytest.raises(CampaignError, match="absence d'observation"):
+        AnalyticalImpossibility(holds=True, supremum=0.0, argument="  ",
+                                declared_by="quelqu'un")
+
+
+def test_zero_survivors_becomes_conclusive_only_through_frequency():
+    """Le résultat empirique conclut lorsque sa borne supérieure est déjà incompatible
+    avec la fréquence minimale."""
+    _, a = no_survivor_case()
+    verdict, why = oracle_verdict(a, minimum_frequency_per_second=10.0,
+                                  minimum_contribution_per_second=1e-9)
+    assert verdict is OracleVerdict.ORACLE_FREQUENCY_NON_VIABLE
+    assert verdict.excludes
+    assert "DEPENDENCE_ROBUST_BOUND" in why
+
+
+def test_the_rate_upper_bound_is_never_zero():
     """Avec zéro succès observé, le taux réel reste borné, pas nul."""
+    _, a = no_survivor_case()
+    assert a.profitable == 0
+    assert a.profitable_rate_upper > 0.0
+
+
+# ---- §4-6 : disjoint ≠ indépendant
+
+
+def test_the_rarity_bound_degrades_when_independence_is_not_proven():
+    """Même disjointes, plusieurs opportunités partagent régime, séance, tendance,
+    événement macro, volatilité et liquidité."""
+    naive = rarity_bound(0, 2_000, 0, 0.05)
+    robust = rarity_bound(0, 2_000, 40, 0.05)
+    proven = rarity_bound(0, 2_000, 40, 0.05, independence_proven=True)
+
+    assert naive.quality is BoundQuality.RAW_EVENT_BOUND
+    assert not naive.quality.usable_for_verdict
+    assert robust.quality is BoundQuality.DEPENDENCE_ROBUST_BOUND
+    assert proven.quality is BoundQuality.QUALIFIED_INDEPENDENT_BOUND
+    # La borne robuste, portée sur 40 épisodes, est bien plus large que celle sur 2 000.
+    assert robust.upper > proven.upper
+
+
+def test_a_raw_bound_alone_cannot_produce_a_frequency_exclusion():
     gross = np.full(600, 0.10)
     starts = np.arange(600, dtype=np.int64) * NS_PER_SECOND
     cap = OracleCapture(starts, gross, 500 * MS, CapturabilityScope.POST_RECEIVE_ONLY,
-                        span_ns=600 * NS_PER_SECOND, clusters=40, exhausted_fraction=0.0)
+                        span_ns=600 * NS_PER_SECOND, clusters=0, exhausted_fraction=0.0)
     a = assess_oracle(cap, floor_(0.35), opportunities(starts, 600 * NS_PER_SECOND),
                       delta_meu=0.05)
-    assert a.profitable == 0
-    assert 0.0 < a.profitable_rate_upper < 0.02
+    assert a.rarity.quality is BoundQuality.RAW_EVENT_BOUND
+    assert oracle_verdict(a, 10.0, 1e-9, min_clusters=0)[0] is not (
+        OracleVerdict.ORACLE_FREQUENCY_NON_VIABLE
+    )
+
+
+# ---- §12-13 : deux oracles
+
+
+def test_a_policy_cooldown_never_enters_the_physical_oracle():
+    """Un cooldown arbitraire réduit V_oracle_max et peut fabriquer une exclusion
+    imputable à notre architecture, pas au marché."""
+    starts = np.arange(1_000, dtype=np.int64) * NS_PER_SECOND
+    policy = opportunities(starts, 1_000 * NS_PER_SECOND, cooldown_ns=60 * NS_PER_SECOND,
+                           cooldown_class=ConstraintClass.POLICY_CONSTRAINT,
+                           overlap_policy=OverlapPolicy.CAPACITY_CONSTRAINED_ORACLE)
+    assert policy.kind is OracleKind.POLICY_ORACLE
+    assert policy.physical_view().cooldown_ns == 0
+    assert policy.physical_view().capacity > policy.capacity
+
+
+def test_a_hard_cooldown_survives_into_the_physical_oracle():
+    starts = np.arange(1_000, dtype=np.int64) * NS_PER_SECOND
+    hard = opportunities(starts, 1_000 * NS_PER_SECOND, cooldown_ns=60 * NS_PER_SECOND,
+                         cooldown_class=ConstraintClass.HARD_CONSTRAINT,
+                         concurrency_class=ConstraintClass.HARD_CONSTRAINT)
+    assert hard.physical_view().cooldown_ns == 60 * NS_PER_SECOND
+
+
+def test_the_assessment_records_which_oracle_it_used():
+    _, a = no_survivor_case()
+    assert a.kind in (OracleKind.PHYSICAL_ORACLE, OracleKind.POLICY_ORACLE)
+
+
+# ---- §11 : le plancher le plus favorable parmi les modes autorisés
+
+
+def test_a_global_exclusion_uses_the_cheapest_allowed_execution():
+    """Sinon on éliminerait une famille parce que les ordres au marché coûtent trop
+    cher, alors qu'une exécution passive compatible resterait viable."""
+    market = floor_(0.30, observed_crossing=0.12)
+    limit = floor_(0.05, order_type=OrderType.PASSIVE)
+    assert most_favourable_floor([market, limit]) is limit
+    assert most_favourable_floor([market, limit]).value < market.value
+
+
+def test_floors_in_different_units_are_refused():
+    a = floor_(0.30)
+    b = CostFloor(OrderType.PASSIVE, 3.0, 0.0, unit="USD/lot",
+                  source="barème contractuel")
+    with pytest.raises(CampaignError, match="unités différentes"):
+        most_favourable_floor([a, b])
+
+
+def test_no_allowed_mode_is_refused():
+    with pytest.raises(CampaignError, match="aucun mode d'exécution"):
+        most_favourable_floor([])
 
 
 def test_level_b_excludes_when_opportunities_are_too_rare():
@@ -833,6 +958,15 @@ def test_level_b_excludes_when_opportunities_are_too_rare():
                                   minimum_contribution_per_second=1e-9)
     assert verdict is OracleVerdict.ORACLE_FREQUENCY_NON_VIABLE
     assert "trop rarement" in why or "plancher" in why
+
+
+def test_capacity_cannot_conclude_without_a_single_observed_survivor():
+    """Sans survivant, la valeur mesurée vaut zéro par absence d'observation, pas par
+    impossibilité : conclure ici referait l'erreur du niveau A."""
+    _, a = no_survivor_case()
+    assert a.capacity_value_per_second == 0.0
+    verdict, _ = oracle_verdict(a, 1 / 86_400, minimum_contribution_per_second=1_000.0)
+    assert verdict is OracleVerdict.ORACLE_NO_SURVIVOR_OBSERVED
 
 
 def test_level_c_excludes_on_economic_capacity():
@@ -954,6 +1088,12 @@ def test_the_rate_upper_bound_is_one_when_nothing_is_known():
 
 
 # ============================================= §21 — état consolidé de la phase 0
+
+
+def test_an_unexcluded_oracle_verdict_never_reports_as_excluding():
+    assert not OracleVerdict.ORACLE_NO_SURVIVOR_OBSERVED.excludes
+    assert not OracleVerdict.ORACLE_NOT_EXCLUDED.excludes
+    assert not OracleVerdict.ORACLE_INDETERMINATE.excludes
 
 
 @pytest.mark.parametrize("oracle", [
@@ -1106,3 +1246,94 @@ def test_shadow_evaluation_also_supports_attribution():
 def test_both_modes_must_be_represented():
     with pytest.raises(CampaignError, match="deux modes"):
         compare_cadence(many(10, total_ns=8 * MS), [], ComparisonDesign.PAIRED_REPLAY)
+
+
+# ============================================= §9 — collecte ≠ échantillon normatif
+
+
+def freeze(at_ns=1_000, mode=InferenceMode.FIXED_HORIZON) -> ProtocolFreeze:
+    return ProtocolFreeze(frozen_at_ns=at_ns, frozen_by="responsable de la campagne",
+                          inference_mode=mode, fingerprint="abc123")
+
+
+def test_data_collected_before_the_freeze_is_exploratory_not_lost():
+    """La collecte peut démarrer immédiatement ; c'est le droit d'en tirer un verdict
+    qui attend le gel."""
+    f = freeze()
+    assert f.status_of(500) is DataStatus.EXPLORATORY
+    assert f.status_of(1_000) is DataStatus.NORMATIVE
+    assert f.status_of(5_000) is DataStatus.NORMATIVE
+
+
+def stamped(i: int, wall_ns: int) -> PassiveObservation:
+    base = i * 10 * MS
+    return PassiveObservation(
+        boundaries=PassiveBoundaries(None, base, base + 1 * MS, base + 3 * MS,
+                                     base + 8 * MS, base + 9 * MS,
+                                     local_receive_wall_ns=wall_ns),
+        market=MarketContext(1.2, 12.0, 60.0, 0.18, 0.5, 0.01, 0.5),
+        host=HostLoad(2, 5, 100_000, 0.4, 10**8), cell=cell(),
+        cluster_id=f"K{i}", day="2026-08-08",
+        clock_grade=MeasurementGrade.EXACT_LOCAL,
+        connection_state=ConnectionState.CONNECTED_STABLE, calendar_state="OPEN",
+    )
+
+
+def test_the_freeze_partitions_a_campaign_without_discarding_anything():
+    before = [stamped(i, wall_ns=100 + i) for i in range(5)]
+    after = [stamped(10 + i, wall_ns=2_000 + i) for i in range(4)]
+    parts = freeze().partition(before + after)
+    assert len(parts[DataStatus.EXPLORATORY]) == 5
+    assert len(parts[DataStatus.NORMATIVE]) == 4
+    assert sum(len(v) for v in parts.values()) == 9
+
+
+# ============================================= §14-17 — Q64 dérive de Q1
+
+
+def thresholds(**kw) -> EconomicThresholds:
+    base = dict(
+        primary=EconomicTarget.PER_UNIT_TIME,
+        delta_meu=0.20, j_min_per_second=0.60 / 86_400,
+        f_stat_min_per_second=1 / 86_400,
+        q1_reference="Q1 v1 — alerte, unité $/oz, capital de référence 50 k$, "
+                     "horizon d'évaluation trimestriel",
+    )
+    return EconomicThresholds(**{**base, **kw})
+
+
+def test_economic_thresholds_must_reference_the_q1_target():
+    """Les choisir parce qu'ils produisent une taille d'échantillon pratique
+    inverserait le raisonnement."""
+    with pytest.raises(CampaignError, match="cible définie par Q1"):
+        thresholds(q1_reference="  ")
+
+
+def test_the_economic_frequency_is_derived_not_invented():
+    t = thresholds(delta_meu=0.20, j_min_per_second=0.60 / 86_400)
+    assert t.derived_f_econ_min_per_second == pytest.approx(3 / 86_400)
+
+
+def test_statistical_and_economic_frequency_floors_are_not_confused():
+    """Le plancher effectif est le plus contraignant des deux, jamais leur mélange."""
+    stat_binding = thresholds(f_stat_min_per_second=10 / 86_400)
+    assert stat_binding.f_min_per_second == pytest.approx(10 / 86_400)
+
+    econ_binding = thresholds(f_stat_min_per_second=1 / 86_400)
+    assert econ_binding.f_min_per_second == pytest.approx(3 / 86_400)
+
+
+def test_three_thresholds_encoding_one_requirement_are_flagged():
+    """Si elles coïncident, seule la cible principale contraint réellement."""
+    redundant = thresholds(delta_meu=0.20, j_min_per_second=0.60 / 86_400,
+                           f_stat_min_per_second=3 / 86_400)
+    assert redundant.redundancy_warning is not None
+    assert "cible PER_UNIT_TIME" in redundant.redundancy_warning
+
+    independent = thresholds(f_stat_min_per_second=30 / 86_400)
+    assert independent.redundancy_warning is None
+
+
+def test_a_non_positive_surplus_threshold_is_refused():
+    with pytest.raises(CampaignError, match="positif"):
+        thresholds(delta_meu=0.0)

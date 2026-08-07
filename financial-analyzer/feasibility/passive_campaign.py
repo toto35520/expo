@@ -24,7 +24,7 @@ import hashlib
 import json
 import math
 from collections.abc import Iterable, Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from enum import Enum
 
 import numpy as np
@@ -492,6 +492,132 @@ def coverage(observations: Iterable[PassiveObservation]) -> CoverageReport:
     )
 
 
+# ------------------------------------------- statut des données et cible économique
+
+
+class DataStatus(str, Enum):
+    """Sépare la collecte du verdict (ADR-204).
+
+    La collecte peut démarrer immédiatement. Ce qui doit attendre le gel du protocole,
+    c'est le droit d'en tirer un verdict — pas l'enregistrement lui-même. Aucune donnée
+    n'est perdue, et aucune décision statistique n'est prise après avoir vu son résultat.
+    """
+
+    #: Collectée avant le gel du protocole. Sert au réglage, au diagnostic, à
+    #: l'estimation des ordres de grandeur — jamais au premier verdict normatif.
+    EXPLORATORY = "EXPLORATORY"
+    #: Période contiguë postérieure au gel. Seule elle soutient le verdict normatif.
+    NORMATIVE = "NORMATIVE"
+
+
+@dataclass(frozen=True)
+class ProtocolFreeze:
+    """Instant à partir duquel les données deviennent normatives."""
+
+    frozen_at_ns: int
+    frozen_by: str
+    inference_mode: InferenceMode
+    fingerprint: str
+
+    def status_of(self, observed_at_ns: int) -> DataStatus:
+        return (
+            DataStatus.NORMATIVE if observed_at_ns >= self.frozen_at_ns
+            else DataStatus.EXPLORATORY
+        )
+
+    def partition(
+        self, observations: Sequence[PassiveObservation]
+    ) -> dict[DataStatus, tuple[PassiveObservation, ...]]:
+        out: dict[DataStatus, list[PassiveObservation]] = {
+            DataStatus.EXPLORATORY: [], DataStatus.NORMATIVE: []
+        }
+        for o in observations:
+            out[self.status_of(o.boundaries.local_receive_wall_ns)].append(o)
+        return {k: tuple(v) for k, v in out.items()}
+
+
+class EconomicTarget(str, Enum):
+    """Grandeur qui **pilote** les seuils de Q64 ; les autres en dérivent.
+
+    Exiger simultanément `δ_MEU`, `f_min` et `J_min` choisis indépendamment code souvent
+    trois fois la même exigence — et l'une des trois finit par mordre sans qu'on sache
+    laquelle.
+    """
+
+    PER_OCCURRENCE = "PER_OCCURRENCE"
+    PER_UNIT_TIME = "PER_UNIT_TIME"
+    FREQUENCY = "FREQUENCY"
+
+
+@dataclass(frozen=True)
+class EconomicThresholds:
+    """Q64 — seuils économiques **dérivés de Q1**, jamais choisis pour leur commodité.
+
+    Ils expriment ce que le projet appelle « un effet suffisamment utile pour justifier
+    le système ». Les choisir parce qu'ils produisent une taille d'échantillon pratique
+    inverserait le raisonnement.
+
+    Deux planchers de fréquence sont distingués et **ne se confondent pas** :
+    `f_econ_min` vient de l'économie, `f_stat_min` de ce qu'il faut pour valider
+    statistiquement quoi que ce soit.
+    """
+
+    primary: EconomicTarget
+    #: Valeur nette minimale par occurrence exploitable.
+    delta_meu: float
+    #: Contribution économique minimale par unité de temps.
+    j_min_per_second: float
+    #: Fréquence minimale d'origine **statistique**.
+    f_stat_min_per_second: float
+    #: Fréquence minimale d'origine **économique**, dérivable de `J_min / δ_MEU`.
+    f_econ_min_per_second: float | None = None
+    q1_reference: str = ""
+    unit: str = "USD/oz"
+
+    def __post_init__(self) -> None:
+        if not self.q1_reference.strip():
+            raise CampaignError(
+                "Les seuils économiques dérivent de la cible définie par Q1 — objectif, "
+                "unité de performance, capital de référence, tolérance de risque, "
+                "horizon d'évaluation, rôle du système. Sans cette référence, ils ne "
+                "sont que des nombres choisis pour leur commodité."
+            )
+        if self.delta_meu <= 0:
+            raise CampaignError("le surplus minimal par occurrence doit être positif")
+
+    @property
+    def derived_f_econ_min_per_second(self) -> float:
+        """`J_min / δ_MEU` — la fréquence qu'implique la cible temporelle."""
+        return self.j_min_per_second / self.delta_meu
+
+    @property
+    def f_min_per_second(self) -> float:
+        """Plancher effectif : le plus contraignant des deux, jamais leur confusion."""
+        econ = (
+            self.f_econ_min_per_second if self.f_econ_min_per_second is not None
+            else self.derived_f_econ_min_per_second
+        )
+        return max(econ, self.f_stat_min_per_second)
+
+    @property
+    def redundancy_warning(self) -> str | None:
+        """Signale que les trois contraintes codent la même exigence.
+
+        Ce n'est pas une erreur — c'est une information : si elles coïncident, seule la
+        cible principale décide réellement, et les deux autres ne contraignent rien.
+        """
+        econ = self.derived_f_econ_min_per_second
+        if self.f_stat_min_per_second <= 0:
+            return None
+        ratio = econ / self.f_stat_min_per_second
+        if 0.9 <= ratio <= 1.1:
+            return (
+                "δ_MEU, f_min et J_min codent la même exigence à 10 % près : seule la "
+                f"cible {self.primary.value} contraint réellement le verdict."
+            )
+        return None
+
+
 # ------------------------------------------------- politique d'arrêt préenregistrée
 
 
@@ -926,6 +1052,33 @@ def latency_budget_ns(summary: BoundSummary, admissible: AdmissibleLatency) -> i
 # ------------------------------------ Q61-A — borne oracle, indépendante de tout signal
 
 
+class ConstraintClass(str, Enum):
+    """Origine d'une contrainte imposée à l'oracle.
+
+    La distinction décide de ce qu'une exclusion signifie. Un `cooldown` choisi
+    arbitrairement réduit `V_oracle_max` et peut **fabriquer** une exclusion : elle
+    porterait alors sur notre architecture, pas sur le marché.
+    """
+
+    #: Impossible à contourner : horaires, prix réellement cotés, latence déjà subie,
+    #: capital réel, contraintes du courtier, taille de contrat.
+    HARD_CONSTRAINT = "HARD_CONSTRAINT"
+    #: Décision d'architecture : un seul trade simultané, cooldown, type d'ordre
+    #: autorisé, risque maximal, séances retenues.
+    POLICY_CONSTRAINT = "POLICY_CONSTRAINT"
+
+
+class OracleKind(str, Enum):
+    """Deux oracles, deux questions. Ils ne se confondent jamais."""
+
+    #: Seules les contraintes incontournables. Borne la plus favorable — c'est elle qui
+    #: doit servir à prétendre éliminer *tout moteur possible*.
+    PHYSICAL_ORACLE = "PHYSICAL_ORACLE"
+    #: Ajoute les décisions d'architecture. Répond : « notre système tel que nous avons
+    #: décidé de le construire est-il viable ? »
+    POLICY_ORACLE = "POLICY_ORACLE"
+
+
 class OverlapPolicy(str, Enum):
     """Comment les opportunités se disputent le même mouvement.
 
@@ -953,6 +1106,37 @@ class OpportunitySet:
     overlap_policy: OverlapPolicy = OverlapPolicy.DISJOINT_WINDOWS
     session: str = ""
     cell_label: str = ""
+    #: Origine du cooldown. Un cooldown de politique ne doit pas entrer dans la borne
+    #: physique : il y fabriquerait une exclusion imputable à notre propre architecture.
+    cooldown_class: ConstraintClass = ConstraintClass.POLICY_CONSTRAINT
+    #: Origine de la limite de concurrence.
+    concurrency_class: ConstraintClass = ConstraintClass.POLICY_CONSTRAINT
+
+    @property
+    def kind(self) -> OracleKind:
+        policy = ConstraintClass.POLICY_CONSTRAINT
+        has_policy = (
+            (self.cooldown_ns > 0 and self.cooldown_class is policy)
+            or (self.max_concurrent_positions < 2**31 and self.concurrency_class is policy)
+        )
+        return OracleKind.POLICY_ORACLE if has_policy else OracleKind.PHYSICAL_ORACLE
+
+    def physical_view(self) -> "OpportunitySet":
+        """Même ensemble, contraintes de politique retirées.
+
+        C'est la borne à employer pour prétendre éliminer *tout moteur possible* :
+        conserver un cooldown arbitraire y ferait passer une décision d'architecture pour
+        une limite du marché.
+        """
+        policy = ConstraintClass.POLICY_CONSTRAINT
+        return replace(
+            self,
+            cooldown_ns=0 if self.cooldown_class is policy else self.cooldown_ns,
+            max_concurrent_positions=(
+                2**31 if self.concurrency_class is policy
+                else self.max_concurrent_positions
+            ),
+        )
 
     def __post_init__(self) -> None:
         if self.max_concurrent_positions < 1:
@@ -981,10 +1165,16 @@ class OpportunitySet:
         l'oracle choisit le meilleur ensemble sans recouvrement. C'est le plus
         conservateur et le plus simple à défendre.
         """
-        # La sélection dit **combien de tirages indépendants** le système obtient, pas
-        # lesquels sont rentables. Écarter ici les opportunités non rentables détruirait
-        # le dénominateur : « zéro rentable sur N admissibles » est précisément ce que
-        # l'impossibilité universelle doit pouvoir affirmer.
+        # La sélection définit les opportunités **économiquement admissibles**, et rien
+        # d'autre. Elle ne revendique aucune indépendance statistique : deux fenêtres
+        # disjointes peuvent partager régime, séance, tendance, événement macro,
+        # volatilité et état de liquidité.
+        #
+        #     admissibilité économique  ≠  modèle de variance
+        #
+        # L'indépendance relève de `ClusterQualification` et du choix de borne.
+        # Elle n'écarte pas non plus les opportunités non rentables : « zéro rentable
+        # sur N admissibles » a besoin de son dénominateur.
         if self.overlap_policy is OverlapPolicy.CAPACITY_CONSTRAINED_ORACLE:
             best = np.argsort(-surplus)
             return np.sort(best[: self.capacity])
@@ -1022,6 +1212,27 @@ class OpportunitySet:
 class OrderType(str, Enum):
     AGGRESSIVE = "AGGRESSIVE"
     PASSIVE = "PASSIVE"
+
+
+def most_favourable_floor(floors: Sequence["CostFloor"]) -> "CostFloor":
+    """Plancher le plus bas parmi les modes d'exécution **autorisés** (ADR-205).
+
+        C_floor^any = inf { C_floor(o) : o ∈ O_autorisés }
+
+    Une conclusion prétendant éliminer tout moteur possible doit laisser à l'oracle le
+    choix de l'exécution la plus favorable. Sinon on éliminerait une famille parce que
+    les ordres au marché coûtent trop cher, alors qu'une exécution passive compatible
+    resterait viable.
+    """
+    if not floors:
+        raise CampaignError("aucun mode d'exécution autorisé n'a été déclaré")
+    units = {f.unit for f in floors}
+    if len(units) != 1:
+        raise CampaignError(
+            f"planchers exprimés dans {len(units)} unités différentes : les comparer "
+            "exigerait une conversion contractuelle explicite."
+        )
+    return min(floors, key=lambda f: f.value)
 
 
 @dataclass(frozen=True)
@@ -1218,6 +1429,8 @@ class OracleAssessment:
     delta_meu: float
     quantiles: Quantiles
     clusters: int
+    rarity: RarityBound
+    kind: OracleKind
 
 
 def assess_oracle(
@@ -1226,6 +1439,7 @@ def assess_oracle(
     opportunities: OpportunitySet,
     delta_meu: float,
     alpha: float = 0.05,
+    independence_proven: bool = False,
 ) -> OracleAssessment:
     """Surplus, fréquence et capacité économique de l'oracle (§3-4).
 
@@ -1241,12 +1455,14 @@ def assess_oracle(
     profitable = int((kept > delta_meu).sum())
     n = int(selected.size)
     rate = profitable / n if n else 0.0
-    rate_upper = clopper_pearson_upper(profitable, n, alpha) if n else 1.0
+    bound = rarity_bound(profitable, n, capture.clusters, alpha, independence_proven)
 
     span_s = capture.span_ns / NS_PER_SECOND if capture.span_ns else float("nan")
     frequency = profitable / span_s if span_s and span_s > 0 else float("nan")
+    # La borne de fréquence se porte sur la cadence d'opportunités : λ_rentable,U =
+    # p_U × λ_opp. Sous dépendance, p_U vient des épisodes, pas des opportunités brutes.
     frequency_upper = (
-        rate_upper * n / span_s if span_s and span_s > 0 else float("nan")
+        bound.upper * n / span_s if span_s and span_s > 0 else float("nan")
     )
 
     value = float(kept[kept > 0.0].sum()) if kept.size else 0.0
@@ -1255,7 +1471,7 @@ def assess_oracle(
         selected=n,
         profitable=profitable,
         profitable_rate=rate,
-        profitable_rate_upper=rate_upper,
+        profitable_rate_upper=bound.upper,
         profitable_frequency=frequency,
         profitable_frequency_upper=frequency_upper,
         max_surplus=float(surplus.max()) if surplus.size else float("nan"),
@@ -1265,13 +1481,112 @@ def assess_oracle(
         delta_meu=delta_meu,
         quantiles=capture.quantiles,
         clusters=capture.clusters,
+        rarity=bound,
+        kind=opportunities.kind,
     )
 
 
+class BoundQuality(str, Enum):
+    """Ce qu'une borne de rareté vaut réellement.
+
+    `disjoint ≠ indépendant`. Même avec des fenêtres disjointes, plusieurs opportunités
+    partagent régime, séance, tendance, événement macro, volatilité et liquidité — donc
+    la formule de Clopper-Pearson, exacte pour des essais de Bernoulli indépendants de
+    probabilité commune, ne s'applique pas telle quelle au nombre brut d'opportunités.
+    """
+
+    #: Calculée sur le nombre brut d'opportunités. **Diagnostic seulement.**
+    RAW_EVENT_BOUND = "RAW_EVENT_BOUND"
+    #: Autorisée seulement si les hypothèses de Bernoulli sont réellement défendables.
+    QUALIFIED_INDEPENDENT_BOUND = "QUALIFIED_INDEPENDENT_BOUND"
+    #: Tient compte des blocs, épisodes ou dépendances observées.
+    DEPENDENCE_ROBUST_BOUND = "DEPENDENCE_ROBUST_BOUND"
+
+    @property
+    def usable_for_verdict(self) -> bool:
+        return self is not BoundQuality.RAW_EVENT_BOUND
+
+
+@dataclass(frozen=True)
+class RarityBound:
+    """Borne supérieure sur le taux d'opportunités oracle-rentables, et sa qualité."""
+
+    upper: float
+    quality: BoundQuality
+    trials: int
+    successes: int
+    alpha: float
+    rationale: str = ""
+
+
+def rarity_bound(
+    successes: int,
+    raw_opportunities: int,
+    independent_episodes: int,
+    alpha: float,
+    independence_proven: bool = False,
+) -> RarityBound:
+    """Borne de rareté, dégradée honnêtement selon ce qui est défendable.
+
+    Sans preuve d'indépendance, la borne se calcule sur le nombre d'**épisodes
+    indépendants** plutôt que sur le nombre brut d'opportunités : c'est plus large, et
+    c'est ce qui la rend défendable sous dépendance.
+    """
+    if independence_proven:
+        return RarityBound(
+            clopper_pearson_upper(successes, raw_opportunities, alpha),
+            BoundQuality.QUALIFIED_INDEPENDENT_BOUND,
+            raw_opportunities, successes, alpha,
+            "indépendance des opportunités démontrée",
+        )
+    if independent_episodes >= 2:
+        capped = min(successes, independent_episodes)
+        return RarityBound(
+            clopper_pearson_upper(capped, independent_episodes, alpha),
+            BoundQuality.DEPENDENCE_ROBUST_BOUND,
+            independent_episodes, capped, alpha,
+            "borne portée sur les épisodes indépendants, pas sur les opportunités brutes",
+        )
+    return RarityBound(
+        clopper_pearson_upper(successes, raw_opportunities, alpha),
+        BoundQuality.RAW_EVENT_BOUND,
+        raw_opportunities, successes, alpha,
+        "aucun épisode indépendant identifié — diagnostic seulement",
+    )
+
+
+@dataclass(frozen=True)
+class AnalyticalImpossibility:
+    """Preuve **déterministe** que rien ne survit sur tout le domaine admissible.
+
+        sup { S^oracle(ω) : ω ∈ Ω_admissible }  ≤  δ_MEU
+
+    Elle ne s'obtient jamais d'un échantillon fini. Elle vient d'une borne analytique :
+    horizon inférieur à une latence minimale certaine, limite physique du prix
+    capturable, contrainte contractuelle, ou combinaison de bornes mathématiques.
+    """
+
+    holds: bool
+    supremum: float
+    argument: str
+    declared_by: str
+
+    def __post_init__(self) -> None:
+        if self.holds and not self.argument.strip():
+            raise CampaignError(
+                "Une impossibilité universelle sans argument démontré n'est pas une "
+                "impossibilité : c'est une absence d'observation."
+            )
+
+
 class OracleVerdict(str, Enum):
-    #: Même l'opportunité oracle la plus favorable ne couvre pas les exigences.
+    #: **Réservé à une impossibilité démontrée** sur tout le domaine admissible. Ne
+    #: s'obtient jamais d'un échantillon fini.
     ORACLE_UNIVERSALLY_NON_VIABLE = "ORACLE_UNIVERSALLY_NON_VIABLE"
-    #: Des opportunités existent, mais trop rarement pour atteindre le plancher exigé.
+    #: Aucun survivant dans l'échantillon observé, avec une borne sur leur fréquence.
+    #: « Je n'en ai pas vu » — jamais « cela n'existe pas ».
+    ORACLE_NO_SURVIVOR_OBSERVED = "ORACLE_NO_SURVIVOR_OBSERVED"
+    #: Des opportunités existent, mais trop rarement pour le plancher exigé.
     ORACLE_FREQUENCY_NON_VIABLE = "ORACLE_FREQUENCY_NON_VIABLE"
     #: L'oracle ne produit pas assez de valeur par unité de temps sous contraintes.
     ORACLE_ECONOMIC_CAPACITY_NON_VIABLE = "ORACLE_ECONOMIC_CAPACITY_NON_VIABLE"
@@ -1280,6 +1595,15 @@ class OracleVerdict(str, Enum):
     ORACLE_NOT_EXCLUDED = "ORACLE_NOT_EXCLUDED"
     ORACLE_INDETERMINATE = "ORACLE_INDETERMINATE"
 
+    @property
+    def excludes(self) -> bool:
+        """`ORACLE_NO_SURVIVOR_OBSERVED` **n'exclut pas** : il décrit un échantillon."""
+        return self in (
+            OracleVerdict.ORACLE_UNIVERSALLY_NON_VIABLE,
+            OracleVerdict.ORACLE_FREQUENCY_NON_VIABLE,
+            OracleVerdict.ORACLE_ECONOMIC_CAPACITY_NON_VIABLE,
+        )
+
 
 def oracle_verdict(
     assessment: OracleAssessment,
@@ -1287,14 +1611,15 @@ def oracle_verdict(
     minimum_contribution_per_second: float,
     min_clusters: int = 20,
     capacity_safety_factor: float = 2.0,
+    analytical: AnalyticalImpossibility | None = None,
 ) -> tuple[OracleVerdict, str]:
-    """Exclusion oracle à trois niveaux (ADR-190).
+    """Exclusion oracle (ADR-192, ADR-199).
 
-    **Un quantile ne produit jamais d'exclusion à lui seul.** Que 90 % de la population
-    soit sous le plancher de coûts n'établit rien sur les 10 % restants — qui sont
-    précisément ceux qu'un moteur sélectif apprendrait à retenir. L'exclusion passe donc
-    par l'impossibilité universelle, la fréquence maximale exploitable, ou la capacité
-    économique maximale sous contraintes.
+    Deux erreurs sont interdites par construction. **Un quantile n'exclut jamais seul** :
+    que 90 % de la population soit sous le plancher n'établit rien sur les 10 % restants,
+    précisément ceux qu'un moteur sélectif retiendrait. Et **« aucun survivant observé »
+    n'est pas « aucun survivant possible »** : un échantillon fini ne démontre pas une
+    impossibilité, il borne une fréquence.
     """
     if assessment.selected == 0:
         return OracleVerdict.ORACLE_INDETERMINATE, "aucune opportunité admissible"
@@ -1304,29 +1629,35 @@ def oracle_verdict(
             f"{assessment.clusters} grappes indépendantes sur {min_clusters} requises",
         )
 
-    # Niveau A — même la meilleure opportunité observée ne dégage pas de surplus.
-    if assessment.max_surplus <= assessment.delta_meu:
+    # Impossibilité universelle : seulement si elle est **démontrée**.
+    if analytical is not None and analytical.holds:
         return (
             OracleVerdict.ORACLE_UNIVERSALLY_NON_VIABLE,
-            f"surplus oracle maximal {assessment.max_surplus:.4f} ≤ seuil "
-            f"{assessment.delta_meu:.4f} sur {assessment.selected} opportunités — aucune "
-            f"ne survit même avec connaissance parfaite du futur ; le taux réel reste "
-            f"borné par {assessment.profitable_rate_upper:.2%}, non nul par construction",
+            f"borne analytique : sup S ≤ {analytical.supremum:.4f} sur tout le domaine "
+            f"admissible — {analytical.argument} (déclaré par {analytical.declared_by})",
         )
 
-    # Niveau B — des opportunités existent, mais trop rarement.
-    if assessment.profitable_frequency_upper < minimum_frequency_per_second:
+    bound = assessment.rarity
+    # Exclusion par fréquence : la borne **supérieure** du taux, portée sur la cadence
+    # d'opportunités, reste sous le plancher exigé.
+    if (
+        bound.quality.usable_for_verdict
+        and assessment.profitable_frequency_upper < minimum_frequency_per_second
+    ):
         return (
             OracleVerdict.ORACLE_FREQUENCY_NON_VIABLE,
             f"fréquence oracle-rentable bornée par "
             f"{assessment.profitable_frequency_upper * 86_400:.2f}/jour, sous le plancher "
-            f"de {minimum_frequency_per_second * 86_400:.2f}/jour — aucune stratégie "
-            "réelle ne peut atteindre la fréquence exigée",
+            f"de {minimum_frequency_per_second * 86_400:.2f}/jour — borne "
+            f"{bound.quality.value} sur {bound.trials} unités",
         )
 
-    # Niveau C — la capacité économique maximale reste sous la contribution requise.
+    # Niveau C — la capacité économique ne conclut que si au moins un survivant a été
+    # observé. Sans aucun, la valeur mesurée vaut zéro par absence d'observation, pas
+    # par impossibilité : conclure ici referait exactement l'erreur du niveau A.
     if (
-        assessment.capacity_value_per_second * capacity_safety_factor
+        assessment.profitable > 0
+        and assessment.capacity_value_per_second * capacity_safety_factor
         < minimum_contribution_per_second
     ):
         return (
@@ -1335,6 +1666,17 @@ def oracle_verdict(
             f"/jour (marge ×{capacity_safety_factor:g}) sous la contribution requise "
             f"{minimum_contribution_per_second * 86_400:.2f}/jour, avec au plus "
             f"{assessment.capacity} positions sur la période",
+        )
+
+    # Aucun survivant observé, mais la fréquence reste compatible avec le plancher :
+    # l'échantillon ne conclut pas.
+    if assessment.profitable == 0:
+        return (
+            OracleVerdict.ORACLE_NO_SURVIVOR_OBSERVED,
+            f"aucun survivant sur {assessment.selected} opportunités observées ; taux "
+            f"réel borné par {bound.upper:.2%} ({bound.quality.value}, {bound.trials} "
+            f"unités) — ce qui reste compatible avec le plancher de fréquence. "
+            "L'échantillon ne montre rien, il ne démontre pas l'absence",
         )
 
     return (
@@ -1617,6 +1959,12 @@ def phase0_state(
         return (
             Phase0State.PHASE0_INDETERMINATE,
             "données insuffisantes ou instables — l'ignorance ne vaut pas permission",
+        )
+    if oracle is OracleVerdict.ORACLE_NO_SURVIVOR_OBSERVED:
+        return (
+            Phase0State.PHASE0_NOT_EXCLUDED,
+            "aucun survivant observé, mais leur fréquence reste compatible avec le "
+            "plancher : l'échantillon ne montre rien et ne démontre pas l'absence",
         )
     return (
         Phase0State.PHASE0_NOT_EXCLUDED,

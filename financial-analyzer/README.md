@@ -12,7 +12,7 @@ latence et rareté des occurrences.
 | --- | --- |
 | `docs/` | spécification, journal de décisions (`DECISIONS.md`), registre des questions (`QUESTIONS.md`) |
 | `feasibility/` | **code exécutable** : les deux phases 0 et leur intersection |
-| `tests/` | 428 tests, un par garde-fou |
+| `tests/` | 451 tests, un par garde-fou |
 | `calendar-sources/` | dossier de preuve : sources normatives du calendrier |
 | `connector-capability/` | fiches Q57/Q58 : ce que les horloges et le connecteur permettent d'affirmer |
 
@@ -20,7 +20,7 @@ latence et rareté des occurrences.
 
 ```bash
 cd financial-analyzer
-python3 -m pytest tests/ -q          # 428 tests
+python3 -m pytest tests/ -q          # 451 tests
 python3 -m feasibility.report        # carte de faisabilité (données synthétiques)
 python3 -m feasibility.passive_demo  # campagne passive Q51-A de bout en bout
 ```
@@ -134,6 +134,13 @@ Trois refus structurels valent d'être connus avant de brancher :
   fréquence maximale exploitable, ou la capacité économique sous contraintes ;
 - un même mouvement ne compte qu'**une fois** : 500 horodatages d'une seule impulsion
   donnent une opportunité, pas cinq cents ;
+- et « je n'en ai pas vu » ne devient jamais « cela n'existe pas ». Zéro survivant sur 1 994
+  opportunités produit `ORACLE_NO_SURVIVOR_OBSERVED`, qui **n'exclut pas** : un échantillon
+  fini borne une fréquence, il ne démontre pas une absence. Le nom
+  `ORACLE_UNIVERSALLY_NON_VIABLE` est réservé à une borne analytique sur tout le domaine ;
+- la même exigence s'applique à l'inférence : `ACF ≈ 0` est une absence de contre-preuve, pas
+  une preuve d'indépendance. La première campagne normative tourne donc en `FIXED_HORIZON`,
+  la séquence de confiance étant calculée en parallèle sans valeur normative.
 - une grappe est attribuée à **chaque** observation, y compris hors rafale — deux cotations
   calmes séparées de 50 ms ne sont pas indépendantes non plus.
 

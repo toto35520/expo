@@ -42,6 +42,7 @@ from .passive_campaign import (  # noqa: E402
     CostFloor,
     OpportunitySet,
     OracleCapture,
+    most_favourable_floor,
     OrderType,
     OverlapPolicy,
     EvaluationMode,
@@ -212,11 +213,16 @@ def main() -> None:
     starts = np.arange(100, n - 200, 45)
     cluster_ids = np.arange(n) // 1_500
     HORIZON = 500 * MS
-    cost_floor = CostFloor(
-        order_type=OrderType.AGGRESSIVE,
-        certain_commission=0.30, mandatory_fees=0.05,
-        source="valeur de démonstration — à remplacer par le barème contractuel (Q63)",
-    )
+    # Le plancher le plus favorable parmi les modes autorisés : une exclusion globale
+    # ne peut pas reposer sur le seul coût des ordres au marché.
+    cost_floor = most_favourable_floor([
+        CostFloor(order_type=OrderType.AGGRESSIVE, certain_commission=0.30,
+                  mandatory_fees=0.05, observed_crossing=0.10,
+                  source="démonstration — barème contractuel à substituer (Q63)"),
+        CostFloor(order_type=OrderType.PASSIVE, certain_commission=0.30,
+                  mandatory_fees=0.05,
+                  source="démonstration — barème contractuel à substituer (Q63)"),
+    ])
     F_MIN = 4 / 86_400.0           # quatre occasions par jour
     J_MIN = 20.0 / 86_400.0        # contribution minimale par seconde
     DELTA_MEU = 0.05
@@ -261,7 +267,8 @@ def main() -> None:
               f"{assessment.opportunities} départs (chevauchement écarté)")
         print(f"    oracle-rentables : {assessment.profitable}"
               f"   taux ≤ {assessment.profitable_rate_upper:.2%}"
-              f"   fréquence ≤ {assessment.profitable_frequency_upper * 86_400:.1f}/jour")
+              f"   ({assessment.rarity.quality.value}, {assessment.rarity.trials} unités)")
+        print(f"    oracle            : {assessment.kind.value}")
         print(f"    verdict oracle   : {oracle.value}")
         print(f"      {why}")
         print(f"    → {state_why}")

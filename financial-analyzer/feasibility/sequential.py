@@ -36,9 +36,19 @@ class SequentialError(ValueError):
 
 class InferenceMode(str, Enum):
     #: Durée gelée avant la première observation. Inférence conventionnelle à la fin.
+    #: **Référence scientifique** tant que la dépendance réelle n'est pas caractérisée.
     FIXED_HORIZON = "FIXED_HORIZON"
-    #: Arrêt autorisé à un temps aléatoire ; garantie simultanée dans le temps.
+    #: Arrêt autorisé à un temps aléatoire ; garantie simultanée dans le temps. Exige
+    #: que les hypothèses de la procédure soient **démontrées**, pas seulement non
+    #: contredites par des diagnostics.
     ANYTIME_VALID = "ANYTIME_VALID"
+    #: Séquence calculée et publiée **en parallèle**, sans valeur normative. Sert à
+    #: observer son comportement sur données réelles avant de lui confier un verdict.
+    ANYTIME_VALID_EXPERIMENTAL = "ANYTIME_VALID_EXPERIMENTAL"
+
+    @property
+    def is_normative(self) -> bool:
+        return self is not InferenceMode.ANYTIME_VALID_EXPERIMENTAL
 
 
 class InferenceValidity(str, Enum):
@@ -299,6 +309,10 @@ class ClusterQualification:
     acf1_value: float
     acf1_load: float
     stationarity_checked: bool
+    #: Argument **démontrant** que la procédure séquentielle est valide sur cette
+    #: cellule : construction du processus, méthode robuste à la dépendance observée,
+    #: ou preuve mathématique. Vide tant qu'un tel argument n'existe pas.
+    assumption_proof: str = ""
     max_abs_acf_tolerated: float = 0.20
 
     @property
@@ -311,13 +325,23 @@ class ClusterQualification:
     def qualify(self) -> SequentialQualification:
         """Accorde — ou non — le droit de revendiquer `ANYTIME_VALID`.
 
+        **Les diagnostics ne suffisent jamais.** Une série peut afficher `ACF ≈ 0` et
+        rester dépendante ; un test de stationnarité qui ne rejette pas ne démontre pas
+        la stationnarité. Une autocorrélation faible est une absence de contre-preuve,
+        pas une preuve — et transformer l'une en l'autre est exactement l'erreur que ce
+        module existe pour empêcher.
+
+        La qualification exige donc un argument **positif** : construction du processus,
+        méthode explicitement robuste à la dépendance observée, ou démonstration.
+
         Le refus ne perd pas la cellule : elle repasse au protocole à horizon fixe.
-        Conserver la revendication séquentielle serait, lui, émettre une garantie sans
-        fondement.
         """
         if self.n_clusters < 2:
             return SequentialQualification.SEQUENTIAL_INVALID
         if not self.stationarity_checked or not self.dependence_within_tolerance:
+            return SequentialQualification.SEQUENTIAL_ASSUMPTIONS_UNVERIFIED
+        if not self.assumption_proof.strip():
+            # Diagnostics favorables, mais rien qui démontre l'hypothèse requise.
             return SequentialQualification.SEQUENTIAL_ASSUMPTIONS_UNVERIFIED
         return SequentialQualification.SEQUENTIAL_VALID
 
@@ -436,7 +460,7 @@ def interval_for_mode(
     sont défendables. Sinon la cellule **retombe sur l'horizon fixe** plutôt que
     d'émettre une garantie invalide : elle n'est pas perdue, elle change de protocole.
     """
-    if mode is InferenceMode.ANYTIME_VALID:
+    if mode in (InferenceMode.ANYTIME_VALID, InferenceMode.ANYTIME_VALID_EXPERIMENTAL):
         if rho is None:
             raise SequentialError(
                 "ANYTIME_VALID exige un ρ déclaré à l'avance : le choisir après coup "

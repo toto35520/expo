@@ -195,8 +195,35 @@ def qualification(**kw) -> ClusterQualification:
     return ClusterQualification(**{**base, **kw})
 
 
-def test_independent_looking_clusters_earn_the_anytime_valid_label():
-    assert qualification().qualify() is SequentialQualification.SEQUENTIAL_VALID
+def test_good_diagnostics_alone_never_earn_the_anytime_valid_label():
+    """Une série peut afficher `ACF ≈ 0` et rester dépendante ; un test de stationnarité
+    qui ne rejette pas ne démontre pas la stationnarité. Une absence de contre-preuve
+    n'est pas une preuve."""
+    assert qualification().qualify() is (
+        SequentialQualification.SEQUENTIAL_ASSUMPTIONS_UNVERIFIED
+    )
+
+
+def test_only_a_positive_argument_qualifies_the_procedure():
+    proven = qualification(
+        assumption_proof="borne de Robbins appliquée à une martingale construite par "
+                         "sous-échantillonnage à écart supérieur à la longueur de "
+                         "corrélation mesurée"
+    )
+    assert proven.qualify() is SequentialQualification.SEQUENTIAL_VALID
+
+
+def test_a_proof_does_not_override_failing_diagnostics():
+    """La preuve s'ajoute aux diagnostics, elle ne les remplace pas."""
+    assert qualification(assumption_proof="argument", acf1_load=0.7).qualify() is (
+        SequentialQualification.SEQUENTIAL_ASSUMPTIONS_UNVERIFIED
+    )
+
+
+def test_an_experimental_sequence_is_computed_but_never_normative():
+    assert not InferenceMode.ANYTIME_VALID_EXPERIMENTAL.is_normative
+    assert InferenceMode.FIXED_HORIZON.is_normative
+    assert InferenceMode.ANYTIME_VALID.is_normative
 
 
 def test_persistent_dependence_withholds_the_label():
@@ -236,6 +263,12 @@ def test_an_unqualified_cell_falls_back_instead_of_being_lost():
         rho_for_target(100),
         clusters_qualified=SequentialQualification.SEQUENTIAL_VALID,
     )
+    experimental = interval_for_mode(
+        InferenceMode.ANYTIME_VALID_EXPERIMENTAL, values, clusters, 100.0, 0.05,
+        rho_for_target(100),
+        clusters_qualified=SequentialQualification.SEQUENTIAL_VALID,
+    )
+    assert experimental.width == qualified.width
     assert qualified.anytime_valid_claimable
     assert qualified.width > cs.width
 
