@@ -12,7 +12,7 @@ latence et rareté des occurrences.
 | --- | --- |
 | `docs/` | spécification, journal de décisions (`DECISIONS.md`), registre des questions (`QUESTIONS.md`) |
 | `feasibility/` | **code exécutable** : les deux phases 0 et leur intersection |
-| `tests/` | 331 tests, un par garde-fou |
+| `tests/` | 387 tests, un par garde-fou |
 | `calendar-sources/` | dossier de preuve : sources normatives du calendrier |
 | `connector-capability/` | fiches Q57/Q58 : ce que les horloges et le connecteur permettent d'affirmer |
 
@@ -20,7 +20,7 @@ latence et rareté des occurrences.
 
 ```bash
 cd financial-analyzer
-python3 -m pytest tests/ -q          # 331 tests
+python3 -m pytest tests/ -q          # 387 tests
 python3 -m feasibility.report        # carte de faisabilité (données synthétiques)
 python3 -m feasibility.passive_demo  # campagne passive Q51-A de bout en bout
 ```
@@ -114,9 +114,20 @@ Trois refus structurels valent d'être connus avant de brancher :
 - une évaluation qui ne conclut jamais est comptée comme **abandonnée**, jamais complétée —
   la laisser en attente la sortirait du dénominateur, et la latence moyenne s'améliorerait à
   mesure que le système échoue ;
-- la politique d'arrêt est **préenregistrée** : le module refuse une politique déclarée après
-  la première observation, parce qu'une politique écrite après le résultat est le résultat
-  reformulé ;
+- la politique d'arrêt est **préenregistrée**, et le mode d'inférence avec elle. Arrêter
+  parce que l'intervalle est devenu étroit détruit sa couverture — pas « l'optimise » : un
+  intervalle normal recalculé en continu est franchi **48 %** du temps pour un niveau annoncé
+  de 5 %. Sous `FIXED_HORIZON` la largeur est un diagnostic et ne peut pas arrêter la
+  campagne ; sous `ANYTIME_VALID` une séquence de confiance garde sa couverture à tout
+  instant et a donc le droit de décider ;
+- la **capturabilité est ancrée par type** — marché, fournisseur, réception locale — et les
+  trois ne se fusionnent jamais : ce sont trois estimandes. La fin d'horizon est déclarée
+  séparément, sans quoi déplacer l'ancre prolongerait la fenêtre et fabriquerait du
+  mouvement ;
+- la phase 0 peut **exclure sans qu'aucun signal existe** : si même un oracle — direction
+  connue d'avance, sortie parfaite — ne couvre plus les coûts après la latence observée, la
+  cellule tombe. Aucun `Lmax` n'est inventé, donc aucune croyance sur l'alpha n'entre dans un
+  test conçu pour en être indépendant ;
 - une grappe est attribuée à **chaque** observation, y compris hors rafale — deux cotations
   calmes séparées de 50 ms ne sont pas indépendantes non plus.
 

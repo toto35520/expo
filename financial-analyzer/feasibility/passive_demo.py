@@ -18,6 +18,8 @@ from __future__ import annotations
 
 import random
 
+import numpy as np
+
 from .latency_journal import ConnectionState
 from .observability import (
     CorrectionMode,
@@ -30,10 +32,11 @@ from .observability import (
     q57_resolved,
     qualify_clock,
 )
-from .passive_campaign import (
+from .sequential import InferenceMode, rho_for_target
+from .passive_campaign import (  # noqa: E402
     NS_PER_MS,
     NS_PER_SECOND,
-    AdmissibleLatency,
+    BlockingChoice,
     ClusterAssigner,
     EvaluationMode,
     HostLoad,
@@ -41,14 +44,17 @@ from .passive_campaign import (
     PipelineMode,
     StoppingPolicy,
     assess_stopping,
+    block_sensitivity,
+    blocking_is_robust,
     capturability_input,
     coverage,
     daily_report,
     hourly_report,
     is_stable,
-    latency_budget_ns,
-    passive_verdict,
-    q42_priority,
+    PassiveVerdict,
+    oracle_capturable,
+    oracle_exclusion,
+    phase0_state,
     stability_trace,
     summarise_by_cell,
 )
@@ -188,25 +194,61 @@ def main() -> None:
     print()
 
     summaries = summarise_by_cell(observations)
-    admissible = AdmissibleLatency(
-        horizon_ns=NS_PER_SECOND, max_admissible_ns=200 * MS,
-        source="valeur de démonstration — à remplacer par la politique de risque réelle",
-        declared_at_ns=0,
+
+    # ---- Q61-A : exclusion signal-agnostique, sans aucun Lmax inventé
+    rng = random.Random(11)
+    n = 6_000
+    ts = np.arange(n, dtype=np.int64) * 10 * MS
+    prices = 2400.0 + np.cumsum(
+        np.array([rng.gauss(0, 0.02) for _ in range(n)], dtype=float)
     )
+    starts = np.arange(100, n - 200, 45)
+    cluster_ids = np.arange(n) // 150
+    COST_FLOOR = 0.35          # plancher de coûts aller-retour, en dollars l'once
 
     print("-" * 78)
-    print("VERDICT PAR CELLULE — horizon 1 s, latence admissible déclarée 200 ms")
+    print("PHASE 0 PAR CELLULE — exclusion sans qu'aucun signal ne soit défini")
+    print(f"horizon 500 ms · plancher de coûts {COST_FLOOR:.2f} $/oz")
     print()
     for cell in sorted(summaries, key=lambda c: c.label):
-        s = summaries[cell]
-        verdict, why = passive_verdict(s, admissible, clock=clock)
-        budget = latency_budget_ns(s, admissible)
-        priority, _ = q42_priority(cost_excluded=False, passive=verdict)
-        print(f"  {cell.burst_state.value:<12} {verdict.value}")
+        sample = capturability_input(
+            [o for o in observations if o.cell == cell], clock
+        )
+        capture = oracle_capturable(
+            ts, prices, starts, sample.latency_samples_ns, 500 * MS,
+            sample.scope, cluster_ids=cluster_ids,
+        )
+        oracle, why = oracle_exclusion(capture, COST_FLOOR)
+        state, state_why = phase0_state(
+            cost_excluded=False,
+            passive=PassiveVerdict.PASSIVE_LATENCY_INDETERMINATE
+            if summaries[cell].clusters < 20 else
+            PassiveVerdict.PASSIVE_LATENCY_NOT_EXCLUDED,
+            oracle=oracle,
+        )
+        print(f"  {cell.burst_state.value:<12} {state.value}")
+        print(f"    borne locale p95 : {summaries[cell].bound.p95 / MS:.1f} ms"
+              f"   ({sample.result_name})")
         print(f"    {why}")
-        print(f"    budget restant pour tout le trajet courtier : {budget / MS:+.1f} ms")
-        print(f"    Q42 : {priority.value}")
+        print(f"    → {state_why}")
         print()
+
+    choice = BlockingChoice(
+        block_ns=30 * NS_PER_SECOND,
+        source="valeur de démonstration — à confronter à l'autocorrélation réelle",
+        version="demo-v1",
+    )
+    sens = block_sensitivity(observations, choice, 120.0, 3 * NS_PER_SECOND)
+    print("-" * 78)
+    print("SENSIBILITÉ AU DÉCOUPAGE DU RÉGIME CALME")
+    for entry in sens:
+        print(f"  bloc {entry.block_ns / NS_PER_SECOND:5.1f} s"
+              f"   {entry.clusters:>4} grappes"
+              f"   p95 {entry.p95_ns / MS:6.2f} ms"
+              f"   [{entry.ci_low_ns / MS:6.2f} ; {entry.ci_high_ns / MS:6.2f}]")
+    robust = blocking_is_robust(sens, threshold_ns=200 * MS)
+    print(f"  verdict robuste au découpage (seuil 200 ms) : {robust}")
+    print()
 
     trace = stability_trace(observations)
     print("-" * 78)
@@ -224,10 +266,13 @@ def main() -> None:
         min_burst_p95_clusters=40, min_burst_p99_clusters=15,
         max_relative_ci_width=0.20,
         required_clock_qualification=clock.qualification.value,
+        inference_mode=InferenceMode.ANYTIME_VALID,
+        rho=rho_for_target(400),
     )
     assessment = assess_stopping(policy, coverage(observations), summaries, 0, clock)
     print("-" * 78)
-    print(f"POLITIQUE D'ARRÊT {policy.fingerprint} — {assessment.decision.value}")
+    print(f"POLITIQUE D'ARRÊT {policy.fingerprint} — {assessment.decision.value}"
+          f"   ({policy.inference_mode.value})")
     for reason in assessment.reasons:
         print(f"  · {reason}")
     print()
@@ -243,10 +288,10 @@ def main() -> None:
         print(f"  échantillon   : {sample.latency_samples_ns.size} latences,"
               f" {sample.clusters} grappes")
         print(f"  ancrage       : {sample.anchor.value}")
+        print(f"  portée        : {sample.scope.value}  →  {sample.result_name}")
+        print(f"  fin d'horizon : {sample.horizon_end_policy.value}")
         if sample.is_upper_bound_of_capturability:
-            print("  ⚠ ancrage local : le mouvement survenu avant la réception n'est pas")
-            print("    compté comme perdu. La fraction capturable en ressort **surestimée**,")
-            print("    donc une exclusion reste concluante mais une non-exclusion est faible.")
+            print(f"  ⚠ {sample.interpret(excluded=False)}")
     print()
     print("Non mesuré, et donc jamais compté : émission, réseau, traitement courtier,")
     print("file, activation, exécution, glissement, sélection adverse.")

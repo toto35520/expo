@@ -3192,7 +3192,7 @@ autour du seuil fabriquerait des grappes artificielles.
 
 ## ADR-176 — La politique d'arrêt est préenregistrée et ne peut dépendre du résultat
 
-**Statut** : figé et implémenté (Q51-A)
+**Statut** : figé et implémenté (Q51-A) · **garde-fou corrigé par l'ADR-181**
 
 **Décision.** `StoppingPolicy` porte auteur, empreinte et date de déclaration. Le module
 refuse d'évaluer une campagne contre une politique postérieure à sa première observation, ou
@@ -3203,6 +3203,13 @@ regarde jamais la valeur mesurée.
 c'est le résultat reformulé. Le piège résiduel est signalé plutôt qu'interdit — arrêter dès
 que l'intervalle devient étroit sélectionne les échantillons homogènes, donc l'intervalle
 final sous-estime l'incertitude ; `confidence_interval_is_optimistic` le déclare.
+
+> **Correction.** « Signaler plutôt qu'interdire » était insuffisant. Sous une règle d'arrêt
+> qui lit l'intervalle, la couverture nominale n'est pas *optimiste* : elle **n'est plus
+> garantie**. L'ADR-181 remplace l'avertissement par une contrainte de mode, et
+> `confidence_interval_is_optimistic` n'est plus qu'un diagnostic historique. Le reste de
+> cette décision — préenregistrement, auteur, empreinte, indépendance à la valeur mesurée —
+> est inchangé.
 
 ---
 
@@ -3251,7 +3258,7 @@ négatif signifie que l'horizon est exclu sans avoir rien mesuré du courtier.
 
 ## ADR-180 — La fraction capturable ancrée à la réception locale est une borne supérieure
 
-**Statut** : figé et implémenté (Q51-A) · précise le protocole de la phase 0 de Q19
+**Statut** : **remplacé par l'ADR-185** · le principe tient, la typologie était incomplète
 
 **Décision.** L'instant `t₀` de la phase 0 est déclaré, jamais implicite. Avec
 `t₀ = réception locale`, le mouvement survenu **avant** la réception n'entre pas dans
@@ -3262,3 +3269,171 @@ en ressort surestimée. `CapturabilityInput` porte son ancrage et le signale.
 n'exclut pas moins en surestimant — mais une non-exclusion obtenue sous ancrage local est
 plus faible encore que d'ordinaire. Seule une qualification Q57 de `B0 → B1` permet un
 ancrage marché et retire cet optimisme.
+
+> **Correction.** La dernière phrase est fausse. Qualifier `B0 → B1` donne l'ancre
+> **fournisseur**, pas l'ancre marché : l'horodatage fournisseur ignore appariement,
+> agrégation et délai interne précédant la publication. Il reste donc une borne optimiste,
+> simplement moins lâche. L'ADR-185 introduit les trois ancres et les trois portées comme
+> types distincts, ainsi que la politique de fin d'horizon que cette décision passait sous
+> silence.
+
+---
+
+## ADR-181 — Un arrêt fondé sur l'incertitude observée exige une inférence anytime-valid
+
+**Statut** : figé et implémenté (Q59-A) · **corrige et remplace le garde-fou de l'ADR-176**
+
+**Décision.** Si la décision d'arrêter dépend de l'intervalle observé, un intervalle de
+confiance classique calculé après l'arrêt ne conserve pas sa couverture nominale. Un
+avertissement accompagnant le chiffre ne suffit pas : la combinaison produit
+`SEQUENTIAL_INFERENCE_INVALID`, et il n'y a pas de chiffre à publier.
+
+**Conséquences.** Le problème n'était pas « intervalle potentiellement optimiste » mais
+« garantie statistique non valide sous cette règle d'arrêt ». Une simulation le confirme : un
+intervalle normal recalculé en continu est franchi **48 %** du temps pour un niveau annoncé de
+5 %, là où la séquence de confiance reste sous son α. `confidence_interval_is_optimistic`
+subsiste comme diagnostic historique et n'a plus aucune valeur de protection.
+
+---
+
+## ADR-182 — Le mode d'inférence est déclaré avant la première observation
+
+**Statut** : figé et implémenté (Q59-A)
+
+**Décision.** Deux modes seulement. `FIXED_HORIZON` gèle la durée d'avance : la largeur
+d'intervalle devient un **diagnostic** et ne peut ni déclencher ni retarder l'arrêt.
+`ANYTIME_VALID` utilise une séquence de confiance dont la couverture est simultanée dans le
+temps ; sa largeur peut alors légitimement décider.
+
+**Conséquences.** Le constructeur refuse une politique `ANYTIME_VALID` sans `ρ` déclaré, et une
+politique `FIXED_HORIZON` sans durée gelée — sans elle, l'arrêt ne peut être que dépendant des
+données. La séquence retenue est le mélange normal de Robbins au niveau des **grappes**, avec
+`σ² = 1/4` (Hoeffding). Elle est volontairement conservatrice, et son coût est asymétrique :
+exclure demande une marge large donc peu de grappes ; conclure « non exclu » demande une marge
+fine contre `q = 0,95`, donc un échantillon bien plus grand. Cette asymétrie est cohérente avec
+le statut des deux verdicts, et `clusters_for_separation()` la rend chiffrable avant la campagne.
+
+---
+
+## ADR-183 — Q61 se sépare en budget signal-agnostique et budget propre à un moteur
+
+**Statut** : figé et implémenté (Q61)
+
+**Décision.** **Q61-A** est la borne oracle de la phase 0 : `U_capture(L, h, c)`, mouvement
+encore capturable après latence, construit en offrant la direction connue d'avance et la
+sortie parfaite. Si `U_capture ≤ C_floor`, la cellule est exclue — `LATENCY_COST_ORACLE_EXCLUDED`
+— sans qu'aucun moteur prédictif n'existe. **Q61-B** est le budget `L_max` d'un moteur validé,
+dérivé de `edge_j(L, h, c)`.
+
+**Conséquences.** Q61-B **ne bloque pas** le premier verdict réel. La phase 0 doit précisément
+pouvoir éliminer des horizons avant qu'un signal soit inventé ; lui imposer un `Lmax` y
+réintroduirait une croyance sur l'alpha, dans un test conçu pour en être indépendant.
+L'argument oracle est en outre plus fort qu'un seuil arbitraire : même un détecteur
+extrêmement favorable ne dispose plus d'un mouvement suffisant après la latence observée.
+
+---
+
+## ADR-184 — Aucun Lmax spécifique n'est inventé avant le signal correspondant
+
+**Statut** : figé et implémenté (Q61-B)
+
+**Décision.** `AdmissibleLatency` exige un `engine_id` nommé, en plus de sa source et de sa
+date. Un budget sans moteur ne se construit pas.
+
+**Conséquences.** Le budget est spécifique au moteur, à l'horizon, à la cellule, au régime et au
+type d'ordre, et se fige dans le protocole du moteur avant son évaluation finale. Un `Lmax`
+anonyme serait une croyance sur l'alpha déguisée en contrainte physique.
+
+---
+
+## ADR-185 — L'ancre et l'origine d'horizon sont des types, pas des champs libres
+
+**Statut** : figé et implémenté (Q19 phase 0) · **remplace l'ADR-180**
+
+**Décision.** Trois ancres — `MARKET_EVENT_ANCHOR`, `PROVIDER_EVENT_ANCHOR`,
+`LOCAL_RECEIVE_ANCHOR` — et trois portées correspondantes — `END_TO_END_MARKET`,
+`PROVIDER_TO_ACTION`, `POST_RECEIVE_ONLY`. Ce sont des **estimandes distincts** : ils ne se
+fusionnent jamais dans une même distribution. Chaque portée impose son nom de publication ;
+« capturabilité » tout court est interdit.
+
+**Conséquences.** L'ADR-180 traitait l'ancre fournisseur comme équivalente à l'ancre marché.
+C'est faux : l'horodatage fournisseur ignore appariement, agrégation et délai interne précédant
+la publication, selon la sémantique de la source — il reste une borne optimiste. Par ailleurs
+`horizon_end_policy` est explicite : déplacer l'ancre sans fixer la fin de l'horizon
+prolongerait la fenêtre de `t_ancre − t_marché` et fabriquerait du mouvement capturable qui
+n'existait pas dans la question posée.
+
+---
+
+## ADR-186 — Une exclusion post-réception conclut ; sa non-exclusion ne qualifie rien
+
+**Statut** : figé et implémenté (Q19 phase 0)
+
+**Décision.** `POST_RECEIVE_ONLY` est une borne optimiste : dissémination, trajet fournisseur et
+réseau entrant sont offerts gratuitement au système. Si la seule latence interne suffit déjà à
+éliminer l'horizon, **l'exclusion est forte**. Sa non-exclusion, en revanche, ne dit rien du
+chemin de bout en bout.
+
+**Conséquences.** `interpret()` produit deux phrases différentes selon le sens du résultat, et
+la non-exclusion nomme systématiquement la portée dont elle relève. Un résultat annoncé sous le
+nom « capturabilité » se lirait comme une mesure de bout en bout.
+
+---
+
+## ADR-187 — Le découpage temporel du régime calme est versionné et testé en sensibilité
+
+**Statut** : figé et implémenté (Q51-A)
+
+**Décision.** `BlockingChoice` porte durée, source et version. L'inférence est refaite sur
+`{b/2, b, 2b}` avant tout verdict final, et `blocking_is_robust()` vérifie que tous les
+découpages placent le seuil du même côté de l'intervalle.
+
+**Conséquences.** Sans cela, la durée de bloc redevient une constante arbitraire oubliée dans le
+code, et un verdict qui bascule entre `b/2` et `2b` décrit le découpage autant que la latence.
+La valeur devra à terme être confrontée à l'autocorrélation des latences et du débit de ticks,
+et à la durée des épisodes de file et de connexion.
+
+---
+
+## ADR-188 — La comparaison de cadence exige un flux apparié
+
+**Statut** : figé et implémenté (Q43)
+
+**Décision.** `PAIRED_REPLAY` et `SHADOW_EVALUATION` autorisent l'attribution ;
+`UNPAIRED_DAYS` ne l'autorise pas et ne produit qu'un diagnostic.
+
+**Conséquences.** « Event-driven lundi contre periodic mardi » ne permet pas d'attribuer l'écart
+à la cadence : les marchés n'étaient pas les mêmes. Les deux politiques doivent voir le même
+flux — rejoué, ou évalué en parallèle sans que les deux piles perturbent la production.
+
+---
+
+## ADR-189 — L'effet observateur est mesuré comme une distribution appariée
+
+**Statut** : figé et implémenté (Q51-A) · précise l'ADR-176
+
+**Décision.** Le surcoût `O = L_instrumenté − L_baseline` est mesuré sur un banc contrôlé apparié
+et publié en p50, p95 et p99. Un surcoût arrondi à zéro alors que l'horloge a avancé lève une
+erreur.
+
+**Conséquences.** Sérialiser hors du chemin critique ne supprime ni la lecture d'horloge, ni la
+création d'objet, ni l'allocation, ni la mise en file, ni la contention éventuelle. Comparer
+deux séries de tailles différentes mesurerait aussi la différence d'échantillon, et le module
+le refuse.
+
+---
+
+## ADR-190 — La phase 0 publie un état consolidé qui n'autorise jamais rien
+
+**Statut** : figé et implémenté (Q19 phase 0)
+
+**Décision.** Six états : exclusion par le coût, par la latence passive, par la capturabilité
+oracle, non-exclusion, indétermination, mesure invalide. L'ordre de précédence suit la solidité —
+une mesure invalide n'autorise rien, une exclusion par le coût ne se rattrape par aucune
+amélioration de latence.
+
+**Conséquences.** `PHASE0_NOT_EXCLUDED` ne signifie **jamais** qu'un bon trade est possible :
+seulement qu'il reste physiquement et économiquement assez d'espace pour justifier la recherche
+d'un signal. L'intersection publiée est
+`D_cost ∩ D_passive_latency ∩ D_capturability`, et aucun de ses trois termes ne dépend d'un
+signal.

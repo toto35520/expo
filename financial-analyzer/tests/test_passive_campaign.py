@@ -21,10 +21,30 @@ from feasibility.observability import (
     build_matrix,
     qualify_clock,
 )
+from feasibility.sequential import (
+    InferenceMode,
+    InferenceValidity,
+    rho_for_target,
+)
 from feasibility.passive_campaign import (
     NS_PER_MS,
     NS_PER_SECOND,
     AdmissibleLatency,
+    BlockSensitivity,
+    BlockingChoice,
+    CapturabilityScope,
+    ComparisonDesign,
+    HorizonEndPolicy,
+    OracleVerdict,
+    Phase0State,
+    block_sensitivity,
+    blocking_is_robust,
+    compare_cadence,
+    inference_validity,
+    observer_overhead,
+    oracle_capturable,
+    oracle_exclusion,
+    phase0_state,
     CampaignCell,
     CampaignError,
     CapturabilityAnchor,
@@ -285,8 +305,29 @@ def policy(**kw) -> StoppingPolicy:
         min_burst_p95_clusters=15, min_burst_p99_clusters=5,
         max_relative_ci_width=0.30,
         required_clock_qualification="CLOCK_QUALIFIED_LOCAL_ONLY",
+        inference_mode=InferenceMode.FIXED_HORIZON,
+        fixed_horizon_days=10,
     )
     return StoppingPolicy(**{**base, **kw})
+
+
+def anytime_policy(**kw) -> StoppingPolicy:
+    return policy(inference_mode=InferenceMode.ANYTIME_VALID,
+                  rho=rho_for_target(200), fixed_horizon_days=None, **kw)
+
+
+def six_days() -> list[PassiveObservation]:
+    obs: list[PassiveObservation] = []
+    for d in range(6):
+        obs += many(80, total_ns=8 * MS, day=f"2026-08-0{d + 1}",
+                    cluster_prefix=f"D{d}C", per_cluster=2, jitter_ns=6 * MS)
+        obs += many(60, total_ns=30 * MS, burst=BurstState.BURST_P95,
+                    day=f"2026-08-0{d + 1}", cluster_prefix=f"D{d}B", per_cluster=2,
+                    jitter_ns=20 * MS)
+        obs += many(30, total_ns=50 * MS, burst=BurstState.BURST_P99,
+                    day=f"2026-08-0{d + 1}", cluster_prefix=f"D{d}X", per_cluster=2,
+                    jitter_ns=30 * MS)
+    return obs
 
 
 def test_a_policy_declared_after_the_first_observation_is_invalid():
@@ -318,21 +359,64 @@ def test_insufficient_coverage_continues_regardless_of_the_measured_value():
     assert any("journées" in r for r in a.reasons)
 
 
-def test_stopping_on_the_width_criterion_flags_the_interval_as_optimistic():
-    """Arrêter dès que l'intervalle est étroit sélectionne les échantillons homogènes :
-    l'intervalle final sous-estime alors l'incertitude réelle."""
-    obs: list[PassiveObservation] = []
-    for d in range(6):
-        obs += many(80, total_ns=8 * MS, day=f"2026-08-0{d + 1}",
-                    cluster_prefix=f"D{d}C", per_cluster=2)
-        obs += many(60, total_ns=30 * MS, burst=BurstState.BURST_P95,
-                    day=f"2026-08-0{d + 1}", cluster_prefix=f"D{d}B", per_cluster=2)
-        obs += many(30, total_ns=50 * MS, burst=BurstState.BURST_P99,
-                    day=f"2026-08-0{d + 1}", cluster_prefix=f"D{d}X", per_cluster=2)
-    lenient = policy(min_sessions=1, max_relative_ci_width=10.0)
+def test_under_fixed_horizon_a_narrow_interval_cannot_trigger_the_stop():
+    """La largeur est un diagnostic. Sous horizon gelé, seule la durée déclarée arrête —
+    sinon la couverture de l'intervalle final n'est plus garantie du tout."""
+    obs = six_days()
+    lenient = policy(min_sessions=1, max_relative_ci_width=0.0001, fixed_horizon_days=10)
     a = assess_stopping(lenient, coverage(obs), summarise_by_cell(obs), 0, clock())
+    assert a.decision is StopDecision.CONTINUE
+    assert not a.confidence_interval_is_optimistic
+
+
+def test_under_fixed_horizon_the_frozen_duration_is_the_only_stopping_criterion():
+    obs = six_days()
+    reached = policy(min_sessions=1, max_relative_ci_width=10.0, fixed_horizon_days=6)
+    a = assess_stopping(reached, coverage(obs), summarise_by_cell(obs), 0, clock())
     assert a.decision is StopDecision.MAY_STOP
-    assert a.confidence_interval_is_optimistic
+    assert "horizon gelé atteint" in a.reasons[0]
+    assert not a.confidence_interval_is_optimistic
+
+
+def test_a_wide_interval_never_prolongs_a_fixed_horizon_campaign():
+    """Prolonger parce que l'intervalle est large est un arrêt dépendant des données par
+    l'autre bout."""
+    obs = six_days()
+    strict = policy(min_sessions=1, max_relative_ci_width=0.0001, fixed_horizon_days=6)
+    a = assess_stopping(strict, coverage(obs), summarise_by_cell(obs), 0, clock())
+    assert a.decision is StopDecision.MAY_STOP
+    assert any("diagnostic seulement" in r for r in a.reasons)
+
+
+def test_under_anytime_valid_the_sequence_width_may_decide():
+    """La garantie étant simultanée dans le temps, arrêter sur la largeur reste valide."""
+    obs = six_days()
+    a = assess_stopping(anytime_policy(min_days=1, min_sessions=1,
+                                       max_relative_ci_width=10.0),
+                        coverage(obs), summarise_by_cell(obs), 0, clock())
+    assert a.decision is StopDecision.MAY_STOP
+    assert a.inference_mode is InferenceMode.ANYTIME_VALID
+
+
+def test_an_anytime_valid_policy_needs_its_boundary_declared_in_advance():
+    with pytest.raises(CampaignError, match="ρ déclaré"):
+        policy(inference_mode=InferenceMode.ANYTIME_VALID, rho=None)
+
+
+def test_a_fixed_horizon_policy_needs_its_duration_frozen_in_advance():
+    with pytest.raises(CampaignError, match="durée gelée"):
+        policy(fixed_horizon_days=None, fixed_horizon_clusters=None)
+
+
+def test_a_data_dependent_stop_under_ordinary_inference_is_invalid_not_reserved():
+    """Pas une réserve à côté du chiffre : il n'y a pas de chiffre à publier."""
+    assert inference_validity(policy(), stopped_on_observed_uncertainty=True) is (
+        InferenceValidity.SEQUENTIAL_INFERENCE_INVALID
+    )
+    assert inference_validity(policy(), stopped_on_observed_uncertainty=False) is (
+        InferenceValidity.VALID
+    )
+    assert inference_validity(anytime_policy(), True) is InferenceValidity.VALID
 
 
 def test_the_policy_fingerprint_changes_with_its_content():
@@ -379,17 +463,27 @@ def test_one_day_is_never_enough_to_call_it_stable():
 
 def admissible(horizon=NS_PER_SECOND, maximum=200 * MS) -> AdmissibleLatency:
     return AdmissibleLatency(horizon, maximum, source="politique de risque v1",
-                             declared_at_ns=0)
+                             declared_at_ns=0, engine_id="moteur-de-test",
+                             gates_passed=True)
 
 
 def test_admissible_latency_must_be_declared_with_a_source():
     with pytest.raises(CampaignError, match="source déclarée"):
-        AdmissibleLatency(NS_PER_SECOND, 200 * MS, source="  ", declared_at_ns=0)
+        AdmissibleLatency(NS_PER_SECOND, 200 * MS, source="  ", declared_at_ns=0,
+                          engine_id="m")
+
+
+def test_a_signal_specific_budget_must_name_its_engine():
+    """Un Lmax sans moteur serait une croyance sur l'alpha réintroduite dans un test
+    conçu pour en être indépendant."""
+    with pytest.raises(CampaignError, match="moteur nommé"):
+        AdmissibleLatency(NS_PER_SECOND, 200 * MS, source="politique", declared_at_ns=0)
 
 
 def test_admissible_latency_cannot_exceed_its_horizon():
     with pytest.raises(CampaignError, match="fenêtre est déjà close"):
-        AdmissibleLatency(100 * MS, 200 * MS, source="x", declared_at_ns=0)
+        AdmissibleLatency(100 * MS, 200 * MS, source="x", declared_at_ns=0,
+                          engine_id="m")
 
 
 def test_a_bound_already_too_slow_excludes_conclusively():
@@ -475,23 +569,63 @@ def test_a_local_anchor_makes_capturability_an_upper_bound():
     """Le mouvement survenu avant la réception locale est invisible et n'est donc jamais
     compté comme perdu : la fraction capturable en ressort surestimée."""
     ci = capturability_input(many(40, total_ns=8 * MS, per_cluster=2), clock())
-    assert ci.anchor is CapturabilityAnchor.LOCAL_RECEIVE
+    assert ci.anchor is CapturabilityAnchor.LOCAL_RECEIVE_ANCHOR
+    assert ci.scope is CapturabilityScope.POST_RECEIVE_ONLY
     assert ci.is_upper_bound_of_capturability
+    assert ci.result_name == "POST_RECEIVE_CAPTURABILITY"
 
 
-def test_a_qualified_provider_anchor_removes_the_optimism():
-    qualified = clock(measured_uncertainty_ns=200_000,
-                      intersystem_uncertainty_declared_unknown=False)
-    obs = [
+def provider_anchored(n=40):
+    return [
         observation(boundaries=boundaries(provider=i * 10 * MS - 40 * MS,
                                           start=i * 10 * MS),
                     provider_qualified=True, cluster_id=f"C{i // 2}")
-        for i in range(40)
+        for i in range(n)
     ]
-    ci = capturability_input(obs, qualified)
-    assert ci.anchor is CapturabilityAnchor.QUALIFIED_MARKET
-    assert not ci.is_upper_bound_of_capturability
+
+
+def test_a_provider_anchor_does_not_reach_the_market_event():
+    """L'horodatage fournisseur ignore appariement, agrégation et délai interne
+    précédant la publication : il reste une borne optimiste, pas la référence
+    économique."""
+    qualified = clock(measured_uncertainty_ns=200_000,
+                      intersystem_uncertainty_declared_unknown=False)
+    ci = capturability_input(provider_anchored(), qualified)
+    assert ci.anchor is CapturabilityAnchor.PROVIDER_EVENT_ANCHOR
+    assert ci.scope is CapturabilityScope.PROVIDER_TO_ACTION
+    assert ci.result_name == "PROVIDER_ANCHORED_CAPTURABILITY"
+    assert ci.is_upper_bound_of_capturability
     assert int(ci.latency_samples_ns[0]) == 49 * MS
+
+
+def test_the_three_scopes_are_never_merged():
+    """Trois estimandes distincts ne se fusionnent pas dans une seule distribution."""
+    qualified = clock(measured_uncertainty_ns=200_000,
+                      intersystem_uncertainty_declared_unknown=False)
+    local = capturability_input(many(40, total_ns=8 * MS, per_cluster=2), clock())
+    provider = capturability_input(provider_anchored(), qualified)
+    assert not local.mergeable_with(provider)
+    assert local.mergeable_with(local)
+
+
+def test_a_sliding_horizon_end_creates_a_different_estimand():
+    """Déplacer l'ancre sans fixer la fin de l'horizon prolongerait la fenêtre de
+    `t_ancre − t_marché` et fabriquerait du mouvement capturable."""
+    fixed = capturability_input(many(40, total_ns=8 * MS, per_cluster=2), clock())
+    sliding = capturability_input(many(40, total_ns=8 * MS, per_cluster=2), clock(),
+                                  horizon_end_policy=HorizonEndPolicy.ANCHORED_TO_ORIGIN)
+    assert not fixed.creates_extended_window
+    assert sliding.creates_extended_window
+    assert not fixed.mergeable_with(sliding)
+
+
+def test_post_receive_exclusion_concludes_but_non_exclusion_does_not():
+    """Même en offrant gratuitement dissémination, trajet fournisseur et réseau entrant,
+    si la latence interne suffit à éliminer l'horizon, l'exclusion est forte."""
+    ci = capturability_input(many(40, total_ns=8 * MS, per_cluster=2), clock())
+    assert "exclusion concluante" in ci.interpret(excluded=True)
+    assert "ne qualifie en rien" in ci.interpret(excluded=False)
+    assert "POST_RECEIVE_CAPTURABILITY" in ci.interpret(excluded=False)
 
 
 def test_the_capturability_sample_is_conditional_on_its_cell():
@@ -574,3 +708,233 @@ def test_the_daily_report_breaks_down_only_the_target_pipeline():
     decomposition = out.split("DÉCOMPOSITION")[1]
     assert "PIPELINE_TARGET" in decomposition
     assert "PIPELINE_STRESS" not in decomposition
+
+
+# ============================================= Q61-A — exclusion sans signal
+
+
+def price_path(n=4_000, seed=3, drift=0.02):
+    rng = np.random.default_rng(seed)
+    ts = np.arange(n, dtype=np.int64) * 10 * MS
+    prices = 2400.0 + np.cumsum(rng.normal(0, drift, n))
+    return ts, prices
+
+
+def test_the_oracle_is_computed_without_any_signal_definition():
+    """Direction connue d'avance et sortie parfaite : aucun moteur prédictif ne peut
+    faire mieux, ce qui rend l'exclusion concluante avant toute construction."""
+    ts, prices = price_path()
+    starts = np.arange(50, 3_500, 40)
+    cap = oracle_capturable(ts, prices, starts, np.full(60, 20 * MS, dtype=np.int64),
+                            500 * MS, CapturabilityScope.POST_RECEIVE_ONLY,
+                            cluster_ids=np.arange(ts.size) // 100)
+    assert cap.events == starts.size
+    assert cap.capture.p90 > 0.0
+    assert cap.exhausted_fraction == 0.0
+
+
+def test_a_latency_beyond_the_horizon_captures_nothing_but_stays_in_the_sample():
+    ts, prices = price_path()
+    starts = np.arange(50, 3_500, 40)
+    cap = oracle_capturable(ts, prices, starts, np.full(60, 900 * MS, dtype=np.int64),
+                            500 * MS, CapturabilityScope.POST_RECEIVE_ONLY,
+                            cluster_ids=np.arange(ts.size) // 100)
+    assert cap.exhausted_fraction == 1.0
+    assert cap.capture.p90 == 0.0
+    assert cap.events == starts.size
+
+
+def test_the_oracle_captures_less_as_latency_grows():
+    ts, prices = price_path()
+    starts = np.arange(50, 3_500, 40)
+    clusters = np.arange(ts.size) // 100
+    fast = oracle_capturable(ts, prices, starts, np.full(60, 10 * MS, dtype=np.int64),
+                             500 * MS, CapturabilityScope.POST_RECEIVE_ONLY,
+                             cluster_ids=clusters)
+    slow = oracle_capturable(ts, prices, starts, np.full(60, 400 * MS, dtype=np.int64),
+                             500 * MS, CapturabilityScope.POST_RECEIVE_ONLY,
+                             cluster_ids=clusters)
+    assert slow.capture.p90 < fast.capture.p90
+
+
+def test_an_oracle_below_the_cost_floor_excludes_without_a_predictive_engine():
+    ts, prices = price_path()
+    starts = np.arange(50, 3_500, 40)
+    cap = oracle_capturable(ts, prices, starts, np.full(60, 450 * MS, dtype=np.int64),
+                            500 * MS, CapturabilityScope.POST_RECEIVE_ONLY,
+                            cluster_ids=np.arange(ts.size) // 100)
+    verdict, why = oracle_exclusion(cap, cost_floor=50.0)
+    assert verdict is OracleVerdict.LATENCY_COST_ORACLE_EXCLUDED
+    assert "direction connue d'avance" in why
+
+
+def test_an_oracle_above_the_floor_only_justifies_looking_for_a_signal():
+    ts, prices = price_path()
+    starts = np.arange(50, 3_500, 40)
+    cap = oracle_capturable(ts, prices, starts, np.full(60, 10 * MS, dtype=np.int64),
+                            500 * MS, CapturabilityScope.POST_RECEIVE_ONLY,
+                            cluster_ids=np.arange(ts.size) // 100)
+    verdict, why = oracle_exclusion(cap, cost_floor=0.0001)
+    assert verdict is OracleVerdict.ORACLE_NOT_EXCLUDED
+    assert "ne dit rien de son existence" in why
+
+
+def test_too_few_clusters_leaves_the_oracle_indeterminate():
+    ts, prices = price_path()
+    starts = np.arange(50, 300, 40)
+    cap = oracle_capturable(ts, prices, starts, np.full(10, 10 * MS, dtype=np.int64),
+                            500 * MS, CapturabilityScope.POST_RECEIVE_ONLY,
+                            cluster_ids=np.zeros(ts.size, dtype=int))
+    assert oracle_exclusion(cap, 0.01)[0] is OracleVerdict.ORACLE_INDETERMINATE
+
+
+# ============================================= §21 — état consolidé de la phase 0
+
+
+def test_phase0_can_exclude_before_any_signal_exists():
+    state, why = phase0_state(False, PassiveVerdict.PASSIVE_LATENCY_NOT_EXCLUDED,
+                              OracleVerdict.LATENCY_COST_ORACLE_EXCLUDED)
+    assert state is Phase0State.PHASE0_EXCLUDED_BY_ORACLE_CAPTURABILITY
+    assert "oracle" in why
+
+
+def test_cost_exclusion_dominates_every_latency_argument():
+    state, _ = phase0_state(True, PassiveVerdict.PASSIVE_LATENCY_NOT_EXCLUDED,
+                            OracleVerdict.ORACLE_NOT_EXCLUDED)
+    assert state is Phase0State.PHASE0_EXCLUDED_BY_COST
+
+
+def test_an_invalid_measurement_authorises_nothing():
+    state, _ = phase0_state(True, PassiveVerdict.PASSIVE_MEASUREMENT_INVALID,
+                            OracleVerdict.LATENCY_COST_ORACLE_EXCLUDED)
+    assert state is Phase0State.PHASE0_MEASUREMENT_INVALID
+
+
+def test_ignorance_never_grants_permission():
+    state, why = phase0_state(False, PassiveVerdict.PASSIVE_LATENCY_INDETERMINATE,
+                              OracleVerdict.ORACLE_NOT_EXCLUDED)
+    assert state is Phase0State.PHASE0_INDETERMINATE
+    assert "ne vaut pas permission" in why
+
+
+def test_not_excluded_never_means_a_good_trade_is_possible():
+    state, why = phase0_state(False, PassiveVerdict.PASSIVE_LATENCY_NOT_EXCLUDED,
+                              OracleVerdict.ORACLE_NOT_EXCLUDED)
+    assert state is Phase0State.PHASE0_NOT_EXCLUDED
+    assert "ne dit rien de son existence" in why
+
+
+# ============================================= §16 — sensibilité au découpage
+
+
+def blocking(**kw) -> BlockingChoice:
+    base = dict(block_ns=NS_PER_SECOND, source="autocorrélation observée, campagne pilote",
+                version="v1")
+    return BlockingChoice(**{**base, **kw})
+
+
+def test_a_block_duration_must_declare_its_source():
+    with pytest.raises(CampaignError, match="source déclarée"):
+        blocking(source="  ")
+
+
+def test_halving_the_block_produces_more_clusters():
+    obs = many(200, total_ns=8 * MS, per_cluster=1, jitter_ns=6 * MS)
+    sens = block_sensitivity(obs, blocking(block_ns=200 * MS), 100.0, NS_PER_SECOND)
+    counts = [s.clusters for s in sens]
+    assert counts == sorted(counts, reverse=True)
+
+
+def test_a_verdict_that_survives_every_blocking_is_robust():
+    obs = many(200, total_ns=8 * MS, per_cluster=1, jitter_ns=4 * MS)
+    sens = block_sensitivity(obs, blocking(block_ns=200 * MS), 100.0, NS_PER_SECOND)
+    assert blocking_is_robust(sens, threshold_ns=500 * MS)
+
+
+def test_a_verdict_that_flips_between_blockings_is_not_a_verdict_about_latency():
+    obs = many(200, total_ns=8 * MS, per_cluster=1, jitter_ns=4 * MS)
+    sens = block_sensitivity(obs, blocking(block_ns=200 * MS), 100.0, NS_PER_SECOND)
+    straddling = sens[0].ci_low_ns + (sens[0].ci_high_ns - sens[0].ci_low_ns) / 2
+    fabricated = (
+        BlockSensitivity(1, 10, 1.0, 0.0, straddling + 1e9),
+        BlockSensitivity(2, 20, 1.0, straddling + 1e9, straddling + 2e9),
+    )
+    assert not blocking_is_robust(fabricated, threshold_ns=straddling + 5e8)
+
+
+def test_a_single_blocking_is_never_declared_robust():
+    assert not blocking_is_robust((BlockSensitivity(1, 10, 1.0, 0.0, 2.0),), 1.0)
+
+
+# ============================================= §19 — effet observateur mesuré
+
+
+def test_the_overhead_is_published_as_a_distribution():
+    base = [1_000.0 + i for i in range(200)]
+    inst = [b + 250 + (i % 40) for i, b in enumerate(base)]
+    report = observer_overhead(base, inst)
+    assert report.samples == 200
+    assert report.p50_ns > 0
+    assert report.p99_ns >= report.p95_ns >= report.p50_ns
+
+
+def test_an_overhead_rounded_to_zero_is_refused_when_the_clock_advanced():
+    """Sérialiser hors du chemin critique ne supprime ni lecture d'horloge, ni allocation,
+    ni mise en file, ni contention."""
+    base = [1_000.0] * 50
+    with pytest.raises(CampaignError, match="arrondi à zéro"):
+        observer_overhead(base, list(base))
+
+
+def test_unpaired_series_are_refused():
+    with pytest.raises(CampaignError, match="appariées"):
+        observer_overhead([1.0, 2.0], [1.0])
+
+
+def test_an_empty_benchmark_measures_nothing():
+    with pytest.raises(CampaignError, match="aucun échantillon"):
+        observer_overhead([], [])
+
+
+# ============================================= §18 — comparaison de cadence
+
+
+def test_unpaired_days_cannot_attribute_the_difference_to_the_cadence():
+    """Les marchés n'étaient pas les mêmes."""
+    ed = many(60, total_ns=8 * MS, per_cluster=2, day="2026-08-03")
+    pe = [
+        observation(boundaries=boundaries(compute=60 * MS, start=i * 10 * MS),
+                    cell=cell(evaluation_mode=EvaluationMode.PERIODIC,
+                              evaluation_period_ns=100 * MS),
+                    cluster_id=f"P{i // 2}", day="2026-08-04")
+        for i in range(60)
+    ]
+    c = compare_cadence(ed, pe, ComparisonDesign.UNPAIRED_DAYS)
+    assert not c.attributable
+    assert "non attribuable" in c.interpretation
+    assert "rejeu apparié" in c.interpretation
+
+
+def test_a_paired_replay_supports_attribution():
+    ed = many(60, total_ns=8 * MS, per_cluster=2)
+    pe = [
+        observation(boundaries=boundaries(compute=60 * MS, start=i * 10 * MS),
+                    cell=cell(evaluation_mode=EvaluationMode.PERIODIC,
+                              evaluation_period_ns=100 * MS),
+                    cluster_id=f"P{i // 2}")
+        for i in range(60)
+    ]
+    c = compare_cadence(ed, pe, ComparisonDesign.PAIRED_REPLAY)
+    assert c.attributable
+    assert "même flux" in c.interpretation
+    assert c.periodic_p95_ns > c.event_driven_p95_ns
+
+
+def test_shadow_evaluation_also_supports_attribution():
+    assert ComparisonDesign.SHADOW_EVALUATION.supports_attribution
+    assert not ComparisonDesign.UNPAIRED_DAYS.supports_attribution
+
+
+def test_both_modes_must_be_represented():
+    with pytest.raises(CampaignError, match="deux modes"):
+        compare_cadence(many(10, total_ns=8 * MS), [], ComparisonDesign.PAIRED_REPLAY)
