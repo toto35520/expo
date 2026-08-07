@@ -12,7 +12,7 @@ latence et rareté des occurrences.
 | --- | --- |
 | `docs/` | spécification, journal de décisions (`DECISIONS.md`), registre des questions (`QUESTIONS.md`) |
 | `feasibility/` | **code exécutable** : les deux phases 0 et leur intersection |
-| `tests/` | 516 tests, un par garde-fou |
+| `tests/` | 584 tests, un par garde-fou |
 | `calendar-sources/` | dossier de preuve : sources normatives du calendrier |
 | `connector-capability/` | fiches Q57/Q58 : ce que les horloges et le connecteur permettent d'affirmer |
 
@@ -20,9 +20,17 @@ latence et rareté des occurrences.
 
 ```bash
 cd financial-analyzer
-python3 -m pytest tests/ -q          # 516 tests
+python3 -m pytest tests/ -q          # 584 tests
 python3 -m feasibility.report        # carte de faisabilité (données synthétiques)
 python3 -m feasibility.passive_demo  # campagne passive Q51-A de bout en bout
+```
+
+**Collecte réelle XAU/USD** — voir `docs/COLLECTE-XAUUSD.md` :
+
+```bash
+python3 -m feasibility.collect_xauusd --source replay --file ticks.jsonl   # valider la chaîne
+python3 -m feasibility.collect_xauusd --source mt5 --preflight-only        # lire le compte
+python3 -m feasibility.collect_xauusd --source mt5 --minutes 240           # collecter
 ```
 
 Dépendances : `numpy`, `pytest`.
@@ -192,6 +200,58 @@ compatible avec de longues séries de `NO TRADE`.
 > méthodologique tant qu'une véritable session exploratoire XAU/USD n'a pas été enregistrée.
 > Le laboratoire est assez construit ; il lui faut maintenant du marché.
 
+## Les contraintes — Q65-v1, figée
+
+`feasibility/constraints.py` déclare `Q65-GOLD-RECOMMENDATION-V1`, empreinte
+`d712142fbf1603bb` :
+
+```
+PHYSICAL_ORACLE = HARD uniquement          17 contraintes
+POLICY_ORACLE   = HARD + POLICY            + 12 contraintes
+```
+
+Le registre est **fermé** : une contrainte absente n'est ni supposée dure ni supposée
+politique — `universal_claim()` rend `BLOCKED_BY_UNCLASSIFIED`. Aucune `POLICY_CONSTRAINT` ne
+peut produire « aucun moteur XAUUSD possible ne peut être viable » ; le verdict rend la portée
+réelle de la borne.
+
+Le capital est **conditionnel** : sans preuve il est écarté ; avec preuve — lot minimum et
+distance au stop portant le risque minimal au-dessus du risque planifié — il entre, mais la
+portée devient « sur ce compte », jamais « sur XAUUSD ».
+
+## Le plancher de coûts — Q63, `PROVISIONAL`
+
+`feasibility/cost_floor_xauusd.py` déclare `Q63-XAUUSD-ICMARKETS-MT5-V1`. Raw Spread USD,
+contract size 100 oz : **0,035 USD/oz** à l'entrée seule.
+
+Trois éléments manquent, et seul le terminal les donne : `ACCOUNT_TYPE`,
+`ACCOUNT_BASE_CURRENCY`, `MT5_SYMBOL_SPECIFICATION`. `--preflight-only` les lit et bascule le
+statut en `VERIFIED`.
+
+`PROVISIONAL` **ne bloque pas la collecte** — un plancher non résolu interdit une *exclusion*,
+pas une *observation*.
+
+Un composant non prouvé vaut `0`, sauf quand son absence empêche une conversion cohérente : il
+vaut alors `UNRESOLVED` et bloque le plancher. Pour une cellule traversant le rollover, `0`
+serait **faux** et non prudent — un swap créditeur rendrait le coût réel inférieur au plancher,
+ce qui fabriquerait l'exclusion au lieu de la fonder.
+
+## La source réelle
+
+`feasibility/mt5_source.py` est la frontière entre le laboratoire et le marché. Trois
+propriétés y sont **déclarées** plutôt que découvertes après coup :
+
+- l'API MT5 se **sonde**, elle ne pousse pas — B1 date l'instant où l'on a regardé, et le biais
+  de quantification est publié séparément au lieu d'être dilué dans la latence ;
+- `time_msc` est l'horloge du **serveur du courtier** — enregistrée, mais non qualifiée : elle
+  n'entre dans aucune borne ;
+- un tick identique n'est pas un nouvel événement — sinon la fréquence de sondage se ferait
+  passer pour de l'activité de marché.
+
+L'horloge des frontières et l'ancrage de B1 sont deux choses distinctes (ADR-260). Les
+confondre écartait **chaque** observation d'une collecte réelle de la distribution locale, en
+silence.
+
 ## Ce que produit `feasibility`
 
 ```
@@ -233,5 +293,12 @@ fonctions existent et retournent `nan` en son absence.
 
 ## Statut
 
-Code de recherche, exécuté hors ligne sur données historiques. Il ne préjuge pas de la pile
-technique du système de production, question restée ouverte (`QUESTIONS.md`, Q1).
+Le laboratoire est fermé : Q1, Q63, Q64 et Q65 sont figées, le collecteur est branché et
+validé de bout en bout. Ce qui manque n'est plus du code — c'est une séance réelle.
+
+Les données de la première collecte seront `EXPLORATORY` et le resteront : aucun gel de
+protocole ne se pose rétroactivement. Ce n'est pas une raison d'attendre. Une séance non
+enregistrée aujourd'hui ne se reconstruit pas demain, tandis qu'un gel posé demain reste
+possible.
+
+La pile technique du système de production reste ouverte (`QUESTIONS.md`, Q1-b).

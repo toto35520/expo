@@ -4440,3 +4440,201 @@ seule couche Q51/Q66. Les défauts trouvés étaient réels, mais chacun devenai
 risque plus théorique — pendant que la collecte, dont les données **ne se reconstruisent pas
 après coup**, n'avait toujours pas commencé. Le prochain travail utile n'est pas une
 méthode : c'est du marché.
+
+---
+
+## ADR-251 — Q65 est un registre **fermé**, pas une convention de nommage
+
+**Statut** : figé (`Q65-GOLD-RECOMMENDATION-V1`, empreinte `d712142fbf1603bb`)
+
+**Décision.** 17 contraintes `HARD`, 12 `POLICY`, chacune nommée, classée et justifiée dans
+`feasibility/constraints.py`. Une contrainte absente du registre n'est **ni** supposée dure
+**ni** supposée politique : `ConstraintRegistry.get()` lève, et `universal_claim()` rend
+`BLOCKED_BY_UNCLASSIFIED`.
+
+**Alternative écartée.** Classer l'inconnu en `POLICY` par défaut. Ce choix va pourtant dans le
+sens sûr — l'écarter de la borne physique la rend plus favorable, donc ne fabrique aucune
+exclusion. Il a été écarté parce qu'une valeur par défaut sûre finit toujours par être lue
+comme une classification, et que la prochaine contrainte inconnue ne tombera pas forcément du
+même côté.
+
+**Conséquences.** Toute contrainte nouvelle doit être déclarée avant d'être utilisée. C'est un
+coût, et c'est le seul moyen d'empêcher qu'une décision d'architecture entre un jour dans le
+`PHYSICAL_ORACLE` sans que personne l'ait décidé.
+
+---
+
+## ADR-252 — Aucune `POLICY_CONSTRAINT` ne peut produire un énoncé universel
+
+**Statut** : figé (Q65-v1)
+
+**Décision.** `universal_claim()` est le verrou exécutable de Q65 :
+
+    PHYSICAL_ORACLE = HARD uniquement
+    POLICY_ORACLE   = HARD + POLICY
+
+Une borne construite avec un cooldown, un seuil de confiance ou une limite d'exposition ne peut
+pas soutenir « aucun moteur XAUUSD possible ne peut être viable ». Le verdict rend la **portée
+réelle** : « notre système tel que nous avons décidé de le construire ».
+
+**Conséquences.** L'énoncé universel n'est plus une formulation choisie au moment de rédiger le
+rapport, mais une propriété calculée à partir des contraintes effectivement appliquées.
+
+---
+
+## ADR-253 — Le capital est une contrainte **conditionnelle**, et sa portée reste le compte
+
+**Statut** : figé (Q65-v1)
+
+**Décision.** `available_capital` a l'origine `BROKER_CONDITIONAL`. Il n'entre dans le
+`PHYSICAL_ORACLE` qu'accompagné d'une `ConditionalHardProof` sourcée montrant que le lot minimum
+et la distance au stop portent le risque minimal réalisable au-dessus du risque planifié. Sans
+preuve, il est **écarté** — ce qui rend la borne physique plus favorable et ne peut donc rien
+exclure à tort.
+
+**Conséquences.** Même avec la preuve, la portée du verdict devient explicitement « tout moteur
+XAUUSD possible **sur ce compte** ». Admettre le capital sans réserve transformerait « pas
+finançable avec 75 € » en « impossible sur XAUUSD » — exactement ce que l'unité `R` de Q1-v1
+existe pour empêcher. La conséquence reste `EXECUTION_NOT_COMPATIBLE_WITH_CAPITAL` : le signal
+n'est pas dégradé, il n'est pas finançable.
+
+---
+
+## ADR-254 — Le `PHYSICAL_ORACLE` reçoit tous les types d'ordre du courtier
+
+**Statut** : figé (Q65-v1)
+
+**Décision.** `broker_offered_order_types` est `HARD` ; `self_restricted_order_types` est
+`POLICY`. `physical_order_types()` rend au `PHYSICAL_ORACLE` l'ensemble des modes réellement
+disponibles, sans notre restriction volontaire.
+
+**Conséquences.** Une famille de stratégies ne peut plus être éliminée parce que *nous* refusons
+l'ordre passif qui la rendait viable.
+
+---
+
+## ADR-255 — Q63 est `PROVISIONAL`, et cela ne bloque pas la collecte
+
+**Statut** : figé (`Q63-XAUUSD-ICMARKETS-MT5-V1`)
+
+**Décision.** Trois éléments manquent — `ACCOUNT_TYPE`, `ACCOUNT_BASE_CURRENCY`,
+`MT5_SYMBOL_SPECIFICATION` — et ils ne se déduisent d'aucune page publique. Le plancher reste
+donc `PROVISIONAL`, et le collecteur démarre quand même.
+
+**Conséquences.** Un plancher non résolu interdit une **exclusion**, il n'interdit pas
+d'**observer**. C'est la même séparation qu'ADR-204 entre collecte et verdict. Les trois
+éléments se relèvent dans le terminal ; `preflight()` les lit et fait passer Q63 en `VERIFIED`
+sans intervention.
+
+---
+
+## ADR-256 — `UNRESOLVED` n'est pas `0`, et pour une raison arithmétique
+
+**Statut** : figé (Q63-v1)
+
+**Décision.** Un composant non prouvé vaut `0` **sauf** quand son absence empêche une conversion
+cohérente ; il vaut alors `UNRESOLVED` et bloque la résolution du plancher. La sentinelle refuse
+même d'avoir une valeur de vérité, pour qu'aucun `if composant:` ne la fasse passer pour zéro.
+
+**Démonstration.** Pour une cellule qui traverse le rollover sans que le swap soit connu, poser
+`financement = 0` donne `C_floor = commission`. Si le swap est un **crédit**,
+`C_réel = commission − crédit < C_floor` : la propriété `C_réel ≥ C_floor`, qui fonde toute
+exclusion, est violée. Zéro n'est pas conservateur ici, il est faux.
+
+---
+
+## ADR-257 — Connaître les swaps ne suffit pas : leur conversion doit être déclarée
+
+**Statut** : figé (Q63-v1)
+
+**Décision.** `swap_long` et `swap_short` ne deviennent un composant en USD/oz qu'à travers une
+`SwapConversion` explicite, sourcée, et dont le `swap_mode` correspond à celui du symbole. Sinon
+le financement reste `UNRESOLVED`.
+
+**Conséquences.** MT5 exprime les swaps selon `swap_mode` — points, devise du compte par lot,
+pourcentage annuel. Les additionner à une commission en USD/oz produirait un plancher dont
+l'unité n'existe pas. C'est l'interdiction de convertir `pip → USD/oz → R` de tête, appliquée
+aux swaps, où elle est moins visible.
+
+---
+
+## ADR-258 — Le plancher d'exclusion refuse de servir de coût attendu
+
+**Statut** : figé (Q63-v1)
+
+**Décision.** `FloorResolution.value_for()` n'accepte que `FloorUse.ORACLE_EXCLUSION` et lève
+pour `EXPECTED_COST_MODEL`, en renvoyant vers Q40.
+
+**Conséquences.** Le plancher sous-estime **délibérément** le coût réel : c'est ce qui le rend
+sûr pour l'exclusion. Employé comme coût attendu, la même sous-estimation ferait apparaître un
+avantage là où il n'y en a pas — l'erreur exactement inverse, dans la direction exactement
+défavorable.
+
+---
+
+## ADR-259 — La commission entre par un seul côté quand la sortie n'est pas prouvée
+
+**Statut** : figé (Q63-v1)
+
+**Décision.** `CommissionBasis.ROUND_TURN` n'est retenue que si l'entrée **et** la sortie sont
+dans la fenêtre mesurée. Par défaut, `ENTRY_ONLY` retient la moitié du tarif aller-retour.
+
+**Conséquences.** Comparer une capture mesurée sur la fenêtre à une commission aller-retour
+mettrait en regard deux périmètres différents et gonflerait le plancher. Sur Raw Spread USD avec
+un contract size de 100 oz : 7,00 USD/lot AR → **0,035 USD/oz** à l'entrée seule.
+
+---
+
+## ADR-260 — L'horloge des frontières et l'ancrage de B1 sont deux choses distinctes
+
+**Statut** : figé · **régression corrigée avant la première collecte**
+
+**Décision.** `AcquisitionContract` expose `clock_grade` (toujours `EXACT_LOCAL` : les cinq
+frontières sortent du même compteur monotone) et `b1_anchor` (`ARRIVAL`, `POLL_OBSERVATION`,
+`REPLAY_NO_TRANSPORT`) séparément.
+
+**Ce qui a été corrigé.** La première version classait une source sondée en `LOWER_BOUND`.
+Comme `usable_for_local_distribution` exige `EXACT_LOCAL`, **chaque** observation d'une collecte
+réelle aurait été écartée de la distribution : une journée entière de collecte n'aurait produit
+aucun résumé, et sans le moindre message.
+
+**Conséquences.** Ce qui manque avant B1 est un biais borné et déclaré
+(`b1_quantisation_bias_ns`), inscrit au manifeste et rappelé dans le rapport. Il élargit une
+borne inférieure déjà nommée comme telle ; il ne change pas la nature de la mesure.
+
+---
+
+## ADR-261 — Le rejeu ne prétend jamais mesurer le marché
+
+**Statut** : figé
+
+**Décision.** `measures_market_latency` est faux pour `ReplaySource`. Le rapport le dit en
+toutes lettres : les durées obtenues en rejeu sont celles de la machine.
+
+**Conséquences.** Le rejeu sert à prouver que la chaîne fonctionne avant de la brancher sur le
+terminal — et à rien d'autre. Un chiffre de latence issu d'un rejeu ne fonde aucun verdict.
+
+---
+
+## ADR-262 — L'évaluation vide est déclarée comme borne inférieure du système final
+
+**Statut** : figé
+
+**Décision.** `EvaluationWorkload.represents_final_engine` vaut `False` pour le `NO_OP` de la
+campagne passive. Le manifeste le porte, le rapport le rappelle.
+
+**Conséquences.** `B4 − B3` mesure aujourd'hui une traversée sans calcul décisionnel. Le jour où
+de vrais moteurs s'exécuteront là, cette durée grandira. Publier le chiffre actuel comme la
+réactivité du système reviendrait à mesurer une voiture sans son moteur.
+
+---
+
+## ADR-263 — Un intervalle de confiance incalculable le dit
+
+**Statut** : figé
+
+**Décision.** Quand le bootstrap par grappe ne rend pas d'intervalle fini — typiquement une
+seule grappe — le rapport affiche `IC non calculable — n grappe(s)` au lieu d'un intervalle.
+
+**Conséquences.** Un intervalle nul ferait passer une absence d'information pour une précision
+parfaite, à l'endroit précis où le rapport est le plus lu.
