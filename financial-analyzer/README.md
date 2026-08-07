@@ -12,14 +12,14 @@ latence et rareté des occurrences.
 | --- | --- |
 | `docs/` | spécification, journal de décisions (`DECISIONS.md`), registre des questions (`QUESTIONS.md`) |
 | `feasibility/` | **code exécutable** : les deux phases 0 et leur intersection |
-| `tests/` | 134 tests, un par garde-fou |
+| `tests/` | 178 tests, un par garde-fou |
 | `calendar-sources/` | dossier de preuve : sources normatives du calendrier |
 
 ## Exécuter
 
 ```bash
 cd financial-analyzer
-python3 -m pytest tests/ -q       # 134 tests
+python3 -m pytest tests/ -q       # 178 tests
 python3 -m feasibility.report     # carte de faisabilité (données synthétiques)
 ```
 
@@ -45,6 +45,20 @@ reste ouvert, ou qu'un fuseau ou une date d'effet est ambigu.
 
 ```
 source → instantané → assertion → revue → manifest → compilation → calendrier → rapport
+```
+
+## La journalisation de latence
+
+`feasibility/latency_journal.py` mesure **exactement ce qui est observable** et déclare ce qui
+ne l'est pas. Un accusé de réception local ne sépare pas file locale, réseau, traitement courtier
+et rappel : l'intervalle porte donc son statut d'agrégat et la liste des composantes qu'il ne
+distingue pas — contrainte de type, pas commentaire.
+
+La borne inférieure observable ignore l'inconnu, ce qui la rend asymétrique :
+
+```
+borne déjà trop lente     → exclusion concluante, sans campagne d'exécution
+borne assez rapide        → seulement « non exclu à la couche messagerie »
 ```
 
 ## Ce que produit `feasibility`

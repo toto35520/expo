@@ -2812,3 +2812,157 @@ prononçable sur les intervalles concernés.
 **Conséquences.** Le lien entre chaîne de preuve et classification temporelle devient mécanique
 plutôt que déclaratif. Une assertion périmée n'est pas nécessairement fausse, mais elle ne peut
 plus soutenir silencieusement un verdict.
+
+---
+
+## ADR-149 — Toute durée locale est mesurée sur l'horloge monotone
+
+**Statut** : figé et implémenté (Q51)
+
+**Décision.** L'horloge murale peut sauter — synchronisation, correction système, changement
+manuel, virtualisation, reprise après veille. Les durées locales se mesurent sur l'horloge
+monotone ; la murale sert à l'alignement inter-systèmes et à l'audit. Une durée négative lève
+une erreur explicite désignant la cause probable.
+
+**Conséquences.** Point relevé à l'implémentation : **un recul de l'horloge murale pendant que
+la monotone avance est une discontinuité quelle que soit son amplitude**. Un seuil de magnitude
+seul laissait passer un recul d'une milliseconde — précisément le cas le plus fréquent. La
+détection combine désormais signe et magnitude.
+
+---
+
+## ADR-150 — Aucune décomposition non observable n'est inventée
+
+**Statut** : figé et implémenté (Q51)
+
+**Contexte.** Un accusé de réception local ne permet pas de distinguer file locale, réseau
+aller, traitement courtier, réseau retour et rappel local si le courtier ne fournit pas ses
+propres horodatages.
+
+**Décision.** Chaque intervalle déclare son statut — observé, agrégé seulement, non
+identifiable — et un agrégat **doit** énumérer les composantes qu'il ne sépare pas. Un
+intervalle non identifiable ne porte aucune durée. L'aller-retour d'émission se nomme
+`submit_to_ack_latency` et le trajet du flux `provider_to_local_receive_latency` : jamais
+« latence réseau » ni « latence courtier ».
+
+**Conséquences.** La contrainte est portée par le type, pas par un commentaire : construire un
+agrégat sans sa liste de composantes échoue. C'est ce qui empêche de le renommer d'après l'une
+d'elles.
+
+---
+
+## ADR-151 — La latence de référence est conditionnelle à l'état au déclenchement
+
+**Statut** : figé et implémenté (Q51) · confirme l'ADR-102
+
+**Décision.** Le centile utile à Q19 est conditionnel aux rafales, non marginal. L'état de
+rafale est enregistré **au déclenchement** et **à l'accusé**, séparément, avec les variables
+continues d'intensité — ce qui permet de tracer la latence en fonction de la cadence plutôt que
+de dépendre de seuils arbitraires.
+
+---
+
+## ADR-152 — Le retard de cadence est mesuré, pas approximé
+
+**Statut** : figé et implémenté (Q51)
+
+**Décision.** L'attente entre éligibilité et évaluation est mesurée événement par événement.
+L'approximation `cadence / 2` reste un diagnostic théorique sous arrivée uniforme, jamais une
+mesure : les cotations arrivent en rafale et s'alignent souvent sur des frontières de temps
+rondes.
+
+---
+
+## ADR-153 — Identité logique et identité de tentative sont séparées
+
+**Statut** : figé et implémenté (Q51)
+
+**Décision.** Un retry conserve le même ordre logique et crée une nouvelle tentative. Sans cette
+séparation, un délai d'attente suivi d'un accusé compterait comme deux ordres et l'idempotence
+serait invérifiable.
+
+---
+
+## ADR-154 — Le journal d'ordres est append-only et chaîné
+
+**Statut** : figé et implémenté (Q51)
+
+**Décision.** Aucun événement n'est réécrit ; les états courants sont reconstruits depuis les
+événements. Chaque entrée porte l'empreinte de la précédente, rendant toute modification
+historique détectable. Le moteur n'impose que les relations garanties par la sémantique du
+connecteur — un rappel d'accusé peut légitimement précéder le retour de l'appel d'émission.
+
+---
+
+## ADR-155 — Les événements créateurs d'ordre sont persistés avant l'action
+
+**Statut** : figé et implémenté (Q51)
+
+**Décision.** Intention d'ordre, début d'émission et demande d'annulation sont écrits de façon
+durable avant ou au moment de l'action. Le journal refuse leur enregistrement non durable.
+
+**Conséquences.** Sans cette règle, un incident peut laisser un ordre réel chez le courtier sans
+aucune trace locale de son origine.
+
+---
+
+## ADR-156 — Une campagne conserve sa politique et sa probabilité d'échantillonnage
+
+**Statut** : figé et implémenté (Q51)
+
+**Décision.** Les probes couvrent sessions, quartiles de cadence, rafales et régimes de spread.
+La probabilité de sélection est enregistrée par état, permettant de repondérer les distributions
+lorsqu'une cellule a été volontairement suréchantillonnée.
+
+**Conséquences.** Sans cette conservation, une campagne concentrée sur les périodes calmes ferait
+sous-estimer à Q19 la latence conditionnelle — exactement l'inverse de ce qu'elle cherche.
+
+---
+
+## ADR-157 — Une bonne latence de messagerie ne démontre rien sur l'exécution
+
+**Statut** : figé et implémenté (Q51)
+
+**Décision.** Le verdict favorable de la phase de messagerie s'appelle
+`LATENCY_NOT_EXCLUDED_AT_MESSAGING_LAYER`, jamais « latence viable ». Les composantes non
+mesurées — exécution, position en file, sélection adverse — peuvent encore exclure la cellule.
+
+---
+
+## ADR-158 — Une borne inférieure déjà trop lente suffit à conclure
+
+**Statut** : figé et implémenté (Q51)
+
+**Décision.** La borne inférieure observable somme uniquement les composantes réellement
+mesurées : ce qui n'est pas observable n'est pas compté, donc la latence réelle ne peut
+qu'être supérieure. Si cette borne dépasse déjà l'horizon, le verdict négatif est **concluant
+sans campagne d'exécution**.
+
+**Conséquences.** C'est ce qui permet de savoir si une campagne réelle plus coûteuse vaut la
+peine d'être financée, avant de la lancer.
+
+---
+
+## ADR-159 — Une latence dépassant l'horizon compte comme consommation totale
+
+**Statut** : figé et implémenté (Q51) · confirme l'ADR-122
+
+**Décision.** L'observation n'est **jamais** supprimée de l'échantillon. Elle compte pour une
+consommation entière de l'horizon.
+
+**Conséquences.** Écarter ces cas ne conserverait que les événements où l'on avait eu le temps
+d'agir — le biais de sélection déjà corrigé à la phase 0 de Q19.
+
+---
+
+## ADR-160 — La journalisation passive démarre sans condition
+
+**Statut** : figé et implémenté (Q51)
+
+**Décision.** Q51-A ne dépend ni de Q42, ni de Q52, ni d'un modèle. Tout probe capable de créer
+un ordre réel reste bloqué tant que budget et coupe-circuit ne sont pas définis — le module
+refuse l'autorisation.
+
+**Conséquences.** Trois flux avancent en parallèle : Q50 mesure le marché, Q51 mesure la capacité
+à agir dessus, Q52 classe le temps. Leur intersection est le premier domaine de recherche qui ne
+repose plus sur des hypothèses synthétiques.
