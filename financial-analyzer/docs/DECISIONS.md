@@ -3640,7 +3640,7 @@ conséquence. Le verdict empirique devient conclusif uniquement par la fréquenc
 `p_U × λ_opp < f_min`, alors `ORACLE_FREQUENCY_NON_VIABLE` est justifié — ce qui est
 scientifiquement bien plus fort que d'appeler « universel » un zéro observé. Le niveau C est
 également fermé sans survivant : une valeur mesurée nulle par absence d'observation n'est pas
-une capacité nulle.
+une capacité nulle. *(Rouvert de façon rigoureuse par l'ADR-211, via une borne physique du gain.)*
 
 ---
 
@@ -3652,6 +3652,10 @@ une capacité nulle.
 probabilité commune. Trois qualités de borne sont publiées : `RAW_EVENT_BOUND` (diagnostic
 seulement), `QUALIFIED_INDEPENDENT_BOUND` (hypothèses défendables), `DEPENDENCE_ROBUST_BOUND`
 (portée sur les épisodes indépendants). Le verdict n'utilise jamais une borne brute.
+
+> **Correction (ADR-209).** Le passage aux épisodes réduisait la fausse précision sans rendre
+> les épisodes indépendants. `DEPENDENCE_ROBUST_BOUND` exige désormais une méthode déclarée ;
+> à défaut, le résultat est une **observation d'épisodes**, sans borne sur la population.
 
 **Conséquences.** `disjoint ≠ indépendant` : même avec des fenêtres disjointes, plusieurs
 opportunités partagent régime, séance, tendance, événement macro, volatilité et état de
@@ -3782,3 +3786,99 @@ séance, et par capacité lorsqu'elle est disponible. Elle n'impose prématurém
 jour, un déclenchement unique par épisode de déplacement, ou un maximum de N décisions par
 séance appellent des estimandes différents. Figer aujourd'hui produirait une décision qu'on
 regretterait lorsque les moteurs existeront.
+
+---
+
+## ADR-209 — Regrouper en épisodes ne produit pas une borne robuste à la dépendance
+
+**Statut** : figé et implémenté (Q61-A) · **corrige l'ADR-200**
+
+**Décision.** Appliquer Clopper-Pearson à `N` épisodes reste une hypothèse de Bernoulli —
+plus modeste que sur les opportunités brutes, mais toujours fausse si les épisodes partagent
+journées, régimes, événements macro ou états de charge. Sans `DependenceMethod` déclarée, le
+résultat est publié comme **observation** (`EPISODE_OBSERVATION`) : « 0 survivant sur 60
+épisodes », sans borne sur la population future. Seules `QUALIFIED_INDEPENDENT_BOUND` et
+`DEPENDENCE_ROBUST_BOUND` autorisent un verdict.
+
+**Conséquences.** `FIXED_HORIZON` corrige l'arrêt optionnel ; il ne corrige **pas** la
+dépendance entre observations. Ce sont deux problèmes distincts, et le premier réglé ne
+dispense pas du second. Sur la démonstration, le verdict passe de `ORACLE_FREQUENCY_NON_VIABLE`
+à `ORACLE_NO_SURVIVOR_OBSERVED` : l'exclusion par fréquence redevient impossible tant qu'aucune
+méthode n'est déclarée.
+
+---
+
+## ADR-210 — L'impossibilité universelle exige un certificat recalculable
+
+**Statut** : figé et implémenté (Q61-A) · **corrige l'ADR-199**
+
+**Décision.** `ImpossibilityCertificate` porte propriété démontrée, domaine Ω, hypothèses,
+borne supérieure **calculée**, constantes et leur provenance, version de la démonstration et
+auteur. `holds_against(δ_MEU)` **évalue** l'inégalité `U_oracle(Ω) < δ_MEU` ; elle n'est jamais
+déclarée.
+
+**Conséquences.** Un champ texte non vide donnait une fausse sécurité : *« impossible parce que
+la latence est trop élevée »* aurait passé le contrôle. Le système peut désormais **expliquer**
+pourquoi l'impossibilité est universelle — `U_oracle(Ω) = 0,031 < δ_MEU = 0,05`, sur tel
+domaine, sous telles hypothèses, par telle démonstration — au lieu d'affirmer qu'elle l'est.
+
+---
+
+## ADR-211 — La capacité économique peut conclure sans survivant, avec une borne de gain
+
+**Statut** : figé et implémenté (Q61-A) · assouplit l'ADR-199
+
+**Décision.** Avec une borne supérieure du taux qui revendique quelque chose sur la population
+et une borne **physique** du gain d'un survivant, la capacité se majore :
+
+```
+J_oracle ≤ λ_opp · p_U · S_U
+```
+
+Si même ce plafond, extrêmement favorable à l'oracle, passe sous `J_min`, alors
+`ORACLE_ECONOMIC_CAPACITY_NON_VIABLE` peut être prononcé **avec zéro survivant observé**.
+
+**Conséquences.** La fermeture précédente était sûre mais trop conservatrice : elle interdisait
+d'éliminer une cellule que la physique élimine déjà. `SurplusUpperBound` exige argument et
+source — sans quoi ce serait une supposition présentée comme une limite. Sans borne de gain, ou
+sans revendication de population, le plafond n'est pas calculé et le verdict reste
+`ORACLE_NO_SURVIVOR_OBSERVED`.
+
+---
+
+## ADR-212 — La redondance des seuils se dérive du modèle économique
+
+**Statut** : figé et implémenté (Q64) · **corrige l'ADR-207**
+
+**Décision.** La détection par tolérance numérique est retirée. Les trois grandeurs ont des
+unités et des rôles différents — `f_min` en `1/s` ne se compare pas à `J_min` en `$/s`. La
+redondance se dérive de la relation économique :
+
+```
+J_implied(f) = f × EV_net/occurrence × P(fill) − coûts_fixes
+```
+
+**Conséquences.** Le rapport indique **laquelle** des grandeurs contraint réellement le verdict,
+et distingue le cas où `f_min` et `δ_MEU` ne font que reconstruire `J_min` du cas où les trois
+sont indépendantes. La relation retient l'espérance nette attendue lorsqu'elle est estimée ;
+`δ_MEU` reste un **plancher de matérialité**, jamais l'espérance du système.
+
+---
+
+## ADR-213 — La cible primaire est la valeur nette ajustée du risque, `NO TRADE` compris
+
+**Statut** : figé (Q1) · valeurs à déclarer
+
+**Décision.** L'objectif primaire du système n'est ni le taux de réussite, ni le nombre de
+trades, ni le profit brut. C'est la **valeur nette ajustée du risque**, sous contraintes de
+qualité par trade, avec `NO TRADE` comme décision de première classe. Quatre rôles distincts :
+`J_min` cible primaire par unité de temps, `δ_MEU` plancher de matérialité par trade,
+`f_stat_min` condition de validabilité, `f_econ_min` **dérivée**.
+
+**Conséquences.** C'est la formulation qui rend cohérent d'accepter deux configurations à forte
+espérance et d'en refuser dix-sept faiblement positives — alors que le second cas produit
+davantage de signaux. Elle protège aussi la phase 0 contre elle-même : un moteur rare et
+sélectif ne doit être éliminé que pour son absence de valeur, jamais pour sa rareté. Q1 doit
+déclarer objectif, unité de performance, capital de référence, tolérance de risque, horizon
+d'évaluation et **rôle du système** — ce dernier déterminant si la partie courtier appartient
+au chemin critique.

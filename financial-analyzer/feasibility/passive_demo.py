@@ -265,9 +265,7 @@ def main() -> None:
               f" · max {q.maximum:.3f}   ← diagnostics, aucun n'exclut à lui seul")
         print(f"    opportunités     : {assessment.selected} retenues sur "
               f"{assessment.opportunities} départs (chevauchement écarté)")
-        print(f"    oracle-rentables : {assessment.profitable}"
-              f"   taux ≤ {assessment.profitable_rate_upper:.2%}"
-              f"   ({assessment.rarity.quality.value}, {assessment.rarity.trials} unités)")
+        print(f"    oracle-rentables : {assessment.rarity.describe()}")
         print(f"    oracle            : {assessment.kind.value}")
         print(f"    verdict oracle   : {oracle.value}")
         print(f"      {why}")

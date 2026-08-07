@@ -599,23 +599,58 @@ class EconomicThresholds:
         )
         return max(econ, self.f_stat_min_per_second)
 
-    @property
-    def redundancy_warning(self) -> str | None:
-        """Signale que les trois contraintes codent la même exigence.
+    #: Espérance nette par occurrence attendue du système, si elle est estimée.
+    #: `δ_MEU` en est le **plancher de matérialité**, pas la valeur centrale.
+    expected_net_per_occurrence: float | None = None
+    #: Probabilité d'exécution effective, capital immobilisé, coûts fixes : ce qui
+    #: sépare une contribution théorique d'une contribution réalisée.
+    fill_probability: float = 1.0
+    fixed_cost_per_second: float = 0.0
 
-        Ce n'est pas une erreur — c'est une information : si elles coïncident, seule la
-        cible principale décide réellement, et les deux autres ne contraignent rien.
+    def implied_contribution_per_second(self, frequency_per_second: float) -> float:
+        """`J_implied = f × EV_net/occurrence × P(fill) − coûts fixes`.
+
+        C'est la relation économique qui relie les trois grandeurs. Elle enrichit
+        l'identité naïve `f × EV` de ce qui la rend fausse en pratique : une occurrence
+        non exécutée ne contribue pas, et les coûts fixes courent sans occurrence.
         """
-        econ = self.derived_f_econ_min_per_second
-        if self.f_stat_min_per_second <= 0:
+        ev = (
+            self.expected_net_per_occurrence
+            if self.expected_net_per_occurrence is not None else self.delta_meu
+        )
+        return frequency_per_second * ev * self.fill_probability - self.fixed_cost_per_second
+
+    def redundancy_report(self) -> str | None:
+        """Dit **laquelle** des grandeurs contraint réellement, via le modèle économique.
+
+        La redondance ne se détecte pas à une proximité numérique : les trois quantités
+        ont des unités et des rôles différents, et `f_min` en `1/s` ne se compare pas à
+        `J_min` en `$/s`. Elle se dérive en demandant si `f_min` et `δ_MEU` ne font que
+        reconstruire `J_min` par la relation économique.
+        """
+        if self.primary is not EconomicTarget.PER_UNIT_TIME:
             return None
-        ratio = econ / self.f_stat_min_per_second
-        if 0.9 <= ratio <= 1.1:
+        implied = self.implied_contribution_per_second(self.f_min_per_second)
+        if self.j_min_per_second <= 0:
+            return None
+        gap = abs(implied - self.j_min_per_second) / self.j_min_per_second
+        if gap > 0.25:
             return (
-                "δ_MEU, f_min et J_min codent la même exigence à 10 % près : seule la "
-                f"cible {self.primary.value} contraint réellement le verdict."
+                f"les trois grandeurs sont indépendantes : au plancher de fréquence "
+                f"retenu, la relation économique implique "
+                f"{implied * 86_400:.3f}/jour contre une cible de "
+                f"{self.j_min_per_second * 86_400:.3f}/jour."
             )
-        return None
+        binding = (
+            "f_stat_min" if self.f_stat_min_per_second >= self.derived_f_econ_min_per_second
+            else "la cible temporelle J_min"
+        )
+        return (
+            f"f_min et δ_MEU reconstruisent J_min par la relation économique "
+            f"(implique {implied * 86_400:.3f}/jour pour une cible de "
+            f"{self.j_min_per_second * 86_400:.3f}/jour) : seule {binding} contraint "
+            "réellement le verdict."
+        )
 
 
 # ------------------------------------------------- politique d'arrêt préenregistrée
@@ -1431,6 +1466,24 @@ class OracleAssessment:
     clusters: int
     rarity: RarityBound
     kind: OracleKind
+    opportunity_rate_per_second: float = float("nan")
+
+    def capacity_ceiling_per_second(
+        self, surplus_bound: "SurplusUpperBound | None"
+    ) -> float | None:
+        """`λ_opp · p_U · S_U` — plafond de ce que l'oracle pourrait extraire.
+
+        Ne se calcule qu'avec une borne de gain déclarée et une borne de taux qui
+        revendique quelque chose sur la population : sans l'une ou l'autre, la queue non
+        observée reste sans majorant.
+        """
+        if surplus_bound is None or not self.rarity.is_population_claim:
+            return None
+        if not math.isfinite(self.opportunity_rate_per_second):
+            return None
+        return (
+            self.opportunity_rate_per_second * self.rarity.upper * surplus_bound.value
+        )
 
 
 def assess_oracle(
@@ -1440,6 +1493,7 @@ def assess_oracle(
     delta_meu: float,
     alpha: float = 0.05,
     independence_proven: bool = False,
+    dependence_method: DependenceMethod | None = None,
 ) -> OracleAssessment:
     """Surplus, fréquence et capacité économique de l'oracle (§3-4).
 
@@ -1455,7 +1509,8 @@ def assess_oracle(
     profitable = int((kept > delta_meu).sum())
     n = int(selected.size)
     rate = profitable / n if n else 0.0
-    bound = rarity_bound(profitable, n, capture.clusters, alpha, independence_proven)
+    bound = rarity_bound(profitable, n, capture.clusters, alpha,
+                         independence_proven, dependence_method)
 
     span_s = capture.span_ns / NS_PER_SECOND if capture.span_ns else float("nan")
     frequency = profitable / span_s if span_s and span_s > 0 else float("nan")
@@ -1483,33 +1538,80 @@ def assess_oracle(
         clusters=capture.clusters,
         rarity=bound,
         kind=opportunities.kind,
+        opportunity_rate_per_second=(
+            n / span_s if span_s and span_s > 0 else float("nan")
+        ),
     )
+
+
+@dataclass(frozen=True)
+class DependenceMethod:
+    """Méthode traitant explicitement la dépendance, **déclarée avant usage**.
+
+    Passer de 1 994 opportunités à 60 épisodes réduit la fausse précision, mais ne rend
+    pas les 60 épisodes indépendants : ils peuvent appartenir aux mêmes journées, régimes,
+    événements macro ou états de charge. Appliquer Clopper-Pearson à `N = 60` reste alors
+    une hypothèse de Bernoulli — plus modeste, mais toujours fausse.
+
+    `FIXED_HORIZON` corrige l'arrêt optionnel. Il ne corrige **pas** la dépendance entre
+    observations : ce sont deux problèmes distincts.
+    """
+
+    name: str
+    #: Ce qui est supposé sur la dépendance, et pourquoi c'est défendable ici.
+    dependence_argument: str
+    #: Longueur de bloc, condition de mélange, ou paramètre équivalent de la méthode.
+    parameter: str
+    reference: str
+
+    def __post_init__(self) -> None:
+        for field_name in ("name", "dependence_argument", "parameter", "reference"):
+            if not getattr(self, field_name).strip():
+                raise CampaignError(
+                    f"Une méthode de dépendance sans {field_name} n'en est pas une : "
+                    "elle rendrait à nouveau une hypothèse de Bernoulli implicite."
+                )
 
 
 class BoundQuality(str, Enum):
     """Ce qu'une borne de rareté vaut réellement.
 
-    `disjoint ≠ indépendant`. Même avec des fenêtres disjointes, plusieurs opportunités
-    partagent régime, séance, tendance, événement macro, volatilité et liquidité — donc
-    la formule de Clopper-Pearson, exacte pour des essais de Bernoulli indépendants de
-    probabilité commune, ne s'applique pas telle quelle au nombre brut d'opportunités.
+    `disjoint ≠ indépendant`, et `regroupé ≠ indépendant` non plus. La formule de
+    Clopper-Pearson est exacte pour des essais de Bernoulli indépendants de probabilité
+    commune ; ni les opportunités brutes ni les épisodes ne le sont sans argument.
     """
 
     #: Calculée sur le nombre brut d'opportunités. **Diagnostic seulement.**
     RAW_EVENT_BOUND = "RAW_EVENT_BOUND"
+    #: Comptage au niveau des épisodes, sans méthode traitant la dépendance. C'est une
+    #: **observation** — « 0 survivant sur 60 épisodes » — et non une borne sur la
+    #: population future.
+    EPISODE_OBSERVATION = "EPISODE_OBSERVATION"
     #: Autorisée seulement si les hypothèses de Bernoulli sont réellement défendables.
     QUALIFIED_INDEPENDENT_BOUND = "QUALIFIED_INDEPENDENT_BOUND"
-    #: Tient compte des blocs, épisodes ou dépendances observées.
+    #: Obtenue par une méthode dont la dépendance est explicitement prise en compte.
     DEPENDENCE_ROBUST_BOUND = "DEPENDENCE_ROBUST_BOUND"
 
     @property
+    def claims_population(self) -> bool:
+        """Seules ces deux qualités affirment quelque chose sur la population future.
+
+        Une observation d'épisodes décrit l'échantillon. Elle ne se convertit pas en
+        probabilité future sans méthode déclarée.
+        """
+        return self in (
+            BoundQuality.QUALIFIED_INDEPENDENT_BOUND,
+            BoundQuality.DEPENDENCE_ROBUST_BOUND,
+        )
+
+    @property
     def usable_for_verdict(self) -> bool:
-        return self is not BoundQuality.RAW_EVENT_BOUND
+        return self.claims_population
 
 
 @dataclass(frozen=True)
 class RarityBound:
-    """Borne supérieure sur le taux d'opportunités oracle-rentables, et sa qualité."""
+    """Taux d'opportunités oracle-rentables : ce qui est observé, et ce qui est borné."""
 
     upper: float
     quality: BoundQuality
@@ -1517,6 +1619,21 @@ class RarityBound:
     successes: int
     alpha: float
     rationale: str = ""
+    method: DependenceMethod | None = None
+
+    @property
+    def is_population_claim(self) -> bool:
+        return self.quality.claims_population
+
+    def describe(self) -> str:
+        if self.is_population_claim:
+            return (
+                f"taux ≤ {self.upper:.2%} ({self.quality.value}, {self.trials} unités)"
+            )
+        return (
+            f"{self.successes} survivant(s) sur {self.trials} épisodes observés — "
+            "observation, sans borne sur la population future"
+        )
 
 
 def rarity_bound(
@@ -1525,12 +1642,15 @@ def rarity_bound(
     independent_episodes: int,
     alpha: float,
     independence_proven: bool = False,
+    method: DependenceMethod | None = None,
 ) -> RarityBound:
-    """Borne de rareté, dégradée honnêtement selon ce qui est défendable.
+    """Borne de rareté, dégradée honnêtement selon ce qui est réellement défendable.
 
-    Sans preuve d'indépendance, la borne se calcule sur le nombre d'**épisodes
-    indépendants** plutôt que sur le nombre brut d'opportunités : c'est plus large, et
-    c'est ce qui la rend défendable sous dépendance.
+    Trois marches, et une seule sépare l'observation de la revendication :
+
+    - indépendance **démontrée** → Clopper-Pearson sur les opportunités ;
+    - méthode de dépendance **déclarée** → borne robuste sur les épisodes ;
+    - ni l'une ni l'autre → **observation d'épisodes**, publiée telle quelle.
     """
     if independence_proven:
         return RarityBound(
@@ -1539,13 +1659,23 @@ def rarity_bound(
             raw_opportunities, successes, alpha,
             "indépendance des opportunités démontrée",
         )
-    if independent_episodes >= 2:
+    if method is not None and independent_episodes >= 2:
         capped = min(successes, independent_episodes)
         return RarityBound(
             clopper_pearson_upper(capped, independent_episodes, alpha),
             BoundQuality.DEPENDENCE_ROBUST_BOUND,
             independent_episodes, capped, alpha,
-            "borne portée sur les épisodes indépendants, pas sur les opportunités brutes",
+            f"dépendance traitée par {method.name} ({method.parameter})",
+            method,
+        )
+    if independent_episodes >= 2:
+        capped = min(successes, independent_episodes)
+        return RarityBound(
+            clopper_pearson_upper(capped, independent_episodes, alpha),
+            BoundQuality.EPISODE_OBSERVATION,
+            independent_episodes, capped, alpha,
+            "épisodes possiblement liés par journée, régime, macro ou charge — "
+            "aucune méthode de dépendance déclarée",
         )
     return RarityBound(
         clopper_pearson_upper(successes, raw_opportunities, alpha),
@@ -1556,26 +1686,97 @@ def rarity_bound(
 
 
 @dataclass(frozen=True)
-class AnalyticalImpossibility:
-    """Preuve **déterministe** que rien ne survit sur tout le domaine admissible.
+class ImpossibilityCertificate:
+    """Preuve **vérifiable** qu'aucune opportunité ne survit sur tout le domaine.
 
-        sup { S^oracle(ω) : ω ∈ Ω_admissible }  ≤  δ_MEU
+    Un champ texte non vide donnerait une fausse sécurité : *« impossible parce que la
+    latence est trop élevée »* passerait un simple contrôle de non-vacuité. Le certificat
+    porte donc les éléments qui rendent la conclusion **recalculable** — et `holds` est
+    dérivé, jamais déclaré :
 
-    Elle ne s'obtient jamais d'un échantillon fini. Elle vient d'une borne analytique :
-    horizon inférieur à une latence minimale certaine, limite physique du prix
-    capturable, contrainte contractuelle, ou combinaison de bornes mathématiques.
+        U_oracle(Ω) = 0,031 R      δ_MEU = 0,05 R      ⇒   U_oracle(Ω) < δ_MEU
+
+    Le système peut alors expliquer exactement pourquoi l'impossibilité est universelle,
+    au lieu d'affirmer qu'elle l'est.
     """
 
-    holds: bool
-    supremum: float
-    argument: str
+    #: Propriété démontrée, énoncée mathématiquement.
+    property_proven: str
+    #: Domaine Ω sur lequel elle vaut, et ce qu'il exclut.
+    domain: str
+    #: Hypothèses sous lesquelles la démonstration tient.
+    hypotheses: tuple[str, ...]
+    #: Borne supérieure **calculée** du surplus oracle sur Ω.
+    computed_upper_bound: float
+    #: Données et constantes utilisées, avec leur provenance.
+    constants_used: tuple[tuple[str, str], ...]
+    proof_version: str
     declared_by: str
+    unit: str = "USD/oz"
 
     def __post_init__(self) -> None:
-        if self.holds and not self.argument.strip():
+        missing = [
+            name for name, value in (
+                ("propriété démontrée", self.property_proven),
+                ("domaine", self.domain),
+                ("version de la démonstration", self.proof_version),
+                ("auteur", self.declared_by),
+            ) if not value.strip()
+        ]
+        if missing:
             raise CampaignError(
-                "Une impossibilité universelle sans argument démontré n'est pas une "
-                "impossibilité : c'est une absence d'observation."
+                f"Certificat incomplet : {', '.join(missing)}. Une impossibilité "
+                "universelle qui ne peut pas être recalculée n'est pas une "
+                "démonstration, c'est une affirmation."
+            )
+        if not self.hypotheses:
+            raise CampaignError(
+                "Un certificat sans hypothèses déclarées prétend valoir inconditionnellement."
+            )
+        if not self.constants_used:
+            raise CampaignError(
+                "Un certificat sans constantes ni provenance ne peut pas être vérifié."
+            )
+
+    def holds_against(self, delta_meu: float) -> bool:
+        """Condition mathématique, évaluée — pas une case cochée."""
+        return self.computed_upper_bound < delta_meu
+
+    def explain(self, delta_meu: float) -> str:
+        relation = "<" if self.holds_against(delta_meu) else "≥"
+        return (
+            f"U_oracle(Ω) = {self.computed_upper_bound:.4f} {self.unit} {relation} "
+            f"δ_MEU = {delta_meu:.4f} {self.unit} · {self.property_proven} sur {self.domain} "
+            f"· hypothèses : {'; '.join(self.hypotheses)} · démonstration "
+            f"{self.proof_version} ({self.declared_by})"
+        )
+
+
+@dataclass(frozen=True)
+class SurplusUpperBound:
+    """Borne physique du gain d'un survivant, permettant de conclure sans en observer.
+
+    Sans elle, aucune capacité économique n'est bornable à partir de zéro survivant : la
+    queue non observée pourrait contenir n'importe quel gain. Avec elle, la borne devient
+
+        J_oracle ≤ λ_opp · p_U · S_U
+
+    extrêmement favorable à l'oracle, et donc conclusive si elle passe quand même sous
+    `J_min`.
+    """
+
+    value: float
+    argument: str
+    source: str
+    unit: str = "USD/oz"
+
+    def __post_init__(self) -> None:
+        if self.value <= 0:
+            raise CampaignError("une borne de gain doit être strictement positive")
+        if not self.argument.strip() or not self.source.strip():
+            raise CampaignError(
+                "Une borne de gain sans argument physique ni source serait une "
+                "supposition présentée comme une limite."
             )
 
 
@@ -1611,7 +1812,8 @@ def oracle_verdict(
     minimum_contribution_per_second: float,
     min_clusters: int = 20,
     capacity_safety_factor: float = 2.0,
-    analytical: AnalyticalImpossibility | None = None,
+    certificate: ImpossibilityCertificate | None = None,
+    surplus_bound: SurplusUpperBound | None = None,
 ) -> tuple[OracleVerdict, str]:
     """Exclusion oracle (ADR-192, ADR-199).
 
@@ -1629,12 +1831,11 @@ def oracle_verdict(
             f"{assessment.clusters} grappes indépendantes sur {min_clusters} requises",
         )
 
-    # Impossibilité universelle : seulement si elle est **démontrée**.
-    if analytical is not None and analytical.holds:
+    # Impossibilité universelle : seulement si le certificat **se vérifie**.
+    if certificate is not None and certificate.holds_against(assessment.delta_meu):
         return (
             OracleVerdict.ORACLE_UNIVERSALLY_NON_VIABLE,
-            f"borne analytique : sup S ≤ {analytical.supremum:.4f} sur tout le domaine "
-            f"admissible — {analytical.argument} (déclaré par {analytical.declared_by})",
+            certificate.explain(assessment.delta_meu),
         )
 
     bound = assessment.rarity
@@ -1652,9 +1853,16 @@ def oracle_verdict(
             f"{bound.quality.value} sur {bound.trials} unités",
         )
 
-    # Niveau C — la capacité économique ne conclut que si au moins un survivant a été
-    # observé. Sans aucun, la valeur mesurée vaut zéro par absence d'observation, pas
-    # par impossibilité : conclure ici referait exactement l'erreur du niveau A.
+    # Niveau C — deux voies.
+    #
+    # Avec au moins un survivant observé, la valeur mesurée a un sens. Sans aucun, elle
+    # vaut zéro par absence d'observation et conclure là referait l'erreur du niveau A —
+    # **sauf** si une borne physique du gain permet de majorer ce que la queue non
+    # observée pourrait rapporter :
+    #
+    #     J_oracle ≤ λ_opp · p_U · S_U
+    #
+    # extrêmement favorable à l'oracle, donc conclusive si elle passe quand même dessous.
     if (
         assessment.profitable > 0
         and assessment.capacity_value_per_second * capacity_safety_factor
@@ -1668,14 +1876,27 @@ def oracle_verdict(
             f"{assessment.capacity} positions sur la période",
         )
 
+    ceiling = assessment.capacity_ceiling_per_second(surplus_bound)
+    if (
+        ceiling is not None
+        and bound.quality.usable_for_verdict
+        and ceiling < minimum_contribution_per_second
+    ):
+        return (
+            OracleVerdict.ORACLE_ECONOMIC_CAPACITY_NON_VIABLE,
+            f"plafond économique λ·p_U·S_U = {ceiling * 86_400:.4f}/jour sous la "
+            f"contribution requise {minimum_contribution_per_second * 86_400:.2f}/jour — "
+            f"avec p_U ≤ {bound.upper:.2%} et un gain majoré par {surplus_bound.value:.3f} "
+            f"({surplus_bound.argument}), même la queue non observée ne suffirait pas",
+        )
+
     # Aucun survivant observé, mais la fréquence reste compatible avec le plancher :
     # l'échantillon ne conclut pas.
     if assessment.profitable == 0:
         return (
             OracleVerdict.ORACLE_NO_SURVIVOR_OBSERVED,
-            f"aucun survivant sur {assessment.selected} opportunités observées ; taux "
-            f"réel borné par {bound.upper:.2%} ({bound.quality.value}, {bound.trials} "
-            f"unités) — ce qui reste compatible avec le plancher de fréquence. "
+            f"aucun survivant sur {assessment.selected} opportunités observées ; "
+            f"{bound.describe()} — compatible avec le plancher de fréquence. "
             "L'échantillon ne montre rien, il ne démontre pas l'absence",
         )
 

@@ -35,7 +35,9 @@ from feasibility.passive_campaign import (
     CapturabilityScope,
     ComparisonDesign,
     HorizonEndPolicy,
-    AnalyticalImpossibility,
+    DependenceMethod,
+    ImpossibilityCertificate,
+    SurplusUpperBound,
     BoundQuality,
     ConstraintClass,
     CostFloor,
@@ -823,35 +825,97 @@ def test_zero_survivors_observed_is_not_an_impossibility():
     assert "ne démontre pas l'absence" in why
 
 
-def test_universal_impossibility_requires_a_demonstrated_argument():
-    """Réservée à une borne analytique sur tout le domaine admissible."""
-    _, a = no_survivor_case()
-    proven = AnalyticalImpossibility(
-        holds=True, supremum=0.0,
-        argument="horizon inférieur à la latence minimale certaine du chemin",
+def certificate(**kw) -> ImpossibilityCertificate:
+    base = dict(
+        property_proven="sup S^oracle(ω) ≤ U calculée par la borne de déplacement "
+                        "maximal sur l'horizon résiduel",
+        domain="Ω = cellule LONDON, horizon 500 ms, latence p99 observée",
+        hypotheses=("pas de cotation hors des heures déclarées",
+                    "pas de gap intra-horizon supérieur à la borne de déplacement"),
+        computed_upper_bound=0.031,
+        constants_used=(("tick minimal", "0,01 $/oz — spécification contrat"),
+                        ("latence p99", "74 ms — campagne Q51-A")),
+        proof_version="PROOF-Q19-2026-001",
         declared_by="protocole Q19",
     )
-    verdict, why = oracle_verdict(a, 1 / 86_400, 1e-9, analytical=proven)
+    return ImpossibilityCertificate(**{**base, **kw})
+
+
+def test_a_verifiable_certificate_grants_universal_impossibility():
+    """La condition est recalculable : U_oracle(Ω) < δ_MEU, pas une case cochée."""
+    _, a = no_survivor_case()
+    verdict, why = oracle_verdict(a, 1 / 86_400, 1e-9, certificate=certificate())
     assert verdict is OracleVerdict.ORACLE_UNIVERSALLY_NON_VIABLE
     assert verdict.excludes
-    assert "domaine admissible" in why
+    assert "0.0310" in why and "PROOF-Q19-2026-001" in why
 
 
-def test_an_impossibility_without_argument_cannot_be_declared():
-    with pytest.raises(CampaignError, match="absence d'observation"):
-        AnalyticalImpossibility(holds=True, supremum=0.0, argument="  ",
-                                declared_by="quelqu'un")
-
-
-def test_zero_survivors_becomes_conclusive_only_through_frequency():
-    """Le résultat empirique conclut lorsque sa borne supérieure est déjà incompatible
-    avec la fréquence minimale."""
+def test_a_certificate_whose_bound_fails_the_inequality_grants_nothing():
+    """`holds` est dérivé de la comparaison, jamais déclaré."""
+    weak = certificate(computed_upper_bound=0.40)
+    assert not weak.holds_against(0.05)
     _, a = no_survivor_case()
+    verdict, _ = oracle_verdict(a, 1 / 86_400, 1e-9, certificate=weak)
+    assert verdict is not OracleVerdict.ORACLE_UNIVERSALLY_NON_VIABLE
+
+
+def test_a_plausible_sentence_is_not_a_certificate():
+    """« impossible parce que la latence est trop élevée » ne doit pas passer."""
+    with pytest.raises(CampaignError, match="hypothèses déclarées"):
+        certificate(hypotheses=())
+    with pytest.raises(CampaignError, match="constantes"):
+        certificate(constants_used=())
+    with pytest.raises(CampaignError, match="Certificat incomplet"):
+        certificate(proof_version="  ")
+
+
+def test_zero_survivors_becomes_conclusive_through_frequency_once_the_bound_is_robust():
+    gross = np.full(600, 0.10)
+    starts = np.arange(600, dtype=np.int64) * NS_PER_SECOND
+    cap = OracleCapture(starts, gross, 500 * MS, CapturabilityScope.POST_RECEIVE_ONLY,
+                        span_ns=600 * NS_PER_SECOND, clusters=40, exhausted_fraction=0.0)
+    a = assess_oracle(cap, floor_(0.35), opportunities(starts, 600 * NS_PER_SECOND),
+                      delta_meu=0.05, dependence_method=method())
     verdict, why = oracle_verdict(a, minimum_frequency_per_second=10.0,
                                   minimum_contribution_per_second=1e-9)
     assert verdict is OracleVerdict.ORACLE_FREQUENCY_NON_VIABLE
     assert verdict.excludes
     assert "DEPENDENCE_ROBUST_BOUND" in why
+
+
+def test_capacity_can_conclude_without_survivors_given_a_physical_gain_bound():
+    """λ·p_U·S_U majore ce que la queue non observée pourrait rapporter. Si même ce
+    plafond très favorable passe sous J_min, l'exclusion tient."""
+    gross = np.full(600, 0.10)
+    starts = np.arange(600, dtype=np.int64) * NS_PER_SECOND
+    cap = OracleCapture(starts, gross, 500 * MS, CapturabilityScope.POST_RECEIVE_ONLY,
+                        span_ns=600 * NS_PER_SECOND, clusters=40, exhausted_fraction=0.0)
+    a = assess_oracle(cap, floor_(0.35), opportunities(starts, 600 * NS_PER_SECOND),
+                      delta_meu=0.05, dependence_method=method())
+    ceiling = SurplusUpperBound(
+        value=0.50,
+        argument="déplacement maximal observable sur 500 ms borné par la plage "
+                 "journalière historique",
+        source="Q50 — export de cotations, 24 mois",
+    )
+    verdict, why = oracle_verdict(a, 1 / 86_400, minimum_contribution_per_second=1_000.0,
+                                  surplus_bound=ceiling)
+    assert verdict is OracleVerdict.ORACLE_ECONOMIC_CAPACITY_NON_VIABLE
+    assert "queue non observée" in why
+
+
+def test_the_capacity_ceiling_needs_both_a_gain_bound_and_a_population_claim():
+    _, a = no_survivor_case()          # borne d'épisodes, sans méthode déclarée
+    ceiling = SurplusUpperBound(value=0.5, argument="borne physique", source="Q50")
+    assert a.capacity_ceiling_per_second(ceiling) is None
+    assert a.capacity_ceiling_per_second(None) is None
+
+
+def test_a_gain_bound_needs_a_physical_argument():
+    with pytest.raises(CampaignError, match="argument physique"):
+        SurplusUpperBound(value=0.5, argument="  ", source="Q50")
+    with pytest.raises(CampaignError, match="strictement positive"):
+        SurplusUpperBound(value=0.0, argument="borne", source="Q50")
 
 
 def test_the_rate_upper_bound_is_never_zero():
@@ -864,19 +928,49 @@ def test_the_rate_upper_bound_is_never_zero():
 # ---- §4-6 : disjoint ≠ indépendant
 
 
-def test_the_rarity_bound_degrades_when_independence_is_not_proven():
-    """Même disjointes, plusieurs opportunités partagent régime, séance, tendance,
-    événement macro, volatilité et liquidité."""
+def method() -> DependenceMethod:
+    return DependenceMethod(
+        name="bootstrap par blocs stationnaires",
+        dependence_argument="longueur de bloc supérieure à la durée de persistance "
+                            "mesurée des épisodes de charge et de régime",
+        parameter="longueur de bloc 3 séances",
+        reference="protocole Q59 v1",
+    )
+
+
+def test_grouping_into_episodes_is_not_by_itself_a_robust_bound():
+    """Passer de 2 000 opportunités à 40 épisodes réduit la fausse précision, mais ne
+    rend pas les 40 épisodes indépendants : ils peuvent appartenir aux mêmes journées,
+    régimes, événements macro ou états de charge."""
     naive = rarity_bound(0, 2_000, 0, 0.05)
-    robust = rarity_bound(0, 2_000, 40, 0.05)
+    grouped = rarity_bound(0, 2_000, 40, 0.05)
+    robust = rarity_bound(0, 2_000, 40, 0.05, method=method())
     proven = rarity_bound(0, 2_000, 40, 0.05, independence_proven=True)
 
     assert naive.quality is BoundQuality.RAW_EVENT_BOUND
-    assert not naive.quality.usable_for_verdict
+    assert grouped.quality is BoundQuality.EPISODE_OBSERVATION
+    assert not grouped.is_population_claim
+    assert "épisodes observés" in grouped.describe()
+
     assert robust.quality is BoundQuality.DEPENDENCE_ROBUST_BOUND
+    assert robust.is_population_claim
     assert proven.quality is BoundQuality.QUALIFIED_INDEPENDENT_BOUND
-    # La borne robuste, portée sur 40 épisodes, est bien plus large que celle sur 2 000.
     assert robust.upper > proven.upper
+
+
+def test_a_dependence_method_must_declare_what_it_assumes():
+    with pytest.raises(CampaignError, match="dependence_argument"):
+        DependenceMethod(name="bootstrap", dependence_argument="  ",
+                         parameter="3 séances", reference="v1")
+
+
+def test_an_episode_observation_cannot_produce_a_frequency_exclusion():
+    """FIXED_HORIZON corrige l'arrêt optionnel, pas la dépendance entre observations."""
+    _, a = no_survivor_case()
+    assert a.rarity.quality is BoundQuality.EPISODE_OBSERVATION
+    verdict, _ = oracle_verdict(a, minimum_frequency_per_second=10.0,
+                                minimum_contribution_per_second=1e-9)
+    assert verdict is OracleVerdict.ORACLE_NO_SURVIVOR_OBSERVED
 
 
 def test_a_raw_bound_alone_cannot_produce_a_frequency_exclusion():
@@ -953,7 +1047,7 @@ def test_level_b_excludes_when_opportunities_are_too_rare():
     cap = OracleCapture(starts, gross, 500 * MS, CapturabilityScope.POST_RECEIVE_ONLY,
                         span_ns=1_000 * NS_PER_SECOND, clusters=40, exhausted_fraction=0.0)
     a = assess_oracle(cap, floor_(0.35), opportunities(starts, 1_000 * NS_PER_SECOND),
-                      delta_meu=0.05)
+                      delta_meu=0.05, dependence_method=method())
     verdict, why = oracle_verdict(a, minimum_frequency_per_second=50.0,
                                   minimum_contribution_per_second=1e-9)
     assert verdict is OracleVerdict.ORACLE_FREQUENCY_NON_VIABLE
@@ -1323,15 +1417,35 @@ def test_statistical_and_economic_frequency_floors_are_not_confused():
     assert econ_binding.f_min_per_second == pytest.approx(3 / 86_400)
 
 
-def test_three_thresholds_encoding_one_requirement_are_flagged():
-    """Si elles coïncident, seule la cible principale contraint réellement."""
+def test_redundancy_is_derived_from_the_economic_model_not_a_tolerance():
+    """Les trois grandeurs ont des unités et des rôles différents : `f_min` en 1/s ne se
+    compare pas à `J_min` en $/s. La redondance se dérive de `J = f × EV × P(fill)`."""
     redundant = thresholds(delta_meu=0.20, j_min_per_second=0.60 / 86_400,
-                           f_stat_min_per_second=3 / 86_400)
-    assert redundant.redundancy_warning is not None
-    assert "cible PER_UNIT_TIME" in redundant.redundancy_warning
+                           f_stat_min_per_second=1 / 86_400)
+    report = redundant.redundancy_report()
+    assert report is not None
+    assert "reconstruisent J_min" in report
 
     independent = thresholds(f_stat_min_per_second=30 / 86_400)
-    assert independent.redundancy_warning is None
+    assert "indépendantes" in independent.redundancy_report()
+
+
+def test_the_economic_relation_accounts_for_fills_and_fixed_costs():
+    """Une occurrence non exécutée ne contribue pas, et les coûts fixes courent sans
+    occurrence."""
+    plain = thresholds()
+    realistic = thresholds(fill_probability=0.6, fixed_cost_per_second=0.1 / 86_400,
+                           expected_net_per_occurrence=0.35)
+    f = 3 / 86_400
+    assert realistic.implied_contribution_per_second(f) < plain.implied_contribution_per_second(f)
+
+
+def test_the_implied_contribution_uses_the_expected_value_not_the_floor():
+    """`δ_MEU` est un plancher de matérialité, pas l'espérance du système."""
+    floor_only = thresholds(delta_meu=0.20)
+    with_ev = thresholds(delta_meu=0.20, expected_net_per_occurrence=0.50)
+    f = 3 / 86_400
+    assert with_ev.implied_contribution_per_second(f) > floor_only.implied_contribution_per_second(f)
 
 
 def test_a_non_positive_surplus_threshold_is_refused():

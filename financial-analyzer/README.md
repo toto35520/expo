@@ -12,7 +12,7 @@ latence et rareté des occurrences.
 | --- | --- |
 | `docs/` | spécification, journal de décisions (`DECISIONS.md`), registre des questions (`QUESTIONS.md`) |
 | `feasibility/` | **code exécutable** : les deux phases 0 et leur intersection |
-| `tests/` | 451 tests, un par garde-fou |
+| `tests/` | 459 tests, un par garde-fou |
 | `calendar-sources/` | dossier de preuve : sources normatives du calendrier |
 | `connector-capability/` | fiches Q57/Q58 : ce que les horloges et le connecteur permettent d'affirmer |
 
@@ -20,7 +20,7 @@ latence et rareté des occurrences.
 
 ```bash
 cd financial-analyzer
-python3 -m pytest tests/ -q          # 451 tests
+python3 -m pytest tests/ -q          # 459 tests
 python3 -m feasibility.report        # carte de faisabilité (données synthétiques)
 python3 -m feasibility.passive_demo  # campagne passive Q51-A de bout en bout
 ```
@@ -140,7 +140,15 @@ Trois refus structurels valent d'être connus avant de brancher :
   `ORACLE_UNIVERSALLY_NON_VIABLE` est réservé à une borne analytique sur tout le domaine ;
 - la même exigence s'applique à l'inférence : `ACF ≈ 0` est une absence de contre-preuve, pas
   une preuve d'indépendance. La première campagne normative tourne donc en `FIXED_HORIZON`,
-  la séquence de confiance étant calculée en parallèle sans valeur normative.
+  la séquence de confiance étant calculée en parallèle sans valeur normative ;
+- et regrouper en épisodes ne suffit pas non plus. Sans méthode de dépendance déclarée,
+  « 0 survivant sur 60 épisodes » reste une **observation**, pas une borne sur la population
+  future — l'horizon fixe corrige l'arrêt optionnel, pas la dépendance entre observations.
+
+La cible économique est déclarée dans `docs/Q1-cible-economique.md` : **valeur nette ajustée
+du risque, avec `NO TRADE` en décision de première classe**. C'est ce qui rend cohérent
+d'accepter deux configurations à forte espérance et d'en refuser dix-sept faiblement
+positives — alors que le second cas produit davantage de signaux.
 - une grappe est attribuée à **chaque** observation, y compris hors rafale — deux cotations
   calmes séparées de 50 ms ne sont pas indépendantes non plus.
 
