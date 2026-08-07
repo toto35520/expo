@@ -93,9 +93,20 @@ Empêche le système d'accumuler des micro-avantages sans intérêt. Un trade do
 nette est positive mais négligeable consomme du risque d'exécution, du risque de modèle et
 de la capacité, pour un gain qui ne se distingue pas du bruit.
 
-**`δ_MEU` n'est pas l'espérance du système.** C'est son plancher. La relation économique
-utilise l'espérance nette attendue lorsqu'elle est estimée, et retombe sur le plancher
-faute de mieux — jamais l'inverse.
+**`δ_MEU` n'est pas l'espérance du système**, et ne s'y substitue **jamais** (ADR-234).
+C'est un minimum pour *accepter* un trade, pas un majorant de ce qu'il peut rapporter.
+
+Avec `δ_MEU = +0,10 R`, un moteur produisant un trade par jour à +2,0 R serait déclaré
+trop peu fréquent — l'élimination exacte que ce document existe pour empêcher. En
+l'absence d'espérance estimée, la fréquence économique est donc **indéterminée**, et
+exclure un moteur rare exige une borne **supérieure** de son espérance :
+
+```
+f_nécessaire = (J_min + C) / EV_U
+```
+
+C'est la construction symétrique de `S_U` du perfect oracle : sans majorant, la rareté ne
+peut pas être opposée à la qualité.
 
 ### `f_stat_min` — une condition, pas un objectif
 
@@ -119,8 +130,17 @@ appliquer. Les mélanger compterait le fill deux fois.
 La fréquence économique se lit dans cette relation. La fixer indépendamment reviendrait à
 déclarer trois fois la même chose et à ne plus savoir laquelle mord.
 
-Le plancher effectif reste `max(f_econ_min, f_stat_min)` — **le plus contraignant des
-deux, jamais leur confusion**.
+**Les deux ne se fusionnent jamais en un seul plancher** (ADR-235). Ce sont deux axes
+orthogonaux :
+
+```
+viabilité économique     ←  f_econ_min      ECONOMICALLY_NON_VIABLE
+validabilité statistique ←  f_stat_min      STATISTICALLY_INDETERMINATE
+```
+
+Une stratégie peut être économiquement excellente et trop rare pour être validée avec
+l'historique disponible. Prendre le maximum transformerait un manque de données en échec
+économique — et supprimerait exactement les stratégies rares mais fortes recherchées.
 
 ## 4. La relation économique, et ce qui la rend fausse
 

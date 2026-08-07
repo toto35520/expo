@@ -537,6 +537,17 @@ class ProtocolFreeze:
         return {k: tuple(v) for k, v in out.items()}
 
 
+class FrequencyAxis(str, Enum):
+    """Deux axes orthogonaux, jamais réduits à un seul plancher."""
+
+    ADEQUATE = "ADEQUATE"
+    #: Trop rare pour atteindre la cible économique, l'espérance étant connue.
+    ECONOMICALLY_NON_VIABLE = "ECONOMICALLY_NON_VIABLE"
+    #: Économiquement possible, mais trop rare pour être validée avec cet historique.
+    #: **Ce n'est pas un échec économique.**
+    STATISTICALLY_INDETERMINATE = "STATISTICALLY_INDETERMINATE"
+
+
 class EvBasis(str, Enum):
     """Base de l'espérance nette — typée pour empêcher un double comptage du fill."""
 
@@ -579,8 +590,6 @@ class EconomicThresholds:
     j_min_per_second: float
     #: Fréquence minimale d'origine **statistique**.
     f_stat_min_per_second: float
-    #: Fréquence minimale d'origine **économique**, dérivable de `J_min / δ_MEU`.
-    f_econ_min_per_second: float | None = None
     q1_reference: str = ""
     unit: str = "USD/oz"
 
@@ -602,28 +611,59 @@ class EconomicThresholds:
             )
 
     @property
-    def derived_f_econ_min_per_second(self) -> float:
-        """Fréquence qu'implique la cible temporelle, par la relation **complète** :
+    def f_econ_min_per_second(self) -> float | None:
+        """Fréquence qu'implique la cible temporelle, **exclusivement dérivée** :
 
             f_econ_min = (J_min + C_fixes + C_capital) / (P(fill) · EV_filled)
 
-        `J_min / δ_MEU` traitait `δ_MEU` comme l'espérance centrale, alors que Q1 vient
-        de le déclarer plancher de matérialité — et ignorait exécution, coûts fixes et
-        coût du capital.
+        Retourne `None` lorsque l'espérance n'est pas connue. Une fréquence économique
+        indéterminée **n'exclut rien** — elle ne peut pas être remplacée par une valeur
+        de planification déguisée en contrainte.
         """
+        if not self.ev_is_known:
+            return None
         per_occurrence = self._value_per_occurrence
         if per_occurrence <= 0:
             return float("inf")
         return (self.j_min_per_second + self._costs_per_second) / per_occurrence
 
-    @property
-    def f_min_per_second(self) -> float:
-        """Plancher effectif : le plus contraignant des deux, jamais leur confusion."""
-        econ = (
-            self.f_econ_min_per_second if self.f_econ_min_per_second is not None
-            else self.derived_f_econ_min_per_second
+    def planning_frequency_if_ev_equals_meu(self) -> float:
+        """Fréquence requise **si** l'espérance valait le plancher de matérialité.
+
+        Valeur de planification, sans aucune autorité d'exclusion. Le nom porte
+        l'hypothèse pour qu'elle ne puisse pas être lue comme une contrainte.
+        """
+        base = self.delta_meu * (
+            1.0 if self.ev_basis is EvBasis.EV_PER_TRIGGER else self.fill_probability
         )
-        return max(econ, self.f_stat_min_per_second)
+        return (self.j_min_per_second + self._costs_per_second) / base
+
+    def necessary_frequency_from_ev_bound(self, ev_upper: float) -> float:
+        """Fréquence nécessaire **quelle que soit** la qualité des trades.
+
+            f_nécessaire = (J_min + C) / EV_U
+
+        C'est la seule construction qui autorise une exclusion économique d'un moteur
+        rare : elle exige une borne **supérieure** de l'espérance, cohérente avec `S_U`
+        du perfect oracle. Sans elle, la rareté ne peut pas être opposée à la qualité.
+        """
+        if ev_upper <= 0:
+            raise CampaignError("une borne supérieure d'espérance doit être positive")
+        return (self.j_min_per_second + self._costs_per_second) / ev_upper
+
+    def axes(self) -> "tuple[float | None, float]":
+        """Les deux axes, **jamais fusionnés** en un seul plancher.
+
+            viabilité économique   ←  f_econ_min
+            validabilité statistique ←  f_stat_min
+
+        Une stratégie peut être économiquement excellente et trop rare pour être validée
+        avec l'historique disponible. Le verdict correct est alors
+        `STATISTICALLY_INDETERMINATE`, jamais `ECONOMICALLY_NON_VIABLE` — et cette
+        distinction protège précisément les stratégies rares mais fortes que le projet
+        cherche à conserver.
+        """
+        return self.f_econ_min_per_second, self.f_stat_min_per_second
 
     #: Espérance nette par occurrence, avec sa **base** déclarée.
     expected_net_per_occurrence: float | None = None
@@ -639,6 +679,10 @@ class EconomicThresholds:
         return self.fixed_cost_per_second + self.capital_opportunity_cost_per_second
 
     @property
+    def ev_is_known(self) -> bool:
+        return self.expected_net_per_occurrence is not None
+
+    @property
     def _value_per_occurrence(self) -> float:
         """Contribution d'une occurrence, la probabilité d'exécution comptée **une fois**.
 
@@ -646,10 +690,14 @@ class EconomicThresholds:
         la compterait deux fois. Sous `EV_PER_FILLED_EXECUTION` elle doit être appliquée.
         C'est précisément pour empêcher ce double comptage que la base est typée.
         """
-        ev = (
-            self.expected_net_per_occurrence
-            if self.expected_net_per_occurrence is not None else self.delta_meu
-        )
+        if not self.ev_is_known:
+            raise CampaignError(
+                "δ_MEU ne remplace pas une espérance inconnue. C'est un **minimum pour "
+                "accepter** un trade, pas un majorant de ce qu'il peut rapporter : un "
+                "moteur rare dont les trades valent +2 R serait déclaré trop peu "
+                "fréquent parce qu'on lui aurait prêté +0,10 R."
+            )
+        ev = self.expected_net_per_occurrence
         if self.ev_basis is EvBasis.EV_PER_TRIGGER:
             return ev
         return ev * self.fill_probability
@@ -657,6 +705,15 @@ class EconomicThresholds:
     def implied_contribution_per_second(self, frequency_per_second: float) -> float:
         """`J(f) = f · valeur_par_occurrence − coûts_fixes − coût_du_capital`."""
         return frequency_per_second * self._value_per_occurrence - self._costs_per_second
+
+    def frequency_verdict(self, observed_frequency: float) -> "FrequencyAxis":
+        """Classe une fréquence sur les deux axes séparément."""
+        econ, stat = self.axes()
+        if econ is not None and observed_frequency < econ:
+            return FrequencyAxis.ECONOMICALLY_NON_VIABLE
+        if observed_frequency < stat:
+            return FrequencyAxis.STATISTICALLY_INDETERMINATE
+        return FrequencyAxis.ADEQUATE
 
     def redundancy_report(self) -> str | None:
         """Dit **laquelle** des grandeurs contraint réellement, via le modèle économique.
@@ -668,7 +725,13 @@ class EconomicThresholds:
         """
         if self.primary is not EconomicTarget.PER_UNIT_TIME:
             return None
-        implied = self.implied_contribution_per_second(self.f_min_per_second)
+        econ = self.f_econ_min_per_second
+        if econ is None:
+            return None
+        # Évaluer à `f_econ_min` reconstruirait `J_min` par construction — c'est sa
+        # définition. La question utile porte sur l'**autre** plancher : le plancher
+        # statistique impose-t-il quelque chose de plus que la cible économique ?
+        implied = self.implied_contribution_per_second(self.f_stat_min_per_second)
         if self.j_min_per_second <= 0:
             return None
         gap = abs(implied - self.j_min_per_second) / self.j_min_per_second
@@ -680,7 +743,7 @@ class EconomicThresholds:
                 f"{self.j_min_per_second * 86_400:.3f}/jour."
             )
         binding = (
-            "f_stat_min" if self.f_stat_min_per_second >= self.derived_f_econ_min_per_second
+            "f_stat_min" if self.f_stat_min_per_second >= econ
             else "la cible temporelle J_min"
         )
         return (
@@ -1026,7 +1089,7 @@ class AdmissibleLatency:
 def passive_verdict(
     summary: BoundSummary,
     admissible: AdmissibleLatency,
-    min_clusters: int = 20,
+    min_clusters: int,
     clock: ClockCapability | None = None,
     policy: StoppingPolicy | None = None,
     observations: Sequence[PassiveObservation] | None = None,
@@ -1292,8 +1355,27 @@ class OpportunitySet:
         return float(top.sum())
 
     def profitable_count_upper_bound(self, surplus: np.ndarray, threshold: float) -> int:
-        """Majorant du nombre d'opportunités rentables réalisables."""
+        """Majorant du nombre d'opportunités rentables qu'un oracle pourrait retenir.
+
+        Calculé sur l'**univers complet des candidats**, borné par la capacité :
+
+            N_U = min( N_capacité , N_rentables_brutes )
+
+        Il peut surestimer ce que l'oracle prendrait réellement — c'est exactement ce
+        qu'on veut pour une exclusion. Le calculer sur une planification particulière
+        sous-estimerait, et ferait sur-exclure.
+        """
         return int(min(self.capacity, int((surplus > threshold).sum())))
+
+    def opportunity_rate_upper_bound(self, span_ns: int) -> float:
+        """Cadence maximale d'opportunités compatibles, par seconde.
+
+        Ne dépend d'aucune planification retenue : `λ_opp` doit rester favorable à
+        l'oracle, sinon `λ·p_U·S_U` sous-estimerait et pourrait fabriquer une exclusion.
+        """
+        if span_ns <= 0:
+            return float("nan")
+        return self.capacity / (span_ns / NS_PER_SECOND)
 
 
 # ------------------------------------------------------------- Q63 — coût plancher
@@ -1574,13 +1656,18 @@ def assess_oracle(
     kept = surplus[selected] if selected.size else np.array([])
 
     profitable_flags = kept > delta_meu
-    profitable = opportunities.profitable_count_upper_bound(kept, delta_meu)
+    # Majorant sur l'**univers des candidats**, pas sur la planification retenue. Une
+    # planification outcome-independent peut garder une fenêtre à −1 R et écarter la
+    # fenêtre chevauchante à +4 R : compter les rentables sur elle **sous-estimerait**
+    # ce qu'un oracle pourrait choisir, et sous-estimer est le mauvais sens pour exclure.
+    profitable = opportunities.profitable_count_upper_bound(surplus, delta_meu)
     n = int(selected.size)
     rate = profitable / n if n else 0.0
     bound = rarity_bound(
         profitable_flags.astype(float),
         capture.episode_ids[selected] if capture.episode_ids.size else np.array([]),
         alpha, independence_proven, estimator,
+        starts_ns=capture.starts_ns[selected] if capture.starts_ns.size else None,
     )
 
     span_s = capture.span_ns / NS_PER_SECOND if capture.span_ns else float("nan")
@@ -1613,8 +1700,8 @@ def assess_oracle(
         clusters=capture.clusters,
         rarity=bound,
         kind=opportunities.kind,
-        opportunity_rate_per_second=(
-            n / span_s if span_s and span_s > 0 else float("nan")
+        opportunity_rate_per_second=opportunities.opportunity_rate_upper_bound(
+            capture.span_ns
         ),
     )
 
@@ -1674,6 +1761,10 @@ class MovingBlockBootstrapBound:
     draws: int = 2_000
     seed: int = 0
     version: str = "MBB_1.0"
+    #: Référence de la campagne de calibration ayant **vérifié la couverture** sous les
+    #: dépendances revendiquées. Vide tant qu'elle n'a pas été menée : la borne reste
+    #: alors modélisée, sans autorité normative.
+    coverage_qualification: str = ""
 
     def __post_init__(self) -> None:
         if self.block_length < 1:
@@ -1692,6 +1783,10 @@ class MovingBlockBootstrapBound:
             reference=self.reference,
         )
 
+    @property
+    def coverage_qualified(self) -> bool:
+        return bool(self.coverage_qualification.strip())
+
     def upper_bound(self, episode_successes: np.ndarray, alpha: float) -> float:
         n = episode_successes.size
         if n < 2:
@@ -1703,8 +1798,11 @@ class MovingBlockBootstrapBound:
         offsets = np.arange(b)
         idx = (starts[:, :, None] + offsets[None, None, :]).reshape(self.draws, -1)[:, :n]
         rates = episode_successes[idx].mean(axis=1)
-        # Le quantile seul sous-estime lorsque aucun succès n'apparaît : on conserve le
-        # plancher de Clopper-Pearson sur le nombre **effectif** de blocs indépendants.
+        # Le quantile bootstrap seul s'effondre à zéro lorsque aucun succès n'apparaît.
+        # Le plancher retenu est celui de la règle de trois sur le nombre de blocs — il
+        # n'est pas présenté comme exact : `n_blocks` n'est pas un nombre d'essais de
+        # Bernoulli indépendants, et c'est précisément pourquoi la borne reste
+        # `DEPENDENCE_MODELLED_BOUND` tant que sa couverture n'est pas vérifiée.
         floor = clopper_pearson_upper(int(episode_successes.sum()), n_blocks, alpha)
         return float(max(np.quantile(rates, 1.0 - alpha), floor))
 
@@ -1722,11 +1820,17 @@ class BoundQuality(str, Enum):
     EPISODE_OBSERVATION = "EPISODE_OBSERVATION"
     #: Hypothèses de Bernoulli réellement défendables.
     QUALIFIED_INDEPENDENT_BOUND = "QUALIFIED_INDEPENDENT_BOUND"
-    #: Produite par un estimateur **effectivement exécuté** sous dépendance.
+    #: Estimateur **exécuté**, mais dont la couverture n'est pas encore qualifiée. Le
+    #: fait qu'une borne s'élargisse sous dépendance montre qu'elle y réagit — pas
+    #: qu'elle atteint le niveau de confiance annoncé.
+    DEPENDENCE_MODELLED_BOUND = "DEPENDENCE_MODELLED_BOUND"
+    #: Estimateur exécuté **et** couverture qualifiée sous les hypothèses revendiquées.
     DEPENDENCE_ROBUST_BOUND = "DEPENDENCE_ROBUST_BOUND"
 
     @property
     def claims_population(self) -> bool:
+        """`DEPENDENCE_MODELLED_BOUND` n'y figure pas : réagir à la dépendance ne
+        démontre pas `P(p ≤ p_U) ≥ 1 − α`."""
         return self in (
             BoundQuality.QUALIFIED_INDEPENDENT_BOUND,
             BoundQuality.DEPENDENCE_ROBUST_BOUND,
@@ -1755,6 +1859,12 @@ class RarityBound:
         return self.quality.claims_population
 
     def describe(self) -> str:
+        if self.quality is BoundQuality.DEPENDENCE_MODELLED_BOUND:
+            return (
+                f"taux modélisé ≤ {self.upper:.2%} ({self.trials} épisodes, "
+                f"{self.estimator_version}) — couverture non qualifiée, sans autorité "
+                "normative"
+            )
         if self.is_population_claim:
             return (
                 f"taux ≤ {self.upper:.2%} ({self.quality.value}, {self.trials} unités"
@@ -1767,25 +1877,50 @@ class RarityBound:
 
 
 def episode_successes(
-    episode_ids: np.ndarray, profitable: np.ndarray
+    episode_ids: np.ndarray,
+    profitable: np.ndarray,
+    starts_ns: np.ndarray | None = None,
 ) -> tuple[np.ndarray, int]:
-    """Indicateur **par épisode** : l'épisode porte-t-il au moins une opportunité ?
+    """Indicateur **par épisode**, dans l'ordre **temporel**.
 
         Y_g = 1[ ∃ i ∈ g : S_i > δ_MEU ]
 
-    Sept opportunités rentables peuvent appartenir au même épisode : le comptage doit se
-    faire dans l'unité que la borne revendique, jamais par `min(succès, épisodes)`.
+    Deux exigences, et la seconde est facile à manquer.
+
+    Sept opportunités rentables peuvent appartenir au même épisode : le comptage se fait
+    dans l'unité que la borne revendique, jamais par `min(succès, épisodes)`.
+
+    Et un bootstrap par blocs suppose que l'ordre des observations est leur ordre
+    **temporel** — or le nom d'un épisode n'est pas son instant. Trier par identifiant
+    produirait une chronologie fictive : la série `0 1 2 … 39 0 1 2 …` regrouperait tous
+    les « 0 » d'une campagne entière dans un même prétendu épisode.
+
+    Un épisode est donc un **segment contigu** : une séquence `A B A` est refusée.
     """
     if episode_ids.size == 0:
         return np.array([], dtype=float), 0
-    order = np.argsort(episode_ids, kind="stable")
+
+    if starts_ns is not None:
+        order = np.argsort(starts_ns, kind="stable")
+    else:
+        order = np.arange(episode_ids.size)
     ids, flags = episode_ids[order], profitable[order]
-    unique, starts = np.unique(ids, return_index=True)
+
+    boundaries = np.flatnonzero(np.r_[True, ids[1:] != ids[:-1]])
+    segments = ids[boundaries]
+    if np.unique(segments).size != segments.size:
+        offender = [int(x) for x in segments[:6]]
+        raise CampaignError(
+            f"Un épisode réapparaît après avoir été clos : {offender}… Un épisode doit "
+            "être un segment temporel contigu — sans quoi la série transmise à une "
+            "méthode de dépendance n'est pas une chronologie."
+        )
+
+    ends = list(boundaries[1:]) + [ids.size]
     carried = np.array(
-        [bool(flags[a:b].any()) for a, b in zip(starts, list(starts[1:]) + [ids.size])],
-        dtype=float,
+        [bool(flags[a:b].any()) for a, b in zip(boundaries, ends)], dtype=float
     )
-    return carried, unique.size
+    return carried, segments.size
 
 
 def rarity_bound(
@@ -1794,6 +1929,7 @@ def rarity_bound(
     alpha: float,
     independence_proven: bool = False,
     estimator: DependenceBoundEstimator | None = None,
+    starts_ns: np.ndarray | None = None,
 ) -> RarityBound:
     """Borne de rareté, dégradée selon ce qui est **réellement exécuté**.
 
@@ -1813,15 +1949,19 @@ def rarity_bound(
             "indépendance des opportunités démontrée",
         )
 
-    carried, n_episodes = episode_successes(episode_ids, profitable)
+    carried, n_episodes = episode_successes(episode_ids, profitable, starts_ns)
     k_episodes = int(carried.sum())
 
     if estimator is not None and n_episodes >= 2:
         method = estimator.describe()
+        qualified = getattr(estimator, "coverage_qualified", False)
         return RarityBound(
             estimator.upper_bound(carried, alpha),
-            BoundQuality.DEPENDENCE_ROBUST_BOUND, n_episodes, k_episodes, alpha,
-            f"dépendance traitée par {method.name} ({method.parameter})",
+            BoundQuality.DEPENDENCE_ROBUST_BOUND if qualified
+            else BoundQuality.DEPENDENCE_MODELLED_BOUND,
+            n_episodes, k_episodes, alpha,
+            f"dépendance traitée par {method.name} ({method.parameter})"
+            + ("" if qualified else " — couverture non encore qualifiée"),
             method, estimator.version,
         )
     if n_episodes >= 2:
@@ -1879,24 +2019,83 @@ class BoundDerivation:
     inputs: tuple[BoundInput, ...]
     calculator_version: str
 
-    def _get(self, name: str) -> float:
+    def _input(self, name: str) -> BoundInput:
         for i in self.inputs:
             if i.name == name:
-                return i.value
+                return i
         raise CampaignError(
             f"La dérivation {self.derivation_type.value} exige une entrée « {name} »."
         )
 
-    def recompute(self) -> float:
-        """Recalcule la borne. Toute entrée manquante lève, plutôt que de supposer."""
+    def _get(self, name: str) -> float:
+        return self._input(name).value
+
+    def _same_unit(self, *names: str) -> str:
+        """Refuse `0,40 USD/oz − 30 USD/lot`.
+
+        Le résultat numérique existerait et n'aurait aucun sens physique. Une borne
+        d'exclusion issue d'une soustraction entre unités incompatibles est un chiffre
+        arbitraire habillé en démonstration.
+        """
+        units = {self._input(n).unit for n in names}
+        if len(units) != 1:
+            raise CampaignError(
+                f"Unités incompatibles dans {self.derivation_type.value} : "
+                f"{sorted(units)}. Une conversion contractuelle explicite est requise."
+            )
+        return units.pop()
+
+    @property
+    def unit(self) -> str:
+        t = self.derivation_type
+        if t is BoundDerivationType.MAX_DISPLACEMENT_MINUS_FLOOR:
+            return self._same_unit("max_displacement", "cost_floor")
+        return self._input("cost_floor").unit
+
+    def is_applicable(self) -> tuple[bool, str]:
+        """Conditions d'applicabilité, vérifiées avant tout calcul."""
         t = self.derivation_type
         if t is BoundDerivationType.HORIZON_BELOW_MINIMUM_LATENCY:
             horizon = self._get("horizon_ns")
             latency = self._get("minimum_certain_latency_ns")
-            # Au moment où l'on pourrait agir, la fenêtre est close : rien n'est
-            # capturable, donc le surplus maximal est le plancher de coûts, négatif.
-            return 0.0 if horizon > latency else -self._get("cost_floor")
+            if latency < horizon:
+                return False, (
+                    f"latence minimale certaine {latency:.0f} ns **inférieure** à "
+                    f"l'horizon {horizon:.0f} ns : il reste {horizon - latency:.0f} ns "
+                    "de fenêtre. Cette dérivation ne connaît pas la borne du mouvement "
+                    "restant et ne peut rien conclure."
+                )
+            return True, ""
+        if t is BoundDerivationType.CONTRACTUAL_LIMIT:
+            required = self._get("minimum_order_size")
+            available = self._get("allowed_capital_capacity")
+            if required <= available:
+                return False, (
+                    f"taille minimale d'ordre {required:g} compatible avec la capacité "
+                    f"autorisée {available:g} : aucune impossibilité contractuelle. Un "
+                    "enum ne constitue pas une preuve."
+                )
+            return True, ""
+        return True, ""
+
+    def recompute(self) -> float:
+        """Recalcule la borne. Une dérivation inapplicable **lève**.
+
+        Elle ne retourne jamais une valeur favorable par défaut : c'est exactement ainsi
+        qu'une latence de 74 ms sur un horizon de 500 ms pouvait produire un certificat
+        d'impossibilité.
+        """
+        applicable, why = self.is_applicable()
+        if not applicable:
+            raise CampaignError(f"DERIVATION_NOT_APPLICABLE — {why}")
+
+        t = self.derivation_type
+        if t is BoundDerivationType.HORIZON_BELOW_MINIMUM_LATENCY:
+            # La fenêtre est close avant qu'on puisse agir : capture brute nulle, donc
+            # le surplus maximal se réduit au plancher de coûts, négatif.
+            return -self._get("cost_floor")
         if t is BoundDerivationType.MAX_DISPLACEMENT_MINUS_FLOOR:
+            self._same_unit("max_displacement", "cost_floor")
             return self._get("max_displacement") - self._get("cost_floor")
         return -self._get("cost_floor")
 
@@ -1963,8 +2162,17 @@ class ImpossibilityCertificate:
                 "Un certificat sans constantes ni provenance ne peut pas être vérifié."
             )
 
-    def holds_against(self, delta_meu: float) -> bool:
-        """Condition mathématique, évaluée — pas une case cochée."""
+    def holds_against(self, delta_meu: float, delta_unit: str | None = None) -> bool:
+        """Condition mathématique, évaluée — pas une case cochée.
+
+        La comparaison exige la même unité des deux côtés : comparer `USD/oz` à
+        `USD/lot` produirait un booléen dénué de sens physique.
+        """
+        if delta_unit is not None and delta_unit != self.derivation.unit:
+            raise CampaignError(
+                f"Comparaison entre unités différentes : borne en "
+                f"{self.derivation.unit}, δ_MEU en {delta_unit}."
+            )
         return self.computed_upper_bound < delta_meu
 
     def explain(self, delta_meu: float) -> str:
@@ -1991,19 +2199,35 @@ class SurplusUpperBound:
     `J_min`.
     """
 
-    value: float
+    derivation: BoundDerivation
     argument: str
-    source: str
-    unit: str = "USD/oz"
+    domain: str
+    proof_version: str
 
     def __post_init__(self) -> None:
-        if self.value <= 0:
-            raise CampaignError("une borne de gain doit être strictement positive")
-        if not self.argument.strip() or not self.source.strip():
+        if not self.argument.strip() or not self.domain.strip():
             raise CampaignError(
-                "Une borne de gain sans argument physique ni source serait une "
+                "Une borne de gain sans argument physique ni domaine serait une "
                 "supposition présentée comme une limite."
             )
+        if not self.proof_version.strip():
+            raise CampaignError("une borne de gain doit porter sa version de dérivation")
+        if self.value <= 0:
+            raise CampaignError("une borne de gain doit être strictement positive")
+
+    @property
+    def value(self) -> float:
+        """Recalculée, jamais fournie.
+
+        C'est le même défaut que celui retiré du certificat d'impossibilité : un appelant
+        pouvait écrire `value = 0.001` avec un argument convaincant et faire tomber
+        `λ·p_U·S_U` sous `J_min` jusqu'à déclencher une exclusion.
+        """
+        return self.derivation.recompute()
+
+    @property
+    def unit(self) -> str:
+        return self.derivation.unit
 
 
 class OracleVerdict(str, Enum):

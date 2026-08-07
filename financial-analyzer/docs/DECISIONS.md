@@ -4070,3 +4070,158 @@ convention, s'abstenir est sûr mais économiquement insuffisant : le système d
 courbe `Qualité(Couverture)` — espérance nette conditionnelle, perte maximale, calibration,
 risque de queue en fonction de la part d'opportunités acceptées — afin que *« 2 excellents trades
 valent mieux que 17 médiocres »* soit une hypothèse **testée**, et non une philosophie inscrite.
+
+---
+
+> **Renumérotation.** L'audit propose ADR-221 à ADR-231 ; ADR-221 à ADR-225 sont déjà pris.
+> Enregistrés sous ADR-226 à ADR-236 (décalage de +5).
+
+---
+
+## ADR-226 — Une dérivation inapplicable échoue, elle ne retourne rien de favorable
+
+**Statut** : figé et implémenté (Q61-A) · **corrige un défaut de l'ADR-219**
+
+**Décision.** `BoundDerivation.is_applicable()` vérifie ses conditions avant tout calcul, et
+`recompute()` lève `DERIVATION_NOT_APPLICABLE` plutôt que de produire une valeur par défaut.
+
+**Conséquences.** `HORIZON_BELOW_MINIMUM_LATENCY` était **inversé** : avec un horizon de 500 ms
+et une latence minimale certaine de 74 ms, il retournait `U = 0`, donc `0 < δ_MEU`, donc un
+certificat d'impossibilité universelle — alors qu'il restait 426 ms de fenêtre. La dérivation
+n'est applicable que si `L_min ≥ h` ; sinon elle ne connaît tout simplement pas la borne du
+mouvement restant. `CONTRACTUAL_LIMIT` vérifie de même sa relation : un enum ne constitue pas
+une preuve.
+
+---
+
+## ADR-227 — Toute borne physique d'un verdict normatif est recalculable
+
+**Statut** : figé et implémenté (Q61-A) · étend l'ADR-219 à `S_U`
+
+**Décision.** `SurplusUpperBound` porte une `BoundDerivation`, un domaine et une version de
+démonstration ; sa valeur est recalculée, jamais fournie.
+
+**Conséquences.** C'est exactement le défaut retiré du certificat d'impossibilité, resté sur
+`S_U` : un appelant pouvait écrire `value = 0.001` avec un argument convaincant et faire tomber
+`λ·p_U·S_U` sous `J_min` jusqu'à déclencher une exclusion.
+
+---
+
+## ADR-228 — Les opérations entre bornes économiques imposent la compatibilité d'unités
+
+**Statut** : figé et implémenté (Q61-A)
+
+**Décision.** `BoundDerivation` vérifie l'identité des unités avant toute soustraction, et
+`holds_against()` refuse une comparaison entre unités différentes.
+
+**Conséquences.** `0,40 USD/oz − 30 USD/lot` produisait un résultat numérique dénué de sens
+physique. Une borne d'exclusion issue d'une telle soustraction est un chiffre arbitraire habillé
+en démonstration.
+
+---
+
+## ADR-229 — Candidats, capacité et rentables sont trois objets distincts
+
+**Statut** : figé et implémenté (Q61-A) · précise l'ADR-216
+
+**Décision.** Le majorant du nombre d'opportunités rentables se calcule sur l'**univers des
+candidats**, borné par la capacité — jamais sur la planification retenue.
+
+**Conséquences.** Une planification outcome-independent peut conserver une fenêtre à −1 R et
+écarter la fenêtre chevauchante à +4 R. Compter les rentables sur elle **sous-estimerait** ce
+qu'un oracle pourrait choisir, et sous-estimer est le mauvais sens pour une exclusion.
+
+---
+
+## ADR-230 — `λ_opp` est une capacité, pas la cadence d'une planification
+
+**Statut** : figé et implémenté (Q61-A)
+
+**Décision.** `opportunity_rate_upper_bound()` dérive `λ_opp` de la capacité de planification,
+indépendamment de l'ensemble admissible retenu.
+
+**Conséquences.** Une cadence issue d'une planification particulière sous-estimerait `λ_opp`,
+donc `λ·p_U·S_U`, donc fabriquerait une exclusion au niveau C.
+
+---
+
+## ADR-231 — L'ordre d'une méthode temporelle est l'ordre temporel
+
+**Statut** : figé et implémenté (Q61-A)
+
+**Décision.** `episode_successes()` trie par instant de départ, pas par identifiant, et **refuse**
+une séquence où un épisode réapparaît après avoir été clos : un épisode est un segment contigu.
+
+**Conséquences.** Un bootstrap par blocs suppose que l'ordre des observations est chronologique.
+Le nom d'un épisode n'est pas son instant : la série `0 1 2 … 39 0 1 2 …`, produite par un
+`% 40`, regroupait tous les « 0 » d'une campagne entière dans un même prétendu épisode et
+transmettait au bootstrap une chronologie fictive.
+
+---
+
+## ADR-232 — Un bootstrap n'a d'autorité normative qu'une fois sa couverture qualifiée
+
+**Statut** : figé et implémenté (Q59-A) · **corrige l'ADR-214**
+
+**Décision.** `DEPENDENCE_MODELLED_BOUND` est introduit entre l'observation et la borne robuste.
+L'estimateur doit porter une référence de campagne de calibration pour atteindre
+`DEPENDENCE_ROBUST_BOUND`, seul statut autorisant un verdict.
+
+**Conséquences.** Que la borne passe de 4,87 % à 13,91 % montre qu'elle **réagit** à la
+dépendance ; cela ne démontre pas `P(p ≤ p_U) ≥ 1 − α`. Le plancher de Clopper-Pearson sur le
+nombre de blocs mélange d'ailleurs à nouveau une formule de Bernoulli avec un décompte qui n'est
+pas un nombre d'essais indépendants. Une suite de tests de **calibration** est ajoutée, séparée
+des tests de stress — et l'un d'eux montre que sous changement de régime la borne ne perd pas sa
+couverture : elle sature à 1,0 et cesse d'exclure quoi que ce soit.
+
+---
+
+## ADR-233 — `f_econ_min` ne peut pas être injectée
+
+**Statut** : figé et implémenté (Q64) · **corrige l'ADR-222**
+
+**Décision.** Le champ public est supprimé ; `f_econ_min_per_second` est une propriété dérivée,
+qui retourne `None` lorsque l'espérance n'est pas connue.
+
+**Conséquences.** « Dérivée, jamais fixée » doit valoir dans le code, pas seulement dans la
+documentation : le champ optionnel permettait de contourner la relation économique.
+
+---
+
+## ADR-234 — `δ_MEU` ne remplace jamais une espérance inconnue
+
+**Statut** : figé et implémenté (Q64)
+
+**Décision.** En l'absence d'espérance estimée, la fréquence économique est **indéterminée**. La
+valeur de planification existe sous le nom `planning_frequency_if_ev_equals_meu()`, qui porte son
+hypothèse et n'a aucune autorité d'exclusion. Exclure un moteur rare exige une borne
+**supérieure** de l'espérance : `f_nécessaire = (J_min + C) / EV_U`.
+
+**Conséquences.** `δ_MEU` est un minimum pour **accepter** un trade, pas un majorant de ce qu'il
+peut rapporter. Avec `δ_MEU = +0,10 R`, un moteur produisant un trade par jour à +2,0 R aurait
+été déclaré trop peu fréquent — exactement l'élimination que le projet cherche à éviter.
+
+---
+
+## ADR-235 — Viabilité économique et validabilité statistique sont orthogonales
+
+**Statut** : figé et implémenté (Q64 + Q1) · **corrige l'ADR-207**
+
+**Décision.** `max(f_econ_min, f_stat_min)` est supprimé. `axes()` retourne les deux séparément,
+et `frequency_verdict()` distingue `ECONOMICALLY_NON_VIABLE` de `STATISTICALLY_INDETERMINATE`.
+
+**Conséquences.** Une stratégie peut être économiquement excellente et trop rare pour être
+validée avec l'historique disponible. Les fusionner transformerait un manque de données en échec
+économique — et supprimerait précisément les stratégies rares mais fortes que le projet cherche.
+
+---
+
+## ADR-236 — Aucune exigence de taille d'échantillon n'a de valeur implicite
+
+**Statut** : figé et implémenté (Q64) · complète l'ADR-224
+
+**Décision.** `passive_verdict()` perd à son tour son `min_clusters = 20`.
+
+**Conséquences.** Le défaut avait été retiré d'`oracle_verdict` mais subsistait ici : une
+décision normative silencieuse — 19 grappes indéterminées, 20 interprétables — restait dans le
+code de production.

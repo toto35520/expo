@@ -12,7 +12,7 @@ latence et rareté des occurrences.
 | --- | --- |
 | `docs/` | spécification, journal de décisions (`DECISIONS.md`), registre des questions (`QUESTIONS.md`) |
 | `feasibility/` | **code exécutable** : les deux phases 0 et leur intersection |
-| `tests/` | 474 tests, un par garde-fou |
+| `tests/` | 495 tests, un par garde-fou |
 | `calendar-sources/` | dossier de preuve : sources normatives du calendrier |
 | `connector-capability/` | fiches Q57/Q58 : ce que les horloges et le connecteur permettent d'affirmer |
 
@@ -20,7 +20,7 @@ latence et rareté des occurrences.
 
 ```bash
 cd financial-analyzer
-python3 -m pytest tests/ -q          # 474 tests
+python3 -m pytest tests/ -q          # 495 tests
 python3 -m feasibility.report        # carte de faisabilité (données synthétiques)
 python3 -m feasibility.passive_demo  # campagne passive Q51-A de bout en bout
 ```
@@ -144,7 +144,9 @@ Trois refus structurels valent d'être connus avant de brancher :
 - et regrouper en épisodes ne suffit pas non plus. Sans estimateur de dépendance
   **effectivement exécuté**, « 0 survivant sur 60 épisodes » reste une **observation** :
   déclarer une méthode ne l'exécute pas. Le bootstrap par blocs élargit la borne de 4,9 % à
-  13,9 % sur la démonstration — presque un facteur trois, tout le contenu de la correction ;
+  13,9 % sur la démonstration — presque un facteur trois. Mais réagir à la dépendance n'est
+  pas la couvrir : tant que la couverture du bootstrap n'est pas qualifiée par une campagne
+  de calibration, la borne reste `DEPENDENCE_MODELLED_BOUND` et n'exclut rien ;
 - l'admissibilité d'une opportunité ne regarde **jamais** son surplus : `admissible()` ne
   prend aucun argument. Un dénominateur choisi d'après ce que les observations rapportent
   rendrait la fréquence circulaire.

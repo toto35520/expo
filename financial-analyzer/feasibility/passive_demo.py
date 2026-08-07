@@ -257,7 +257,7 @@ def main() -> None:
                                                            "bloc à calibrer sur la "
                                                            "persistance réelle",
                                        reference="protocole Q59, à figer",
-                                       draws=400))
+                                       draws=400))   # sans qualification de couverture
         oracle, why = oracle_verdict(assessment, F_MIN, J_MIN, min_clusters=MIN_CLUSTERS)
         state, state_why = phase0_state(
             cost_excluded=False,
@@ -288,7 +288,7 @@ def main() -> None:
                          CapturabilityScope.POST_RECEIVE_ONLY,
                          span_ns=1_000 * NS_PER_SECOND, clusters=50,
                          exhausted_fraction=0.0,
-                         episode_ids=np.arange(tail_gross.size) % 50)
+                         episode_ids=np.arange(tail_gross.size) // 20)
     tail_set = OpportunitySet(starts_ns=tail_starts, horizon_ns=HORIZON,
                               span_ns=1_000 * NS_PER_SECOND,
                               overlap_policy=OverlapPolicy.CAPACITY_CONSTRAINED_ORACLE)
