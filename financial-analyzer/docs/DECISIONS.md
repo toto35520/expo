@@ -3114,3 +3114,151 @@ rien ne distinguerait autrement : ne pas avoir mesuré, et avoir cherché puis c
 peut pas mesurer. La première laisse Q57 ouverte, la seconde la résout. La fiche connecteur livrée
 vide est un résultat valide : une fiche déclarant tout inconnu produit des bornes honnêtes, là où
 une supposition produirait des verdicts faux.
+
+---
+
+## ADR-171 — La première métrique réelle de Q19 est une borne construite par frontières
+
+**Statut** : figé et implémenté (Q51-A) · applique l'ADR-168
+
+**Décision.** `L^LB` se calcule comme `B5 − B1`, différence de frontières mesurées, jamais
+comme somme d'intervalles. Une frontière absente n'est jamais remplacée par la précédente :
+l'observation est refusée.
+
+**Conséquences.** Sans ce refus, la borne retomberait silencieusement sur `B4 − B1` — une
+valeur plausible qui mesure un chemin plus court sans le dire. Le module vérifie en outre
+l'identité entre la différence de frontières et la somme des quatre composantes ; une
+divergence signalerait un recouvrement.
+
+---
+
+## ADR-172 — La métrique décisionnelle est publiée par cellule et conditionnée à la rafale
+
+**Statut** : figé et implémenté (Q51-A) · confirme l'ADR-102
+
+**Décision.** Aucun p95 global ne peut représenter les conditions de déclenchement
+microstructurelles. La publication minimale est p50, p75, p90, p95, p99 pour NORMAL,
+ELEVATED, BURST_P95 et BURST_P99 séparément. L'intensité continue — cadence, vélocité,
+centiles de spread et de rafale — reste conservée dans chaque observation.
+
+**Conséquences.** Les signaux apparaissent là où la file se remplit et où la boucle
+d'événements est la plus sollicitée : `P(L | rafale) ≠ P(L)`. Les catégories ne servent qu'à
+présenter les résultats, jamais à les produire — `L_p95(λ)` reste traçable sans elles.
+
+---
+
+## ADR-173 — Q51-A fonctionne avec une capacité courtier entièrement non qualifiée
+
+**Statut** : figé et implémenté (Q51-A)
+
+**Décision.** La campagne passive ne suppose aucune latence courtier et démarre avec une
+fiche Q58 vide. Émission, accusé, ordre actif, file courtier, exécution, glissement et
+sélection adverse restent **explicitement absents** de chaque rapport.
+
+**Conséquences.** Le rapport quotidien nomme cette liste à chaque édition. Un rapport qui la
+tairait se lirait comme une latence complète.
+
+---
+
+## ADR-174 — Seule la pile TARGET alimente le verdict principal
+
+**Statut** : figé et implémenté (Q51-A)
+
+**Décision.** La collecte distingue `PIPELINE_MINIMAL`, `PIPELINE_TARGET` et
+`PIPELINE_STRESS`. Le verdict refuse un échantillon STRESS et retourne
+`PASSIVE_MEASUREMENT_INVALID`.
+
+**Conséquences.** Exécuter tous les moteurs futurs pour mesurer une latence maximale fictive
+produirait un chiffre défavorable ne décrivant aucune architecture envisagée. Le refuser
+vaut mieux que le pondérer.
+
+---
+
+## ADR-175 — La suffisance dépend de la stabilité et des grappes, pas d'un nombre de ticks
+
+**Statut** : figé et implémenté (Q51-A)
+
+**Décision.** Aucun seuil arbitraire — ni « dix jours », ni « cinq cents rafales ». La
+suffisance dépend de la variance mesurée, de la stabilité des quantiles, du nombre de
+grappes indépendantes et de la largeur des intervalles.
+
+**Conséquences.** Une grappe est attribuée à **chaque** observation, y compris hors rafale :
+deux cotations calmes séparées de 50 ms ne sont pas indépendantes non plus. Ne regrouper que
+les rafales gonflerait la précision apparente du régime normal. Une rafale ne se termine
+qu'après un retour sous le seuil maintenu pendant une période de reset, sinon une oscillation
+autour du seuil fabriquerait des grappes artificielles.
+
+---
+
+## ADR-176 — La politique d'arrêt est préenregistrée et ne peut dépendre du résultat
+
+**Statut** : figé et implémenté (Q51-A)
+
+**Décision.** `StoppingPolicy` porte auteur, empreinte et date de déclaration. Le module
+refuse d'évaluer une campagne contre une politique postérieure à sa première observation, ou
+supposant une autre qualification d'horloge que celle réellement obtenue. L'évaluation ne
+regarde jamais la valeur mesurée.
+
+**Conséquences.** Une politique écrite après avoir vu le résultat n'est pas une politique :
+c'est le résultat reformulé. Le piège résiduel est signalé plutôt qu'interdit — arrêter dès
+que l'intervalle devient étroit sélectionne les échantillons homogènes, donc l'intervalle
+final sous-estime l'incertitude ; `confidence_interval_is_optimistic` le déclare.
+
+---
+
+## ADR-177 — Un horizon exclu par la borne passive n'exige aucune campagne Q42
+
+**Statut** : figé et implémenté (Q51-A)
+
+**Décision.** `PASSIVE_LATENCY_EXCLUDED` est un verdict négatif fort : il tient même en
+supposant courtier instantané, aucune file et exécution immédiate. L'exclusion s'appuie sur
+la borne de confiance basse.
+
+**Conséquences.** La partie inconnue de la latence ne peut qu'aggraver le constat. Financer
+une campagne réelle pour le confirmer achèterait une précision sur une conclusion déjà
+acquise — et avec un risque financier.
+
+---
+
+## ADR-178 — Q42 devient prioritaire seulement si un horizon survit au coût et à la borne passive
+
+**Statut** : figé et implémenté (Q51-A)
+
+**Décision.** Trois cas : coût excluant → Q42 non prioritaire ; latence passive excluant →
+Q42 non prioritaire ; les deux survivant → Q42 rationnelle, parce que les inconnues
+courtier déterminent alors le verdict. Une borne indéterminée ne justifie pas non plus le
+financement.
+
+**Conséquences.** Q42 cesse d'être une campagne vague pour devenir une question précise :
+*le segment encore inconnu tient-il dans le budget résiduel ?* Cela réduit considérablement
+le coût expérimental.
+
+---
+
+## ADR-179 — Le budget de latence restant est calculé avant toute campagne réelle
+
+**Statut** : figé et implémenté (Q51-A)
+
+**Décision.** `B_L(c, h) = L_max_admissible(c, h) − L^LB_passive(c)`. `L_max_admissible` est
+**déclarée** avec source et date, jamais déduite : elle dépend de `edge(L, h, c)`, qui exige
+un signal.
+
+**Conséquences.** La fixer après lecture de la borne mesurée reviendrait à choisir la
+conclusion — le défaut déjà corrigé pour la bande d'avantages plausibles (ADR-116). Un budget
+négatif signifie que l'horizon est exclu sans avoir rien mesuré du courtier.
+
+---
+
+## ADR-180 — La fraction capturable ancrée à la réception locale est une borne supérieure
+
+**Statut** : figé et implémenté (Q51-A) · précise le protocole de la phase 0 de Q19
+
+**Décision.** L'instant `t₀` de la phase 0 est déclaré, jamais implicite. Avec
+`t₀ = réception locale`, le mouvement survenu **avant** la réception n'entre pas dans
+l'échantillon de déplacement et n'est donc jamais compté comme perdu : la fraction capturable
+en ressort surestimée. `CapturabilityInput` porte son ancrage et le signale.
+
+**Conséquences.** L'asymétrie habituelle s'applique : une exclusion reste concluante — on
+n'exclut pas moins en surestimant — mais une non-exclusion obtenue sous ancrage local est
+plus faible encore que d'ordinaire. Seule une qualification Q57 de `B0 → B1` permet un
+ancrage marché et retire cet optimisme.

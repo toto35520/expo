@@ -12,7 +12,7 @@ latence et rareté des occurrences.
 | --- | --- |
 | `docs/` | spécification, journal de décisions (`DECISIONS.md`), registre des questions (`QUESTIONS.md`) |
 | `feasibility/` | **code exécutable** : les deux phases 0 et leur intersection |
-| `tests/` | 254 tests, un par garde-fou |
+| `tests/` | 331 tests, un par garde-fou |
 | `calendar-sources/` | dossier de preuve : sources normatives du calendrier |
 | `connector-capability/` | fiches Q57/Q58 : ce que les horloges et le connecteur permettent d'affirmer |
 
@@ -20,8 +20,9 @@ latence et rareté des occurrences.
 
 ```bash
 cd financial-analyzer
-python3 -m pytest tests/ -q       # 254 tests
-python3 -m feasibility.report     # carte de faisabilité (données synthétiques)
+python3 -m pytest tests/ -q          # 331 tests
+python3 -m feasibility.report        # carte de faisabilité (données synthétiques)
+python3 -m feasibility.passive_demo  # campagne passive Q51-A de bout en bout
 ```
 
 Dépendances : `numpy`, `pytest`.
@@ -88,6 +89,39 @@ verdict — et l'**attribution** par composante, avec ses trous, utilisée pour 
 Les fiches de `connector-capability/` sont livrées **vides**, tout déclaré inconnu. C'est
 volontaire, et un test le vérifie : une fiche déclarant tout inconnu produit des bornes
 honnêtes, là où une supposition produirait des verdicts faux.
+
+## La campagne passive — ce qui démarre maintenant
+
+`feasibility/passive_recorder.py` fournit les cinq points à brancher dans la boucle réelle :
+
+```
+on_quote_received → on_event_eligible → on_evaluation_start
+                  → on_evaluation_end → on_decision_ready
+```
+
+**Aucun ordre, aucun risque financier, aucun moteur prédictif.** La campagne mesure ce qui
+sépare l'arrivée d'une cotation de la décision — et déclare vide tout le reste.
+
+Elle produit une seule grandeur décisionnelle, `L^LB_p95 | rafale, cellule`. Ce n'est pas un
+nombre mais une **surface de latence**, à intersecter avec la surface de coûts de Q40 :
+
+```
+CostSurface  ∩  PassiveLatencySurface   →  où il vaut encore la peine de chercher
+```
+
+Trois refus structurels valent d'être connus avant de brancher :
+
+- une évaluation qui ne conclut jamais est comptée comme **abandonnée**, jamais complétée —
+  la laisser en attente la sortirait du dénominateur, et la latence moyenne s'améliorerait à
+  mesure que le système échoue ;
+- la politique d'arrêt est **préenregistrée** : le module refuse une politique déclarée après
+  la première observation, parce qu'une politique écrite après le résultat est le résultat
+  reformulé ;
+- une grappe est attribuée à **chaque** observation, y compris hors rafale — deux cotations
+  calmes séparées de 50 ms ne sont pas indépendantes non plus.
+
+C'est le premier moment du projet où laisser tourner le système une journée produit plus de
+valeur que lui ajouter mille lignes de code.
 
 ## Ce que produit `feasibility`
 
