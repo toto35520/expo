@@ -3882,3 +3882,191 @@ sélectif ne doit être éliminé que pour son absence de valeur, jamais pour sa
 déclarer objectif, unité de performance, capital de référence, tolérance de risque, horizon
 d'évaluation et **rôle du système** — ce dernier déterminant si la partie courtier appartient
 au chemin critique.
+
+---
+
+> **Renumérotation.** L'audit du code propose ADR-209 à ADR-220 ; ces numéros sont déjà pris.
+> Enregistrés sous ADR-214 à ADR-225 :
+>
+> | Proposé | Enregistré | Objet | | Proposé | Enregistré | Objet |
+> | --- | --- | --- | --- | --- | --- | --- |
+> | 209 | **214** | métadonnée ≠ méthode exécutée | | 215 | **220** | capacité observée × facteur |
+> | 210 | **215** | statistique dans l'unité épisode | | 216 | **221** | capacité admissible à δ_MEU |
+> | 211 | **216** | trois optimisations distinctes | | 217 | **222** | `f_econ_min` complète |
+> | 212 | **217** | dénominateur sans surplus futur | | 218 | **223** | base d'EV typée |
+> | 213 | **218** | concurrence à tout instant | | 219 | **224** | aucun seuil par défaut |
+> | 214 | **219** | certificat recalculable | | 220 | **225** | utilité de `NO TRADE` |
+
+---
+
+## ADR-214 — Une méthode de dépendance déclarée n'en exécute aucune
+
+**Statut** : figé et implémenté (Q61-A) · **corrige l'ADR-209**
+
+**Décision.** `DEPENDENCE_ROBUST_BOUND` exige un `DependenceBoundEstimator` **effectivement
+exécuté** et versionné. `DependenceMethod` devient une métadonnée de provenance et ne suffit
+plus, seule, à changer la qualité de borne.
+
+**Conséquences.** L'ADR-209 avait remplacé `N = opportunités` par `N = épisodes` puis appliqué
+Clopper-Pearson — soit un changement de **nombre**, pas d'**hypothèse**. Fournir un objet
+descriptif ne modifiait que l'étiquette. Le bootstrap par blocs mobiles, lui, conserve la
+dépendance intra-bloc : sur la démonstration la borne passe de 4,87 % à 13,91 %, presque un
+facteur trois. Sans estimateur exécuté, `EPISODE_OBSERVATION` reste le meilleur statut.
+
+---
+
+## ADR-215 — Une statistique d'épisode se calcule sur l'appartenance réelle
+
+**Statut** : figé et implémenté (Q61-A)
+
+**Décision.** `Y_g = 1[∃ i ∈ g : S_i > δ_MEU]`, calculé depuis l'appartenance des opportunités
+aux épisodes. `min(succès, épisodes)` est interdit.
+
+**Conséquences.** Sept opportunités rentables peuvent appartenir au même épisode : le comptage
+correct donne alors **un** épisode porteur, quand `min(7, G)` en donnait quatre sur un
+échantillon de quatre épisodes. La statistique doit vivre dans l'unité que la borne revendique.
+
+---
+
+## ADR-216 — Admissibilité, comptage rentable et valeur maximale sont trois problèmes
+
+**Statut** : figé et implémenté (Q61-A) · précise l'ADR-201
+
+**Décision.** `admissible()` ne prend **aucun argument** : elle répond à *quelles décisions
+auraient physiquement pu être envisagées ?*. `profitable_count_upper_bound()` et
+`value_upper_bound()` peuvent, elles, utiliser la connaissance oracle. Les trois grandeurs
+`N_admissible`, `N_rentables_oracle` et `V_oracle_max` sont conservées séparément.
+
+**Conséquences.** L'ADR-201 énonçait la séparation ; le code passait toujours le surplus à la
+sélection, et `DISJOINT_WINDOWS` optimisait la somme des surplus positifs. L'ordonnancement
+pondéré est remplacé par une sélection d'activités classique — la fenêtre qui se libère le plus
+tôt, sans référence à sa valeur.
+
+---
+
+## ADR-217 — Le dénominateur d'une fréquence ne dépend jamais du surplus futur
+
+**Statut** : figé et implémenté (Q61-A)
+
+**Décision.** `n = admissible().size`. Une sélection utilisant le surplus rendrait la fréquence
+circulaire : on choisirait les observations d'après ce qu'elles rapportent, puis on diviserait
+par leur nombre.
+
+**Conséquences.** C'est une sélection *outcome-dependent* au sens strict, et elle se propageait
+à toutes les statistiques construites sur ce dénominateur.
+
+---
+
+## ADR-218 — La concurrence est une contrainte instantanée, pas un plafond global
+
+**Statut** : figé et implémenté (Q65)
+
+**Décision.** `∀t : N_ouvertes(t) ≤ K`, vérifié par `concurrency_respected()`. Le majorant de
+valeur est déclaré comme **relaxation** : l'ensemble des `m` plus gros surplus peut violer la
+concurrence instantanée, mais toute planification faisable contient au plus `m` positions, donc
+sa valeur est au plus cette somme.
+
+**Conséquences.** Dix positions simultanées respectent un total de dix et violent une limite de
+deux. Le majorant reste correct **parce qu'il relâche** la contrainte : une planification
+gloutonne minorerait et ferait sur-exclure, ce qui est le mauvais sens pour une exclusion.
+
+---
+
+## ADR-219 — Un certificat d'impossibilité recalcule sa borne
+
+**Statut** : figé et implémenté (Q61-A) · **corrige l'ADR-210**
+
+**Décision.** `ImpossibilityCertificate` ne reçoit plus `computed_upper_bound` : il porte une
+`BoundDerivation` typée, avec ses entrées et leur provenance, et la borne devient une propriété
+recalculée à chaque lecture.
+
+**Conséquences.** L'ADR-210 exigeait des métadonnées riches, mais la valeur normative restait
+fournie par l'appelant : un `computed_upper_bound = 0.001` accompagné d'une documentation
+convaincante passait. `preuve recalculable ≠ valeur fournie + documentation`.
+
+---
+
+## ADR-220 — Une capacité observée multipliée par un facteur n'exclut jamais
+
+**Statut** : figé et implémenté (Q61-A) · **corrige l'ADR-192**
+
+**Décision.** Le chemin d'exclusion `capacité_observée × facteur_de_sécurité < J_min` est
+supprimé. La capacité observée reste un diagnostic. Seule la construction
+`J ≤ λ_opp · p_U · S_U`, avec une vraie borne de population et une vraie borne physique, peut
+exclure au niveau C.
+
+**Conséquences.** Un facteur 2 n'est ni une borne statistique, ni physique, ni de population.
+Multiplier l'observé par deux, c'est encore *« je n'ai pas observé davantage, donc davantage
+n'existe pas »*.
+
+---
+
+## ADR-221 — La capacité reliée à Q1 ne compte que les opportunités matérielles
+
+**Statut** : figé et implémenté (Q61-A + Q1)
+
+**Décision.** Deux valeurs publiées : capacité **brute** `Σ_{S>0} S` en diagnostic, et capacité
+**économiquement admissible** `Σ_{S>δ_MEU} S`, seule reliée à Q1 et Q64.
+
+**Conséquences.** La capacité comptait tout surplus positif alors que le nombre de trades
+acceptables exigeait `S > δ_MEU`. Un système pouvait donc atteindre `J_min` avec des
+micro-avantages `0 < S < δ_MEU` que Q1 interdit individuellement.
+
+---
+
+## ADR-222 — `f_econ_min` dérive de la relation économique complète
+
+**Statut** : figé et implémenté (Q64) · **corrige l'ADR-207**
+
+**Décision.**
+
+```
+f_econ_min = (J_min + C_fixes + C_capital) / (P(fill) · EV_filled)
+```
+
+**Conséquences.** `J_min / δ_MEU` traitait `δ_MEU` comme l'espérance centrale — alors que Q1
+venait de le déclarer plancher de matérialité — et ignorait exécution, coûts fixes et coût du
+capital. Sur un exemple réaliste, la fréquence requise passe de 3 à 8 par jour. Le coût
+d'opportunité du capital est ajouté : sans lui, relation documentée et relation calculée
+différaient.
+
+---
+
+## ADR-223 — La base de l'espérance est typée
+
+**Statut** : figé et implémenté (Q64)
+
+**Décision.** `EV_PER_TRIGGER` inclut déjà la probabilité d'exécution ; `EV_PER_FILLED_EXECUTION`
+non. La base est obligatoire, et le constructeur refuse de s'en passer.
+
+**Conséquences.** Les deux formules ne se mélangent jamais — sans quoi le fill serait compté
+deux fois, exactement le motif de double comptage déjà corrigé pour les intervalles de latence
+(ADR-168).
+
+---
+
+## ADR-224 — Aucun seuil de taille d'échantillon n'a de valeur par défaut
+
+**Statut** : figé et implémenté (Q64)
+
+**Décision.** `min_clusters` devient un paramètre obligatoire d'`oracle_verdict`, sans défaut.
+
+**Conséquences.** Une fonction de production ne doit pas décider silencieusement que 19 grappes
+sont indéterminées et 20 interprétables. Le seuil vient du protocole de puissance.
+
+---
+
+## ADR-225 — `NO TRADE` a une utilité de référence nulle
+
+**Statut** : figé (Q1)
+
+**Décision.** `U(NO TRADE) = 0` avant coûts fixes du système ; `U(TRADE) = PnL_net − pénalité de
+risque`. La valeur de l'abstention vient de l'évitement d'espérances négatives, **jamais** d'une
+récompense pour s'être abstenu.
+
+**Conséquences.** Récompenser l'abstention rendrait « toujours `NO TRADE` » optimal. Avec cette
+convention, s'abstenir est sûr mais économiquement insuffisant : le système doit dépasser
+`J_min > 0` sur l'horizon d'évaluation pour justifier son existence. Le rapport final publie une
+courbe `Qualité(Couverture)` — espérance nette conditionnelle, perte maximale, calibration,
+risque de queue en fonction de la part d'opportunités acceptées — afin que *« 2 excellents trades
+valent mieux que 17 médiocres »* soit une hypothèse **testée**, et non une philosophie inscrite.

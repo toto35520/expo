@@ -12,7 +12,7 @@ latence et rareté des occurrences.
 | --- | --- |
 | `docs/` | spécification, journal de décisions (`DECISIONS.md`), registre des questions (`QUESTIONS.md`) |
 | `feasibility/` | **code exécutable** : les deux phases 0 et leur intersection |
-| `tests/` | 459 tests, un par garde-fou |
+| `tests/` | 474 tests, un par garde-fou |
 | `calendar-sources/` | dossier de preuve : sources normatives du calendrier |
 | `connector-capability/` | fiches Q57/Q58 : ce que les horloges et le connecteur permettent d'affirmer |
 
@@ -20,7 +20,7 @@ latence et rareté des occurrences.
 
 ```bash
 cd financial-analyzer
-python3 -m pytest tests/ -q          # 459 tests
+python3 -m pytest tests/ -q          # 474 tests
 python3 -m feasibility.report        # carte de faisabilité (données synthétiques)
 python3 -m feasibility.passive_demo  # campagne passive Q51-A de bout en bout
 ```
@@ -141,9 +141,18 @@ Trois refus structurels valent d'être connus avant de brancher :
 - la même exigence s'applique à l'inférence : `ACF ≈ 0` est une absence de contre-preuve, pas
   une preuve d'indépendance. La première campagne normative tourne donc en `FIXED_HORIZON`,
   la séquence de confiance étant calculée en parallèle sans valeur normative ;
-- et regrouper en épisodes ne suffit pas non plus. Sans méthode de dépendance déclarée,
-  « 0 survivant sur 60 épisodes » reste une **observation**, pas une borne sur la population
-  future — l'horizon fixe corrige l'arrêt optionnel, pas la dépendance entre observations.
+- et regrouper en épisodes ne suffit pas non plus. Sans estimateur de dépendance
+  **effectivement exécuté**, « 0 survivant sur 60 épisodes » reste une **observation** :
+  déclarer une méthode ne l'exécute pas. Le bootstrap par blocs élargit la borne de 4,9 % à
+  13,9 % sur la démonstration — presque un facteur trois, tout le contenu de la correction ;
+- l'admissibilité d'une opportunité ne regarde **jamais** son surplus : `admissible()` ne
+  prend aucun argument. Un dénominateur choisi d'après ce que les observations rapportent
+  rendrait la fréquence circulaire.
+
+> Une remarque de méthode : plusieurs de ces défauts ont survécu à une suite verte, parce
+> que les tests figeaient précisément l'hypothèse à retirer. Un test qui vérifie qu'un objet
+> descriptif suffit à obtenir une borne robuste **confirme le bug**. La suite est un
+> garde-fou, pas une preuve.
 
 La cible économique est déclarée dans `docs/Q1-cible-economique.md` : **valeur nette ajustée
 du risque, avec `NO TRADE` en décision de première classe**. C'est ce qui rend cohérent

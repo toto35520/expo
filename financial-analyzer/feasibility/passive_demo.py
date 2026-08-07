@@ -40,6 +40,7 @@ from .passive_campaign import (  # noqa: E402
     CapturabilityScope,
     ClusterAssigner,
     CostFloor,
+    MovingBlockBootstrapBound,
     OpportunitySet,
     OracleCapture,
     most_favourable_floor,
@@ -226,6 +227,7 @@ def main() -> None:
     F_MIN = 4 / 86_400.0           # quatre occasions par jour
     J_MIN = 20.0 / 86_400.0        # contribution minimale par seconde
     DELTA_MEU = 0.05
+    MIN_CLUSTERS = 20      # à dériver du protocole de puissance (Q64), pas d'un défaut
 
     print("-" * 78)
     print("PHASE 0 PAR CELLULE — exclusion sans qu'aucun signal ne soit défini")
@@ -248,8 +250,15 @@ def main() -> None:
             overlap_policy=OverlapPolicy.DISJOINT_WINDOWS,
             session=cell.session, cell_label=cell.label,
         )
-        assessment = assess_oracle(capture, cost_floor, opportunities, DELTA_MEU)
-        oracle, why = oracle_verdict(assessment, F_MIN, J_MIN)
+        assessment = assess_oracle(capture, cost_floor, opportunities, DELTA_MEU,
+                                   estimator=MovingBlockBootstrapBound(
+                                       block_length=3,
+                                       dependence_argument="démonstration — longueur de "
+                                                           "bloc à calibrer sur la "
+                                                           "persistance réelle",
+                                       reference="protocole Q59, à figer",
+                                       draws=400))
+        oracle, why = oracle_verdict(assessment, F_MIN, J_MIN, min_clusters=MIN_CLUSTERS)
         state, state_why = phase0_state(
             cost_excluded=False,
             passive=PassiveVerdict.PASSIVE_LATENCY_INDETERMINATE
@@ -278,12 +287,14 @@ def main() -> None:
     tail = OracleCapture(tail_starts, tail_gross, HORIZON,
                          CapturabilityScope.POST_RECEIVE_ONLY,
                          span_ns=1_000 * NS_PER_SECOND, clusters=50,
-                         exhausted_fraction=0.0)
+                         exhausted_fraction=0.0,
+                         episode_ids=np.arange(tail_gross.size) % 50)
     tail_set = OpportunitySet(starts_ns=tail_starts, horizon_ns=HORIZON,
                               span_ns=1_000 * NS_PER_SECOND,
                               overlap_policy=OverlapPolicy.CAPACITY_CONSTRAINED_ORACLE)
     tail_assessment = assess_oracle(tail, cost_floor, tail_set, DELTA_MEU)
-    tail_verdict, tail_why = oracle_verdict(tail_assessment, F_MIN, J_MIN)
+    tail_verdict, tail_why = oracle_verdict(tail_assessment, F_MIN, J_MIN,
+                                            min_clusters=MIN_CLUSTERS)
 
     print("-" * 78)
     print("CONTRE-EXEMPLE — 92 % de situations impossibles, 8 % très favorables")

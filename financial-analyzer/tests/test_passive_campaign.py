@@ -7,6 +7,8 @@ grappes gonflées, arrêt opportuniste, ancrage optimiste de la capturabilité.
 
 from __future__ import annotations
 
+import inspect
+
 import numpy as np
 import pytest
 
@@ -35,9 +37,15 @@ from feasibility.passive_campaign import (
     CapturabilityScope,
     ComparisonDesign,
     HorizonEndPolicy,
+    BoundDerivation,
+    BoundDerivationType,
+    BoundInput,
     DependenceMethod,
+    EvBasis,
     ImpossibilityCertificate,
+    MovingBlockBootstrapBound,
     SurplusUpperBound,
+    episode_successes,
     BoundQuality,
     ConstraintClass,
     CostFloor,
@@ -792,7 +800,8 @@ def test_a_low_quantile_never_excludes_when_the_tail_survives():
     starts = np.arange(1_000, dtype=np.int64) * NS_PER_SECOND
     cap = OracleCapture(starts, gross, 500 * MS, CapturabilityScope.POST_RECEIVE_ONLY,
                         span_ns=1_000 * NS_PER_SECOND, clusters=50,
-                        exhausted_fraction=0.0)
+                        exhausted_fraction=0.0,
+                        episode_ids=np.arange(gross.size) % 50)
 
     assert cap.quantiles.p90 <= 0.35              # le raccourci précédent aurait exclu
 
@@ -800,7 +809,7 @@ def test_a_low_quantile_never_excludes_when_the_tail_survives():
                       opportunities(starts, 1_000 * NS_PER_SECOND,
                                     overlap_policy=OverlapPolicy.CAPACITY_CONSTRAINED_ORACLE),
                       delta_meu=0.05)
-    verdict, why = oracle_verdict(a, minimum_frequency_per_second=1 / 86_400,
+    verdict, why = oracle_verdict(a, min_clusters=20, minimum_frequency_per_second=1 / 86_400,
                                   minimum_contribution_per_second=1e-9)
     assert verdict is OracleVerdict.ORACLE_NOT_EXCLUDED
     assert "ne dit rien de la capacité d'un moteur" in why
@@ -810,7 +819,8 @@ def no_survivor_case():
     gross = np.full(600, 0.10)
     starts = np.arange(600, dtype=np.int64) * NS_PER_SECOND
     cap = OracleCapture(starts, gross, 500 * MS, CapturabilityScope.POST_RECEIVE_ONLY,
-                        span_ns=600 * NS_PER_SECOND, clusters=40, exhausted_fraction=0.0)
+                        span_ns=600 * NS_PER_SECOND, clusters=40, exhausted_fraction=0.0,
+                        episode_ids=np.arange(gross.size) % 40)
     return cap, assess_oracle(cap, floor_(0.35),
                               opportunities(starts, 600 * NS_PER_SECOND), delta_meu=0.05)
 
@@ -819,7 +829,7 @@ def test_zero_survivors_observed_is_not_an_impossibility():
     """« Je n'en ai pas vu » ne devient jamais « cela n'existe pas ». Un échantillon
     fini borne une fréquence, il ne démontre pas une absence."""
     _, a = no_survivor_case()
-    verdict, why = oracle_verdict(a, 1 / 86_400, 1e-9)
+    verdict, why = oracle_verdict(a, 1 / 86_400, 1e-9, min_clusters=20)
     assert verdict is OracleVerdict.ORACLE_NO_SURVIVOR_OBSERVED
     assert not verdict.excludes
     assert "ne démontre pas l'absence" in why
@@ -832,7 +842,13 @@ def certificate(**kw) -> ImpossibilityCertificate:
         domain="Ω = cellule LONDON, horizon 500 ms, latence p99 observée",
         hypotheses=("pas de cotation hors des heures déclarées",
                     "pas de gap intra-horizon supérieur à la borne de déplacement"),
-        computed_upper_bound=0.031,
+        derivation=BoundDerivation(
+            derivation_type=BoundDerivationType.MAX_DISPLACEMENT_MINUS_FLOOR,
+            inputs=(BoundInput("max_displacement", 0.381, "USD/oz",
+                               "Q50 — plage maximale observée sur 500 ms, 24 mois"),
+                    BoundInput("cost_floor", 0.35, "USD/oz", "barème contractuel")),
+            calculator_version="CALC-1.0",
+        ),
         constants_used=(("tick minimal", "0,01 $/oz — spécification contrat"),
                         ("latence p99", "74 ms — campagne Q51-A")),
         proof_version="PROOF-Q19-2026-001",
@@ -844,18 +860,44 @@ def certificate(**kw) -> ImpossibilityCertificate:
 def test_a_verifiable_certificate_grants_universal_impossibility():
     """La condition est recalculable : U_oracle(Ω) < δ_MEU, pas une case cochée."""
     _, a = no_survivor_case()
-    verdict, why = oracle_verdict(a, 1 / 86_400, 1e-9, certificate=certificate())
+    verdict, why = oracle_verdict(a, 1 / 86_400, 1e-9, min_clusters=20,
+                                  certificate=certificate())
     assert verdict is OracleVerdict.ORACLE_UNIVERSALLY_NON_VIABLE
     assert verdict.excludes
-    assert "0.0310" in why and "PROOF-Q19-2026-001" in why
+    assert "0.0310" in why and "PROOF-Q19-2026-001" in why and "CALC-1.0" in why
+
+
+def test_the_certificate_recomputes_its_bound_instead_of_receiving_it():
+    """preuve recalculable ≠ valeur fournie + documentation."""
+    c = certificate()
+    assert c.computed_upper_bound == pytest.approx(0.381 - 0.35)
+    assert "computed_upper_bound" not in ImpossibilityCertificate.__dataclass_fields__
+
+
+def test_a_derivation_refuses_to_run_without_its_inputs():
+    with pytest.raises(CampaignError, match="exige une entrée"):
+        BoundDerivation(
+            derivation_type=BoundDerivationType.MAX_DISPLACEMENT_MINUS_FLOOR,
+            inputs=(BoundInput("cost_floor", 0.35, "USD/oz", "barème"),),
+            calculator_version="CALC-1.0",
+        ).recompute()
+
+
+def test_a_derivation_input_needs_provenance():
+    with pytest.raises(CampaignError, match="provenance"):
+        BoundInput("max_displacement", 0.5, "USD/oz", "  ")
 
 
 def test_a_certificate_whose_bound_fails_the_inequality_grants_nothing():
     """`holds` est dérivé de la comparaison, jamais déclaré."""
-    weak = certificate(computed_upper_bound=0.40)
+    weak = certificate(derivation=BoundDerivation(
+        derivation_type=BoundDerivationType.MAX_DISPLACEMENT_MINUS_FLOOR,
+        inputs=(BoundInput("max_displacement", 0.75, "USD/oz", "Q50"),
+                BoundInput("cost_floor", 0.35, "USD/oz", "barème")),
+        calculator_version="CALC-1.0"))
     assert not weak.holds_against(0.05)
     _, a = no_survivor_case()
-    verdict, _ = oracle_verdict(a, 1 / 86_400, 1e-9, certificate=weak)
+    verdict, _ = oracle_verdict(a, 1 / 86_400, 1e-9, min_clusters=20, certificate=weak)
     assert verdict is not OracleVerdict.ORACLE_UNIVERSALLY_NON_VIABLE
 
 
@@ -873,10 +915,11 @@ def test_zero_survivors_becomes_conclusive_through_frequency_once_the_bound_is_r
     gross = np.full(600, 0.10)
     starts = np.arange(600, dtype=np.int64) * NS_PER_SECOND
     cap = OracleCapture(starts, gross, 500 * MS, CapturabilityScope.POST_RECEIVE_ONLY,
-                        span_ns=600 * NS_PER_SECOND, clusters=40, exhausted_fraction=0.0)
+                        span_ns=600 * NS_PER_SECOND, clusters=40, exhausted_fraction=0.0,
+                        episode_ids=np.arange(gross.size) % 40)
     a = assess_oracle(cap, floor_(0.35), opportunities(starts, 600 * NS_PER_SECOND),
-                      delta_meu=0.05, dependence_method=method())
-    verdict, why = oracle_verdict(a, minimum_frequency_per_second=10.0,
+                      delta_meu=0.05, estimator=estimator())
+    verdict, why = oracle_verdict(a, min_clusters=20, minimum_frequency_per_second=10.0,
                                   minimum_contribution_per_second=1e-9)
     assert verdict is OracleVerdict.ORACLE_FREQUENCY_NON_VIABLE
     assert verdict.excludes
@@ -889,9 +932,10 @@ def test_capacity_can_conclude_without_survivors_given_a_physical_gain_bound():
     gross = np.full(600, 0.10)
     starts = np.arange(600, dtype=np.int64) * NS_PER_SECOND
     cap = OracleCapture(starts, gross, 500 * MS, CapturabilityScope.POST_RECEIVE_ONLY,
-                        span_ns=600 * NS_PER_SECOND, clusters=40, exhausted_fraction=0.0)
+                        span_ns=600 * NS_PER_SECOND, clusters=40, exhausted_fraction=0.0,
+                        episode_ids=np.arange(gross.size) % 40)
     a = assess_oracle(cap, floor_(0.35), opportunities(starts, 600 * NS_PER_SECOND),
-                      delta_meu=0.05, dependence_method=method())
+                      delta_meu=0.05, estimator=estimator())
     ceiling = SurplusUpperBound(
         value=0.50,
         argument="déplacement maximal observable sur 500 ms borné par la plage "
@@ -899,7 +943,7 @@ def test_capacity_can_conclude_without_survivors_given_a_physical_gain_bound():
         source="Q50 — export de cotations, 24 mois",
     )
     verdict, why = oracle_verdict(a, 1 / 86_400, minimum_contribution_per_second=1_000.0,
-                                  surplus_bound=ceiling)
+                                  min_clusters=20, surplus_bound=ceiling)
     assert verdict is OracleVerdict.ORACLE_ECONOMIC_CAPACITY_NON_VIABLE
     assert "queue non observée" in why
 
@@ -928,13 +972,13 @@ def test_the_rate_upper_bound_is_never_zero():
 # ---- §4-6 : disjoint ≠ indépendant
 
 
-def method() -> DependenceMethod:
-    return DependenceMethod(
-        name="bootstrap par blocs stationnaires",
-        dependence_argument="longueur de bloc supérieure à la durée de persistance "
-                            "mesurée des épisodes de charge et de régime",
-        parameter="longueur de bloc 3 séances",
+def estimator() -> MovingBlockBootstrapBound:
+    return MovingBlockBootstrapBound(
+        block_length=3,
+        dependence_argument="longueur de bloc supérieure à la persistance mesurée des "
+                            "épisodes de charge et de régime",
         reference="protocole Q59 v1",
+        draws=400,
     )
 
 
@@ -942,10 +986,12 @@ def test_grouping_into_episodes_is_not_by_itself_a_robust_bound():
     """Passer de 2 000 opportunités à 40 épisodes réduit la fausse précision, mais ne
     rend pas les 40 épisodes indépendants : ils peuvent appartenir aux mêmes journées,
     régimes, événements macro ou états de charge."""
-    naive = rarity_bound(0, 2_000, 0, 0.05)
-    grouped = rarity_bound(0, 2_000, 40, 0.05)
-    robust = rarity_bound(0, 2_000, 40, 0.05, method=method())
-    proven = rarity_bound(0, 2_000, 40, 0.05, independence_proven=True)
+    flags = np.zeros(2_000)
+    episodes = np.arange(2_000) % 40
+    naive = rarity_bound(flags, np.array([]), 0.05)
+    grouped = rarity_bound(flags, episodes, 0.05)
+    robust = rarity_bound(flags, episodes, 0.05, estimator=estimator())
+    proven = rarity_bound(flags, episodes, 0.05, independence_proven=True)
 
     assert naive.quality is BoundQuality.RAW_EVENT_BOUND
     assert grouped.quality is BoundQuality.EPISODE_OBSERVATION
@@ -958,17 +1004,42 @@ def test_grouping_into_episodes_is_not_by_itself_a_robust_bound():
     assert robust.upper > proven.upper
 
 
+def test_declaring_a_method_without_executing_it_grants_nothing():
+    """métadonnée de méthode ≠ méthode exécutée. Un objet descriptif ne change pas
+    l'estimateur ; seul un estimateur exécuté change la borne."""
+    flags = np.zeros(2_000)
+    episodes = np.arange(2_000) % 40
+    described_only = rarity_bound(flags, episodes, 0.05)
+    assert described_only.quality is BoundQuality.EPISODE_OBSERVATION
+
+    executed = rarity_bound(flags, episodes, 0.05, estimator=estimator())
+    assert executed.quality is BoundQuality.DEPENDENCE_ROBUST_BOUND
+    assert executed.estimator_version == "MBB_1.0"
+
+
+def test_the_bootstrap_widens_the_bound_when_dependence_is_real():
+    """Une dépendance forte doit élargir la borne, pas la laisser inchangée."""
+    rng = np.random.default_rng(0)
+    independent = (rng.random(300) < 0.2).astype(float)
+    clumped = np.repeat((rng.random(30) < 0.2).astype(float), 10)
+    est = estimator()
+    assert est.upper_bound(clumped, 0.05) > est.upper_bound(independent, 0.05)
+
+
 def test_a_dependence_method_must_declare_what_it_assumes():
     with pytest.raises(CampaignError, match="dependence_argument"):
         DependenceMethod(name="bootstrap", dependence_argument="  ",
                          parameter="3 séances", reference="v1")
+    with pytest.raises(CampaignError, match="argument de dépendance"):
+        MovingBlockBootstrapBound(block_length=3, dependence_argument="  ",
+                                  reference="v1")
 
 
 def test_an_episode_observation_cannot_produce_a_frequency_exclusion():
     """FIXED_HORIZON corrige l'arrêt optionnel, pas la dépendance entre observations."""
     _, a = no_survivor_case()
     assert a.rarity.quality is BoundQuality.EPISODE_OBSERVATION
-    verdict, _ = oracle_verdict(a, minimum_frequency_per_second=10.0,
+    verdict, _ = oracle_verdict(a, min_clusters=20, minimum_frequency_per_second=10.0,
                                 minimum_contribution_per_second=1e-9)
     assert verdict is OracleVerdict.ORACLE_NO_SURVIVOR_OBSERVED
 
@@ -1045,10 +1116,11 @@ def test_level_b_excludes_when_opportunities_are_too_rare():
     gross = np.array([0.10] * 998 + [5.00] * 2)
     starts = np.arange(1_000, dtype=np.int64) * NS_PER_SECOND
     cap = OracleCapture(starts, gross, 500 * MS, CapturabilityScope.POST_RECEIVE_ONLY,
-                        span_ns=1_000 * NS_PER_SECOND, clusters=40, exhausted_fraction=0.0)
+                        span_ns=1_000 * NS_PER_SECOND, clusters=40, exhausted_fraction=0.0,
+                        episode_ids=np.arange(gross.size) % 40)
     a = assess_oracle(cap, floor_(0.35), opportunities(starts, 1_000 * NS_PER_SECOND),
-                      delta_meu=0.05, dependence_method=method())
-    verdict, why = oracle_verdict(a, minimum_frequency_per_second=50.0,
+                      delta_meu=0.05, estimator=estimator())
+    verdict, why = oracle_verdict(a, min_clusters=20, minimum_frequency_per_second=50.0,
                                   minimum_contribution_per_second=1e-9)
     assert verdict is OracleVerdict.ORACLE_FREQUENCY_NON_VIABLE
     assert "trop rarement" in why or "plancher" in why
@@ -1059,31 +1131,68 @@ def test_capacity_cannot_conclude_without_a_single_observed_survivor():
     impossibilité : conclure ici referait l'erreur du niveau A."""
     _, a = no_survivor_case()
     assert a.capacity_value_per_second == 0.0
-    verdict, _ = oracle_verdict(a, 1 / 86_400, minimum_contribution_per_second=1_000.0)
+    verdict, _ = oracle_verdict(a, 1 / 86_400, minimum_contribution_per_second=1_000.0, min_clusters=20)
     assert verdict is OracleVerdict.ORACLE_NO_SURVIVOR_OBSERVED
 
 
-def test_level_c_excludes_on_economic_capacity():
+def test_observed_capacity_alone_never_excludes():
+    """Multiplier une valeur observée par un facteur de sécurité ne démontre rien : ce
+    facteur n'est ni une borne statistique, ni physique, ni de population. C'est la même
+    famille d'erreur que « je n'ai pas observé davantage, donc davantage n'existe pas »."""
     gross = np.array([0.10] * 900 + [0.45] * 100)
     starts = np.arange(1_000, dtype=np.int64) * NS_PER_SECOND
     cap = OracleCapture(starts, gross, 500 * MS, CapturabilityScope.POST_RECEIVE_ONLY,
-                        span_ns=1_000 * NS_PER_SECOND, clusters=40, exhausted_fraction=0.0)
+                        span_ns=1_000 * NS_PER_SECOND, clusters=40, exhausted_fraction=0.0,
+                        episode_ids=np.arange(gross.size) % 40)
     a = assess_oracle(cap, floor_(0.35), opportunities(starts, 1_000 * NS_PER_SECOND),
-                      delta_meu=0.01)
-    verdict, why = oracle_verdict(a, minimum_frequency_per_second=1 / 86_400,
-                                  minimum_contribution_per_second=1_000.0)
+                      delta_meu=0.01, estimator=estimator())
+    assert a.capacity_value_per_second > 0        # diagnostic disponible
+    verdict, _ = oracle_verdict(a, min_clusters=20, minimum_frequency_per_second=1 / 86_400,
+                                minimum_contribution_per_second=1_000.0)
+    assert verdict is not OracleVerdict.ORACLE_ECONOMIC_CAPACITY_NON_VIABLE
+    assert "capacity_safety_factor" not in inspect.signature(oracle_verdict).parameters
+
+
+def test_level_c_excludes_only_through_the_population_ceiling():
+    gross = np.array([0.10] * 900 + [0.45] * 100)
+    starts = np.arange(1_000, dtype=np.int64) * NS_PER_SECOND
+    cap = OracleCapture(starts, gross, 500 * MS, CapturabilityScope.POST_RECEIVE_ONLY,
+                        span_ns=1_000 * NS_PER_SECOND, clusters=40, exhausted_fraction=0.0,
+                        episode_ids=np.arange(gross.size) % 40)
+    a = assess_oracle(cap, floor_(0.35), opportunities(starts, 1_000 * NS_PER_SECOND),
+                      delta_meu=0.01, estimator=estimator())
+    ceiling = SurplusUpperBound(value=0.20, argument="plage maximale sur 500 ms",
+                                source="Q50 — 24 mois")
+    verdict, why = oracle_verdict(a, min_clusters=20,
+                                  minimum_frequency_per_second=1 / 86_400,
+                                  minimum_contribution_per_second=1_000.0,
+                                  surplus_bound=ceiling)
     assert verdict is OracleVerdict.ORACLE_ECONOMIC_CAPACITY_NON_VIABLE
-    assert "capacité économique" in why
+    assert "queue non observée" in why
+
+
+def test_the_raw_capacity_stays_a_separate_diagnostic():
+    """La capacité brute compte tout surplus positif ; seule la capacité admissible au
+    plancher de matérialité se relie à Q1."""
+    gross = np.array([0.36] * 900 + [0.90] * 100)     # 900 micro-avantages, 100 réels
+    starts = np.arange(1_000, dtype=np.int64) * NS_PER_SECOND
+    cap = OracleCapture(starts, gross, 500 * MS, CapturabilityScope.POST_RECEIVE_ONLY,
+                        span_ns=1_000 * NS_PER_SECOND, clusters=40, exhausted_fraction=0.0,
+                        episode_ids=np.arange(gross.size) % 40)
+    a = assess_oracle(cap, floor_(0.35), opportunities(starts, 1_000 * NS_PER_SECOND),
+                      delta_meu=0.05, estimator=estimator())
+    assert a.raw_capacity_value_per_second > a.capacity_value_per_second
 
 
 def test_too_few_clusters_leaves_the_oracle_indeterminate():
     starts = np.arange(60, dtype=np.int64) * NS_PER_SECOND
     cap = OracleCapture(starts, np.full(60, 1.0), 500 * MS,
                         CapturabilityScope.POST_RECEIVE_ONLY,
-                        span_ns=60 * NS_PER_SECOND, clusters=3, exhausted_fraction=0.0)
+                        span_ns=60 * NS_PER_SECOND, clusters=3, exhausted_fraction=0.0,
+                        episode_ids=np.arange(60) % 3)
     a = assess_oracle(cap, floor_(0.35), opportunities(starts, 60 * NS_PER_SECOND),
                       delta_meu=0.05)
-    assert oracle_verdict(a, 1 / 86_400, 1e-9)[0] is OracleVerdict.ORACLE_INDETERMINATE
+    assert oracle_verdict(a, 1 / 86_400, 1e-9, min_clusters=20)[0] is OracleVerdict.ORACLE_INDETERMINATE
 
 
 # ---- §7-9 : un mouvement ne compte qu'une fois
@@ -1093,9 +1202,54 @@ def test_five_hundred_ticks_of_one_move_are_not_five_hundred_opportunities():
     """Sans politique de chevauchement, un seul mouvement gonflerait la fréquence et la
     valeur économique de l'oracle."""
     starts = np.arange(500, dtype=np.int64) * MS       # 500 départs en 0,5 s
-    surplus = np.full(500, 1.0)
-    disjoint = opportunities(starts, 500 * MS)
-    assert disjoint.select(surplus).size == 1
+    assert opportunities(starts, 500 * MS).admissible().size == 1
+
+
+def test_admissibility_never_looks_at_the_surplus():
+    """Le dénominateur ne peut pas dépendre du futur : le faire rendrait la fréquence
+    circulaire."""
+    starts = np.array([0, 600 * MS, 1_200 * MS], dtype=np.int64)
+    o = opportunities(starts, 2 * NS_PER_SECOND)
+    import inspect
+    assert list(inspect.signature(o.admissible).parameters) == []
+    assert o.admissible().tolist() == [0, 1, 2]
+
+
+def test_concurrency_is_checked_at_every_instant_not_in_total():
+    """Dix positions simultanées respectent un total de dix et violent une limite de
+    deux : un plafond global n'est pas une contrainte de concurrence."""
+    simultaneous = np.zeros(10, dtype=np.int64)
+    o = opportunities(simultaneous, NS_PER_SECOND, max_concurrent_positions=2,
+                      overlap_policy=OverlapPolicy.CAPACITY_CONSTRAINED_ORACLE)
+    assert not o.concurrency_respected(np.arange(10))
+    assert o.concurrency_respected(np.arange(2))
+
+    staggered = np.arange(10, dtype=np.int64) * NS_PER_SECOND
+    spread_out = opportunities(staggered, 20 * NS_PER_SECOND, horizon_ns=500 * MS,
+                               max_concurrent_positions=2)
+    assert spread_out.concurrency_respected(np.arange(10))
+
+
+def test_the_value_bound_is_a_relaxation_and_says_so():
+    """Une planification gloutonne minorerait et ferait sur-exclure ; la relaxation
+    majore, ce qui est le sens conservateur pour une exclusion."""
+    starts = np.zeros(10, dtype=np.int64)
+    o = opportunities(starts, NS_PER_SECOND, max_concurrent_positions=1,
+                      overlap_policy=OverlapPolicy.CAPACITY_CONSTRAINED_ORACLE)
+    surplus = np.arange(10, dtype=float)
+    assert o.value_upper_bound(surplus) >= surplus.max()
+    assert "relaxation" in OpportunitySet.value_upper_bound.__doc__
+
+
+def test_the_value_bound_separates_raw_from_materiality_admissible():
+    """Un système ne doit pas atteindre `J_min` avec des trades que `δ_MEU` interdit
+    individuellement."""
+    starts = np.arange(20, dtype=np.int64) * NS_PER_SECOND
+    o = opportunities(starts, 20 * NS_PER_SECOND)
+    surplus = np.array([0.01] * 18 + [0.90, 0.80])
+    assert o.value_upper_bound(surplus, threshold=0.0) > (
+        o.value_upper_bound(surplus, threshold=0.05))
+    assert o.value_upper_bound(surplus, threshold=0.05) == pytest.approx(1.70)
 
 
 def test_the_capacity_bounds_how_many_positions_the_oracle_can_take():
@@ -1104,21 +1258,34 @@ def test_the_capacity_bounds_how_many_positions_the_oracle_can_take():
                       max_concurrent_positions=2,
                       overlap_policy=OverlapPolicy.CAPACITY_CONSTRAINED_ORACLE)
     assert o.capacity == 2 * (1_000 * NS_PER_SECOND) // (500 * MS + 500 * MS)
-    # La capacité est un plafond : la sélection ne dépasse ni ce plafond ni le stock.
-    assert o.select(np.full(1_000, 1.0)).size == min(o.capacity, 1_000)
+    # Le plafond borne le **majorant de valeur**, pas l'ensemble admissible.
+    assert o.profitable_count_upper_bound(np.full(1_000, 1.0), 0.5) == min(o.capacity, 1_000)
 
     narrow = opportunities(starts, 1_000 * NS_PER_SECOND, horizon_ns=100 * NS_PER_SECOND,
                            max_concurrent_positions=1,
                            overlap_policy=OverlapPolicy.CAPACITY_CONSTRAINED_ORACLE)
     assert narrow.capacity == 10
-    assert narrow.select(np.full(1_000, 1.0)).size == 10
+    assert narrow.profitable_count_upper_bound(np.full(1_000, 1.0), 0.5) == 10
 
 
-def test_disjoint_selection_prefers_the_valuable_windows():
+def test_disjoint_admissibility_takes_the_earliest_slot_not_the_richest():
+    """Préférer la fenêtre la plus rentable ferait entrer le futur dans le dénominateur."""
     starts = np.array([0, 100 * MS, 600 * MS], dtype=np.int64)
-    surplus = np.array([0.1, 5.0, 0.2])
-    kept = opportunities(starts, NS_PER_SECOND).select(surplus)
-    assert 1 in kept.tolist()
+    kept = opportunities(starts, NS_PER_SECOND).admissible()
+    # 100 ms tombe dans la fenêtre ouverte par 0 ; 600 ms non. L'indice 1,
+    # le plus rentable, est écarté sans que son surplus soit consulté.
+    assert kept.tolist() == [0, 2]
+
+
+def test_episode_successes_count_episodes_not_opportunities():
+    """Sept opportunités rentables peuvent appartenir au même épisode ; `min(K, G)`
+    aurait compté sept épisodes porteurs."""
+    episodes = np.array([0, 0, 0, 0, 0, 0, 0, 1, 2, 3])
+    profitable = np.array([1, 1, 1, 1, 1, 1, 1, 0, 0, 0], dtype=float)
+    carried, n = episode_successes(episodes, profitable)
+    assert n == 4
+    assert carried.sum() == 1.0
+    assert min(int(profitable.sum()), n) == 4      # ce que l'ancien calcul aurait donné
 
 
 def test_concurrency_and_span_must_be_declared_sanely():
@@ -1390,6 +1557,7 @@ def thresholds(**kw) -> EconomicThresholds:
         primary=EconomicTarget.PER_UNIT_TIME,
         delta_meu=0.20, j_min_per_second=0.60 / 86_400,
         f_stat_min_per_second=1 / 86_400,
+        ev_basis=EvBasis.EV_PER_FILLED_EXECUTION,
         q1_reference="Q1 v1 — alerte, unité $/oz, capital de référence 50 k$, "
                      "horizon d'évaluation trimestriel",
     )
@@ -1403,17 +1571,57 @@ def test_economic_thresholds_must_reference_the_q1_target():
         thresholds(q1_reference="  ")
 
 
-def test_the_economic_frequency_is_derived_not_invented():
-    t = thresholds(delta_meu=0.20, j_min_per_second=0.60 / 86_400)
-    assert t.derived_f_econ_min_per_second == pytest.approx(3 / 86_400)
+def test_the_economic_frequency_uses_the_full_relation_not_j_over_delta():
+    """`J_min / δ_MEU` traitait δ_MEU comme l'espérance centrale et ignorait exécution,
+    coûts fixes et coût du capital."""
+    naive = thresholds(delta_meu=0.20, j_min_per_second=0.60 / 86_400,
+                       expected_net_per_occurrence=0.20, fill_probability=1.0)
+    assert naive.derived_f_econ_min_per_second == pytest.approx(3 / 86_400)
+
+    realistic = thresholds(delta_meu=0.20, j_min_per_second=0.60 / 86_400,
+                           expected_net_per_occurrence=0.20, fill_probability=0.5,
+                           fixed_cost_per_second=0.10 / 86_400,
+                           capital_opportunity_cost_per_second=0.10 / 86_400)
+    # (0,60 + 0,10 + 0,10) / (0,5 × 0,20) = 8 par jour, contre 3 pour la formule naïve.
+    assert realistic.derived_f_econ_min_per_second == pytest.approx(8 / 86_400)
+    assert realistic.derived_f_econ_min_per_second > naive.derived_f_econ_min_per_second
+
+
+def test_the_ev_basis_prevents_counting_the_fill_twice():
+    """EV_PER_TRIGGER inclut déjà la probabilité d'exécution ; la remultiplier serait un
+    double comptage."""
+    per_trigger = thresholds(expected_net_per_occurrence=0.10, fill_probability=0.5,
+                             ev_basis=EvBasis.EV_PER_TRIGGER)
+    per_fill = thresholds(expected_net_per_occurrence=0.10, fill_probability=0.5,
+                          ev_basis=EvBasis.EV_PER_FILLED_EXECUTION)
+    f = 10 / 86_400
+    assert per_trigger.implied_contribution_per_second(f) > (
+        per_fill.implied_contribution_per_second(f))
+
+
+def test_an_untyped_ev_basis_is_refused():
+    with pytest.raises(CampaignError, match="base de l'espérance"):
+        thresholds(ev_basis=None)
+
+
+def test_the_capital_cost_enters_the_relation():
+    """Q1 le mentionne : sans lui, relation documentée et relation calculée diffèrent."""
+    without = thresholds()
+    with_capital = thresholds(capital_opportunity_cost_per_second=0.5 / 86_400)
+    f = 5 / 86_400
+    assert with_capital.implied_contribution_per_second(f) < (
+        without.implied_contribution_per_second(f))
+    assert with_capital.derived_f_econ_min_per_second > (
+        without.derived_f_econ_min_per_second)
 
 
 def test_statistical_and_economic_frequency_floors_are_not_confused():
     """Le plancher effectif est le plus contraignant des deux, jamais leur mélange."""
-    stat_binding = thresholds(f_stat_min_per_second=10 / 86_400)
-    assert stat_binding.f_min_per_second == pytest.approx(10 / 86_400)
+    stat_binding = thresholds(f_stat_min_per_second=100 / 86_400)
+    assert stat_binding.f_min_per_second == pytest.approx(100 / 86_400)
 
-    econ_binding = thresholds(f_stat_min_per_second=1 / 86_400)
+    econ_binding = thresholds(f_stat_min_per_second=1 / 86_400,
+                              expected_net_per_occurrence=0.20, fill_probability=1.0)
     assert econ_binding.f_min_per_second == pytest.approx(3 / 86_400)
 
 
@@ -1421,12 +1629,14 @@ def test_redundancy_is_derived_from_the_economic_model_not_a_tolerance():
     """Les trois grandeurs ont des unités et des rôles différents : `f_min` en 1/s ne se
     compare pas à `J_min` en $/s. La redondance se dérive de `J = f × EV × P(fill)`."""
     redundant = thresholds(delta_meu=0.20, j_min_per_second=0.60 / 86_400,
-                           f_stat_min_per_second=1 / 86_400)
+                           f_stat_min_per_second=1 / 86_400,
+                           expected_net_per_occurrence=0.20, fill_probability=1.0)
     report = redundant.redundancy_report()
     assert report is not None
     assert "reconstruisent J_min" in report
 
-    independent = thresholds(f_stat_min_per_second=30 / 86_400)
+    independent = thresholds(f_stat_min_per_second=30 / 86_400,
+                             expected_net_per_occurrence=0.20, fill_probability=1.0)
     assert "indépendantes" in independent.redundancy_report()
 
 
@@ -1435,7 +1645,8 @@ def test_the_economic_relation_accounts_for_fills_and_fixed_costs():
     occurrence."""
     plain = thresholds()
     realistic = thresholds(fill_probability=0.6, fixed_cost_per_second=0.1 / 86_400,
-                           expected_net_per_occurrence=0.35)
+                           expected_net_per_occurrence=0.35,
+                           capital_opportunity_cost_per_second=0.05 / 86_400)
     f = 3 / 86_400
     assert realistic.implied_contribution_per_second(f) < plain.implied_contribution_per_second(f)
 

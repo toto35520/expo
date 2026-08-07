@@ -19,9 +19,20 @@ Il est :
 > **maximiser la valeur nette ajustée du risque**, sous contraintes de qualité par trade,
 > avec `NO TRADE` comme décision de première classe.
 
-`NO TRADE` n'est pas l'absence de décision. C'est une décision qui gagne quand elle est
-juste, et le système doit pouvoir la produire massivement sans que cela compte comme un
-échec.
+`NO TRADE` n'est pas l'absence de décision. Le système doit pouvoir la produire massivement
+sans que cela compte comme un échec.
+
+**Mais elle ne reçoit aucune récompense positive.** La convention est :
+
+```
+U(NO TRADE) = 0                    avant coûts fixes du système
+U(TRADE)    = PnL_net − pénalité de risque
+```
+
+Sa valeur vient de l'**évitement d'espérances négatives**, pas de l'abstention elle-même.
+Récompenser le fait de s'abstenir rendrait « toujours `NO TRADE` » optimal — ce qui est sûr
+et économiquement inutile. Avec cette convention, s'abstenir est sûr mais insuffisant : le
+système doit dépasser `J_min > 0` sur l'horizon d'évaluation pour justifier son existence.
 
 ## 2. Ce que cette règle permet de refuser
 
@@ -40,6 +51,21 @@ et en risque de modèle.
 C'est aussi ce qui protège le projet contre sa propre mécanique de phase 0 : un moteur
 rare et sélectif ne doit jamais être éliminé pour sa rareté, seulement pour son absence de
 valeur.
+
+## 2 bis. Ce que le rapport doit démontrer
+
+Puisque l'objectif est *peu de trades, mais excellents*, l'intuition doit être **testée**, pas
+inscrite. Le rapport final publie une courbe
+
+```
+Qualité(Couverture)
+```
+
+où la couverture est la part d'opportunités que le système accepte de trader, contre :
+espérance nette conditionnelle, perte maximale, calibration, R moyen, risque de queue.
+
+Le système doit **démontrer** que réduire la couverture augmente réellement la qualité. Sans
+cette courbe, « 2 excellents trades valent mieux que 17 médiocres » resterait une philosophie.
 
 ---
 
@@ -81,8 +107,14 @@ l'inversion que ce document existe pour empêcher.
 ### `f_econ_min` — dérivée, jamais fixée
 
 ```
-J_implied(f) = f × EV_net/occurrence × P(fill) − coûts_fixes
+J(f) = f · P(fill) · EV_filled − C_fixes − C_capital
+
+f_econ_min = (J_min + C_fixes + C_capital) / (P(fill) · EV_filled)
 ```
+
+La base de l'espérance est **typée** : sous `EV_PER_TRIGGER` la probabilité d'exécution est
+déjà incluse et ne doit pas être remultipliée ; sous `EV_PER_FILLED_EXECUTION` elle reste à
+appliquer. Les mélanger compterait le fill deux fois.
 
 La fréquence économique se lit dans cette relation. La fixer indépendamment reviendrait à
 déclarer trois fois la même chose et à ne plus savoir laquelle mord.

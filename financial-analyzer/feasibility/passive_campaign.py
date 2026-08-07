@@ -24,6 +24,7 @@ import hashlib
 import json
 import math
 from collections.abc import Iterable, Sequence
+from typing import Protocol
 from dataclasses import dataclass, field, replace
 from enum import Enum
 
@@ -536,6 +537,15 @@ class ProtocolFreeze:
         return {k: tuple(v) for k, v in out.items()}
 
 
+class EvBasis(str, Enum):
+    """Base de l'espérance nette — typée pour empêcher un double comptage du fill."""
+
+    #: Par déclenchement : la probabilité d'exécution est **déjà incluse**.
+    EV_PER_TRIGGER = "EV_PER_TRIGGER"
+    #: Par exécution effective : la probabilité d'exécution reste à appliquer.
+    EV_PER_FILLED_EXECUTION = "EV_PER_FILLED_EXECUTION"
+
+
 class EconomicTarget(str, Enum):
     """Grandeur qui **pilote** les seuils de Q64 ; les autres en dérivent.
 
@@ -584,11 +594,27 @@ class EconomicThresholds:
             )
         if self.delta_meu <= 0:
             raise CampaignError("le surplus minimal par occurrence doit être positif")
+        if self.ev_basis is None:
+            raise CampaignError(
+                "La base de l'espérance doit être typée : EV_PER_TRIGGER inclut déjà la "
+                "probabilité d'exécution, EV_PER_FILLED_EXECUTION non. Les mélanger "
+                "compterait le fill deux fois."
+            )
 
     @property
     def derived_f_econ_min_per_second(self) -> float:
-        """`J_min / δ_MEU` — la fréquence qu'implique la cible temporelle."""
-        return self.j_min_per_second / self.delta_meu
+        """Fréquence qu'implique la cible temporelle, par la relation **complète** :
+
+            f_econ_min = (J_min + C_fixes + C_capital) / (P(fill) · EV_filled)
+
+        `J_min / δ_MEU` traitait `δ_MEU` comme l'espérance centrale, alors que Q1 vient
+        de le déclarer plancher de matérialité — et ignorait exécution, coûts fixes et
+        coût du capital.
+        """
+        per_occurrence = self._value_per_occurrence
+        if per_occurrence <= 0:
+            return float("inf")
+        return (self.j_min_per_second + self._costs_per_second) / per_occurrence
 
     @property
     def f_min_per_second(self) -> float:
@@ -599,26 +625,38 @@ class EconomicThresholds:
         )
         return max(econ, self.f_stat_min_per_second)
 
-    #: Espérance nette par occurrence attendue du système, si elle est estimée.
-    #: `δ_MEU` en est le **plancher de matérialité**, pas la valeur centrale.
+    #: Espérance nette par occurrence, avec sa **base** déclarée.
     expected_net_per_occurrence: float | None = None
-    #: Probabilité d'exécution effective, capital immobilisé, coûts fixes : ce qui
-    #: sépare une contribution théorique d'une contribution réalisée.
+    ev_basis: "EvBasis" = None  # type: ignore[assignment]
     fill_probability: float = 1.0
     fixed_cost_per_second: float = 0.0
+    #: Coût d'opportunité du capital immobilisé — il court même sans position, et son
+    #: absence rendait la relation calculée différente de la relation documentée.
+    capital_opportunity_cost_per_second: float = 0.0
 
-    def implied_contribution_per_second(self, frequency_per_second: float) -> float:
-        """`J_implied = f × EV_net/occurrence × P(fill) − coûts fixes`.
+    @property
+    def _costs_per_second(self) -> float:
+        return self.fixed_cost_per_second + self.capital_opportunity_cost_per_second
 
-        C'est la relation économique qui relie les trois grandeurs. Elle enrichit
-        l'identité naïve `f × EV` de ce qui la rend fausse en pratique : une occurrence
-        non exécutée ne contribue pas, et les coûts fixes courent sans occurrence.
+    @property
+    def _value_per_occurrence(self) -> float:
+        """Contribution d'une occurrence, la probabilité d'exécution comptée **une fois**.
+
+        Sous `EV_PER_TRIGGER` elle est déjà incluse dans l'espérance ; la remultiplier
+        la compterait deux fois. Sous `EV_PER_FILLED_EXECUTION` elle doit être appliquée.
+        C'est précisément pour empêcher ce double comptage que la base est typée.
         """
         ev = (
             self.expected_net_per_occurrence
             if self.expected_net_per_occurrence is not None else self.delta_meu
         )
-        return frequency_per_second * ev * self.fill_probability - self.fixed_cost_per_second
+        if self.ev_basis is EvBasis.EV_PER_TRIGGER:
+            return ev
+        return ev * self.fill_probability
+
+    def implied_contribution_per_second(self, frequency_per_second: float) -> float:
+        """`J(f) = f · valeur_par_occurrence − coûts_fixes − coût_du_capital`."""
+        return frequency_per_second * self._value_per_occurrence - self._costs_per_second
 
     def redundancy_report(self) -> str | None:
         """Dit **laquelle** des grandeurs contraint réellement, via le modèle économique.
@@ -1193,52 +1231,69 @@ class OpportunitySet:
         """
         return max(1, self.max_concurrent_positions * int(self.span_ns // self.occupancy_ns))
 
-    def select(self, surplus: np.ndarray) -> np.ndarray:
-        """Indices retenus par l'oracle sous la politique déclarée.
+    def admissible(self) -> np.ndarray:
+        """Opportunités **économiquement admissibles** — sans jamais voir le futur.
 
-        `DISJOINT_WINDOWS` résout exactement l'ordonnancement pondéré d'intervalles :
-        l'oracle choisit le meilleur ensemble sans recouvrement. C'est le plus
-        conservateur et le plus simple à défendre.
+        Répond à : *quelles décisions auraient physiquement pu être envisagées ?* Le
+        dénominateur de toute fréquence vient d'ici. Le faire dépendre du surplus
+        rendrait la sélection outcome-dependent : on choisirait les observations d'après
+        ce qu'elles rapportent, puis on diviserait par leur nombre.
         """
-        # La sélection définit les opportunités **économiquement admissibles**, et rien
-        # d'autre. Elle ne revendique aucune indépendance statistique : deux fenêtres
-        # disjointes peuvent partager régime, séance, tendance, événement macro,
-        # volatilité et état de liquidité.
-        #
-        #     admissibilité économique  ≠  modèle de variance
-        #
-        # L'indépendance relève de `ClusterQualification` et du choix de borne.
-        # Elle n'écarte pas non plus les opportunités non rentables : « zéro rentable
-        # sur N admissibles » a besoin de son dénominateur.
         if self.overlap_policy is OverlapPolicy.CAPACITY_CONSTRAINED_ORACLE:
-            best = np.argsort(-surplus)
-            return np.sort(best[: self.capacity])
+            return np.arange(self.starts_ns.size, dtype=int)
 
-        order = np.argsort(self.starts_ns)
-        ends = self.starts_ns[order] + self.occupancy_ns
-        starts = self.starts_ns[order]
-        weights = np.maximum(surplus[order], 0.0)
+        # Sélection d'activités classique : la fenêtre qui se libère le plus tôt, sans
+        # aucune référence à sa valeur. Maximise le nombre de créneaux disjoints.
+        order = np.argsort(self.starts_ns, kind="stable")
+        kept: list[int] = []
+        free_at = -(2**62)
+        for i in order:
+            if self.starts_ns[i] >= free_at:
+                kept.append(int(i))
+                free_at = self.starts_ns[i] + self.occupancy_ns
+        return np.array(sorted(kept), dtype=int)
 
-        # Ordonnancement pondéré d'intervalles : best[k] = valeur optimale des k premiers.
-        predecessor = np.searchsorted(ends, starts, side="right") - 1
-        best = np.zeros(starts.size + 1)
-        for k in range(1, starts.size + 1):
-            skip = best[k - 1]
-            take = weights[k - 1] + best[predecessor[k - 1] + 1]
-            best[k] = max(skip, take)
+    def concurrency_respected(self, chosen: np.ndarray) -> bool:
+        """Vérifie `∀t : N_ouvertes(t) ≤ K` — à tout instant, pas en moyenne.
 
-        chosen: list[int] = []
-        k = starts.size
-        while k > 0:
-            take = weights[k - 1] + best[predecessor[k - 1] + 1]
-            # Égalité tranchée en faveur de la prise : avec des surplus tous nuls ou
-            # négatifs, l'ensemble retenu reste maximal en nombre de créneaux.
-            if take >= best[k - 1]:
-                chosen.append(int(order[k - 1]))
-                k = predecessor[k - 1] + 1
+        Un plafond global sur le nombre total n'est pas une contrainte de concurrence :
+        dix positions simultanées peuvent respecter un total de dix et violer une limite
+        de deux.
+        """
+        if chosen.size == 0:
+            return True
+        starts = np.sort(self.starts_ns[chosen])
+        ends = np.sort(self.starts_ns[chosen] + self.occupancy_ns)
+        i = j = open_now = 0
+        while i < starts.size:
+            if starts[i] < ends[j]:
+                open_now += 1
+                if open_now > self.max_concurrent_positions:
+                    return False
+                i += 1
             else:
-                k -= 1
-        return np.array(sorted(chosen), dtype=int)
+                open_now -= 1
+                j += 1
+        return True
+
+    def value_upper_bound(self, surplus: np.ndarray, threshold: float = 0.0) -> float:
+        """Majorant de la valeur oracle sous contrainte de capacité.
+
+        C'est une **relaxation**, revendiquée comme telle : l'ensemble des `m` plus gros
+        surplus peut violer la concurrence instantanée, mais toute planification faisable
+        contient au plus `m` positions, donc sa valeur est au plus la somme des `m` plus
+        gros. Un majorant qui relâche une contrainte reste un majorant — au contraire
+        d'une planification gloutonne, qui minorerait et ferait sur-exclure.
+        """
+        eligible = surplus[surplus > threshold]
+        if eligible.size == 0:
+            return 0.0
+        top = np.sort(eligible)[::-1][: self.capacity]
+        return float(top.sum())
+
+    def profitable_count_upper_bound(self, surplus: np.ndarray, threshold: float) -> int:
+        """Majorant du nombre d'opportunités rentables réalisables."""
+        return int(min(self.capacity, int((surplus > threshold).sum())))
 
 
 # ------------------------------------------------------------- Q63 — coût plancher
@@ -1348,6 +1403,9 @@ class OracleCapture:
     span_ns: int
     clusters: int
     exhausted_fraction: float
+    #: Épisode d'appartenance de chaque opportunité. Sans lui, aucune statistique ne peut
+    #: être calculée dans l'unité « épisode » qu'une borne robuste revendique.
+    episode_ids: np.ndarray = field(default_factory=lambda: np.array([], dtype=np.int64))
 
     @property
     def quantiles(self) -> Quantiles:
@@ -1395,10 +1453,11 @@ def oracle_capturable(
         entry = prices[i_act]
         gross.append(float(max(window.max() - entry, entry - window.min())))
 
-    clusters = (
-        int(np.unique(cluster_ids[event_starts]).size) if cluster_ids is not None
-        else len(gross)
+    episodes = (
+        cluster_ids[event_starts] if cluster_ids is not None
+        else np.arange(len(gross), dtype=np.int64)
     )
+    clusters = int(np.unique(episodes).size)
     span = int(timestamps_ns[-1] - timestamps_ns[0]) if timestamps_ns.size > 1 else 0
     return OracleCapture(
         starts_ns=timestamps_ns[event_starts],
@@ -1408,6 +1467,7 @@ def oracle_capturable(
         span_ns=span,
         clusters=clusters,
         exhausted_fraction=exhausted / len(gross),
+        episode_ids=np.asarray(episodes, dtype=np.int64),
     )
 
 
@@ -1457,7 +1517,12 @@ class OracleAssessment:
     profitable_frequency: float
     profitable_frequency_upper: float
     max_surplus: float
-    #: Valeur économique maximale par unité de temps, sous plafond de capacité.
+    #: Capacité **brute** : tout surplus positif. Diagnostic scientifique.
+    raw_capacity_value_per_second: float
+    #: Capacité **économiquement admissible** : seuls les surplus au-dessus de δ_MEU.
+    #: C'est elle, et elle seule, qui se relie à Q1 et Q64 — un système ne doit pas
+    #: pouvoir atteindre `J_min` avec des trades que le plancher de matérialité interdit
+    #: individuellement.
     capacity_value_per_second: float
     capacity: int
     cost_floor: float
@@ -1493,7 +1558,7 @@ def assess_oracle(
     delta_meu: float,
     alpha: float = 0.05,
     independence_proven: bool = False,
-    dependence_method: DependenceMethod | None = None,
+    estimator: DependenceBoundEstimator | None = None,
 ) -> OracleAssessment:
     """Surplus, fréquence et capacité économique de l'oracle (§3-4).
 
@@ -1503,14 +1568,20 @@ def assess_oracle(
     mouvement compterait autant de fois qu'il a produit d'horodatages.
     """
     surplus = capture.gross - cost_floor.value
-    selected = opportunities.select(surplus)
+    # L'ensemble admissible ne regarde jamais le surplus : c'est lui qui fournit le
+    # dénominateur, et le faire dépendre du futur rendrait la fréquence circulaire.
+    selected = opportunities.admissible()
     kept = surplus[selected] if selected.size else np.array([])
 
-    profitable = int((kept > delta_meu).sum())
+    profitable_flags = kept > delta_meu
+    profitable = opportunities.profitable_count_upper_bound(kept, delta_meu)
     n = int(selected.size)
     rate = profitable / n if n else 0.0
-    bound = rarity_bound(profitable, n, capture.clusters, alpha,
-                         independence_proven, dependence_method)
+    bound = rarity_bound(
+        profitable_flags.astype(float),
+        capture.episode_ids[selected] if capture.episode_ids.size else np.array([]),
+        alpha, independence_proven, estimator,
+    )
 
     span_s = capture.span_ns / NS_PER_SECOND if capture.span_ns else float("nan")
     frequency = profitable / span_s if span_s and span_s > 0 else float("nan")
@@ -1520,7 +1591,8 @@ def assess_oracle(
         bound.upper * n / span_s if span_s and span_s > 0 else float("nan")
     )
 
-    value = float(kept[kept > 0.0].sum()) if kept.size else 0.0
+    raw_value = opportunities.value_upper_bound(surplus, threshold=0.0)
+    admissible_value = opportunities.value_upper_bound(surplus, threshold=delta_meu)
     return OracleAssessment(
         opportunities=int(capture.gross.size),
         selected=n,
@@ -1530,7 +1602,10 @@ def assess_oracle(
         profitable_frequency=frequency,
         profitable_frequency_upper=frequency_upper,
         max_surplus=float(surplus.max()) if surplus.size else float("nan"),
-        capacity_value_per_second=value / span_s if span_s and span_s > 0 else float("nan"),
+        raw_capacity_value_per_second=(
+            raw_value / span_s if span_s and span_s > 0 else float("nan")),
+        capacity_value_per_second=(
+            admissible_value / span_s if span_s and span_s > 0 else float("nan")),
         capacity=opportunities.capacity,
         cost_floor=cost_floor.value,
         delta_meu=delta_meu,
@@ -1546,21 +1621,16 @@ def assess_oracle(
 
 @dataclass(frozen=True)
 class DependenceMethod:
-    """Méthode traitant explicitement la dépendance, **déclarée avant usage**.
+    """**Provenance** d'une méthode de dépendance — métadonnée, pas calcul.
 
-    Passer de 1 994 opportunités à 60 épisodes réduit la fausse précision, mais ne rend
-    pas les 60 épisodes indépendants : ils peuvent appartenir aux mêmes journées, régimes,
-    événements macro ou états de charge. Appliquer Clopper-Pearson à `N = 60` reste alors
-    une hypothèse de Bernoulli — plus modeste, mais toujours fausse.
+    Elle documente ce qui a été exécuté. Elle ne l'exécute pas, et ne suffit donc jamais
+    à obtenir `DEPENDENCE_ROBUST_BOUND` :
 
-    `FIXED_HORIZON` corrige l'arrêt optionnel. Il ne corrige **pas** la dépendance entre
-    observations : ce sont deux problèmes distincts.
+        métadonnée de méthode  ≠  méthode exécutée
     """
 
     name: str
-    #: Ce qui est supposé sur la dépendance, et pourquoi c'est défendable ici.
     dependence_argument: str
-    #: Longueur de bloc, condition de mélange, ou paramètre équivalent de la méthode.
     parameter: str
     reference: str
 
@@ -1573,32 +1643,90 @@ class DependenceMethod:
                 )
 
 
+class DependenceBoundEstimator(Protocol):
+    """Estimateur qui **calcule** réellement une borne sous dépendance."""
+
+    version: str
+
+    def describe(self) -> DependenceMethod: ...
+
+    def upper_bound(self, episode_successes: np.ndarray, alpha: float) -> float:
+        """Borne supérieure du taux d'épisodes porteurs, sous la dépendance traitée."""
+        ...
+
+
+@dataclass(frozen=True)
+class MovingBlockBootstrapBound:
+    """Bootstrap par blocs mobiles sur la série **ordonnée** d'indicateurs d'épisode.
+
+    Rééchantillonner des blocs de `block_length` épisodes consécutifs conserve la
+    dépendance à l'intérieur du bloc, au lieu de la supposer absente. La borne est le
+    quantile `1 − α` des taux rééchantillonnés — plus large qu'un intervalle de Bernoulli
+    dès que la dépendance est réelle, ce qui est exactement l'effet recherché.
+
+    La longueur de bloc doit dépasser la persistance mesurée ; elle est déclarée, pas
+    ajustée après lecture du résultat.
+    """
+
+    block_length: int
+    dependence_argument: str
+    reference: str
+    draws: int = 2_000
+    seed: int = 0
+    version: str = "MBB_1.0"
+
+    def __post_init__(self) -> None:
+        if self.block_length < 1:
+            raise CampaignError("la longueur de bloc doit être au moins 1")
+        if not self.dependence_argument.strip() or not self.reference.strip():
+            raise CampaignError(
+                "Un estimateur sans argument de dépendance ni référence redevient une "
+                "hypothèse implicite."
+            )
+
+    def describe(self) -> DependenceMethod:
+        return DependenceMethod(
+            name="bootstrap par blocs mobiles",
+            dependence_argument=self.dependence_argument,
+            parameter=f"longueur de bloc {self.block_length} épisodes",
+            reference=self.reference,
+        )
+
+    def upper_bound(self, episode_successes: np.ndarray, alpha: float) -> float:
+        n = episode_successes.size
+        if n < 2:
+            return 1.0
+        b = min(self.block_length, n)
+        rng = np.random.default_rng(self.seed)
+        n_blocks = int(np.ceil(n / b))
+        starts = rng.integers(0, n - b + 1, size=(self.draws, n_blocks))
+        offsets = np.arange(b)
+        idx = (starts[:, :, None] + offsets[None, None, :]).reshape(self.draws, -1)[:, :n]
+        rates = episode_successes[idx].mean(axis=1)
+        # Le quantile seul sous-estime lorsque aucun succès n'apparaît : on conserve le
+        # plancher de Clopper-Pearson sur le nombre **effectif** de blocs indépendants.
+        floor = clopper_pearson_upper(int(episode_successes.sum()), n_blocks, alpha)
+        return float(max(np.quantile(rates, 1.0 - alpha), floor))
+
+
 class BoundQuality(str, Enum):
     """Ce qu'une borne de rareté vaut réellement.
 
-    `disjoint ≠ indépendant`, et `regroupé ≠ indépendant` non plus. La formule de
-    Clopper-Pearson est exacte pour des essais de Bernoulli indépendants de probabilité
-    commune ; ni les opportunités brutes ni les épisodes ne le sont sans argument.
+    `disjoint ≠ indépendant`, et `regroupé ≠ indépendant` non plus.
     """
 
     #: Calculée sur le nombre brut d'opportunités. **Diagnostic seulement.**
     RAW_EVENT_BOUND = "RAW_EVENT_BOUND"
-    #: Comptage au niveau des épisodes, sans méthode traitant la dépendance. C'est une
-    #: **observation** — « 0 survivant sur 60 épisodes » — et non une borne sur la
-    #: population future.
+    #: Comptage au niveau des épisodes, sans estimateur traitant la dépendance. C'est une
+    #: **observation**, pas une borne sur la population future.
     EPISODE_OBSERVATION = "EPISODE_OBSERVATION"
-    #: Autorisée seulement si les hypothèses de Bernoulli sont réellement défendables.
+    #: Hypothèses de Bernoulli réellement défendables.
     QUALIFIED_INDEPENDENT_BOUND = "QUALIFIED_INDEPENDENT_BOUND"
-    #: Obtenue par une méthode dont la dépendance est explicitement prise en compte.
+    #: Produite par un estimateur **effectivement exécuté** sous dépendance.
     DEPENDENCE_ROBUST_BOUND = "DEPENDENCE_ROBUST_BOUND"
 
     @property
     def claims_population(self) -> bool:
-        """Seules ces deux qualités affirment quelque chose sur la population future.
-
-        Une observation d'épisodes décrit l'échantillon. Elle ne se convertit pas en
-        probabilité future sans méthode déclarée.
-        """
         return self in (
             BoundQuality.QUALIFIED_INDEPENDENT_BOUND,
             BoundQuality.DEPENDENCE_ROBUST_BOUND,
@@ -1620,6 +1748,7 @@ class RarityBound:
     alpha: float
     rationale: str = ""
     method: DependenceMethod | None = None
+    estimator_version: str = ""
 
     @property
     def is_population_claim(self) -> bool:
@@ -1628,61 +1757,148 @@ class RarityBound:
     def describe(self) -> str:
         if self.is_population_claim:
             return (
-                f"taux ≤ {self.upper:.2%} ({self.quality.value}, {self.trials} unités)"
+                f"taux ≤ {self.upper:.2%} ({self.quality.value}, {self.trials} unités"
+                + (f", {self.estimator_version}" if self.estimator_version else "") + ")"
             )
         return (
-            f"{self.successes} survivant(s) sur {self.trials} épisodes observés — "
+            f"{self.successes} porteur(s) sur {self.trials} épisodes observés — "
             "observation, sans borne sur la population future"
         )
 
 
+def episode_successes(
+    episode_ids: np.ndarray, profitable: np.ndarray
+) -> tuple[np.ndarray, int]:
+    """Indicateur **par épisode** : l'épisode porte-t-il au moins une opportunité ?
+
+        Y_g = 1[ ∃ i ∈ g : S_i > δ_MEU ]
+
+    Sept opportunités rentables peuvent appartenir au même épisode : le comptage doit se
+    faire dans l'unité que la borne revendique, jamais par `min(succès, épisodes)`.
+    """
+    if episode_ids.size == 0:
+        return np.array([], dtype=float), 0
+    order = np.argsort(episode_ids, kind="stable")
+    ids, flags = episode_ids[order], profitable[order]
+    unique, starts = np.unique(ids, return_index=True)
+    carried = np.array(
+        [bool(flags[a:b].any()) for a, b in zip(starts, list(starts[1:]) + [ids.size])],
+        dtype=float,
+    )
+    return carried, unique.size
+
+
 def rarity_bound(
-    successes: int,
-    raw_opportunities: int,
-    independent_episodes: int,
+    profitable: np.ndarray,
+    episode_ids: np.ndarray,
     alpha: float,
     independence_proven: bool = False,
-    method: DependenceMethod | None = None,
+    estimator: DependenceBoundEstimator | None = None,
 ) -> RarityBound:
-    """Borne de rareté, dégradée honnêtement selon ce qui est réellement défendable.
+    """Borne de rareté, dégradée selon ce qui est **réellement exécuté**.
 
     Trois marches, et une seule sépare l'observation de la revendication :
 
-    - indépendance **démontrée** → Clopper-Pearson sur les opportunités ;
-    - méthode de dépendance **déclarée** → borne robuste sur les épisodes ;
-    - ni l'une ni l'autre → **observation d'épisodes**, publiée telle quelle.
+    - indépendance démontrée → Clopper-Pearson sur les opportunités ;
+    - estimateur de dépendance **exécuté** → sa borne, sur les épisodes ;
+    - ni l'une ni l'autre → observation d'épisodes, publiée telle quelle.
     """
+    n_opp = int(profitable.size)
+    k_opp = int(profitable.sum())
+
     if independence_proven:
         return RarityBound(
-            clopper_pearson_upper(successes, raw_opportunities, alpha),
-            BoundQuality.QUALIFIED_INDEPENDENT_BOUND,
-            raw_opportunities, successes, alpha,
+            clopper_pearson_upper(k_opp, n_opp, alpha),
+            BoundQuality.QUALIFIED_INDEPENDENT_BOUND, n_opp, k_opp, alpha,
             "indépendance des opportunités démontrée",
         )
-    if method is not None and independent_episodes >= 2:
-        capped = min(successes, independent_episodes)
+
+    carried, n_episodes = episode_successes(episode_ids, profitable)
+    k_episodes = int(carried.sum())
+
+    if estimator is not None and n_episodes >= 2:
+        method = estimator.describe()
         return RarityBound(
-            clopper_pearson_upper(capped, independent_episodes, alpha),
-            BoundQuality.DEPENDENCE_ROBUST_BOUND,
-            independent_episodes, capped, alpha,
+            estimator.upper_bound(carried, alpha),
+            BoundQuality.DEPENDENCE_ROBUST_BOUND, n_episodes, k_episodes, alpha,
             f"dépendance traitée par {method.name} ({method.parameter})",
-            method,
+            method, estimator.version,
         )
-    if independent_episodes >= 2:
-        capped = min(successes, independent_episodes)
+    if n_episodes >= 2:
         return RarityBound(
-            clopper_pearson_upper(capped, independent_episodes, alpha),
-            BoundQuality.EPISODE_OBSERVATION,
-            independent_episodes, capped, alpha,
+            clopper_pearson_upper(k_episodes, n_episodes, alpha),
+            BoundQuality.EPISODE_OBSERVATION, n_episodes, k_episodes, alpha,
             "épisodes possiblement liés par journée, régime, macro ou charge — "
-            "aucune méthode de dépendance déclarée",
+            "aucun estimateur de dépendance exécuté",
         )
     return RarityBound(
-        clopper_pearson_upper(successes, raw_opportunities, alpha),
-        BoundQuality.RAW_EVENT_BOUND,
-        raw_opportunities, successes, alpha,
-        "aucun épisode indépendant identifié — diagnostic seulement",
+        clopper_pearson_upper(k_opp, n_opp, alpha),
+        BoundQuality.RAW_EVENT_BOUND, n_opp, k_opp, alpha,
+        "aucun épisode identifié — diagnostic seulement",
     )
+
+
+class BoundDerivationType(str, Enum):
+    """Comment la borne supérieure du surplus oracle est obtenue."""
+
+    #: L'horizon est inférieur à la latence minimale certaine : rien n'est capturable.
+    HORIZON_BELOW_MINIMUM_LATENCY = "HORIZON_BELOW_MINIMUM_LATENCY"
+    #: Déplacement maximal possible sur l'horizon résiduel, moins le plancher de coûts.
+    MAX_DISPLACEMENT_MINUS_FLOOR = "MAX_DISPLACEMENT_MINUS_FLOOR"
+    #: Limite contractuelle rendant l'opération impossible.
+    CONTRACTUAL_LIMIT = "CONTRACTUAL_LIMIT"
+
+
+@dataclass(frozen=True)
+class BoundInput:
+    """Une entrée nommée de la dérivation, avec sa provenance."""
+
+    name: str
+    value: float
+    unit: str
+    source: str
+
+    def __post_init__(self) -> None:
+        if not self.source.strip():
+            raise CampaignError(
+                f"L'entrée « {self.name} » n'a pas de provenance : la dérivation ne "
+                "serait pas vérifiable."
+            )
+
+
+@dataclass(frozen=True)
+class BoundDerivation:
+    """Dérivation **exécutable** de la borne supérieure du surplus oracle.
+
+    Le calcul est refait à partir des entrées déclarées, de sorte qu'un appelant ne peut
+    pas se contenter d'affirmer un chiffre favorable accompagné d'une documentation
+    convaincante.
+    """
+
+    derivation_type: BoundDerivationType
+    inputs: tuple[BoundInput, ...]
+    calculator_version: str
+
+    def _get(self, name: str) -> float:
+        for i in self.inputs:
+            if i.name == name:
+                return i.value
+        raise CampaignError(
+            f"La dérivation {self.derivation_type.value} exige une entrée « {name} »."
+        )
+
+    def recompute(self) -> float:
+        """Recalcule la borne. Toute entrée manquante lève, plutôt que de supposer."""
+        t = self.derivation_type
+        if t is BoundDerivationType.HORIZON_BELOW_MINIMUM_LATENCY:
+            horizon = self._get("horizon_ns")
+            latency = self._get("minimum_certain_latency_ns")
+            # Au moment où l'on pourrait agir, la fenêtre est close : rien n'est
+            # capturable, donc le surplus maximal est le plancher de coûts, négatif.
+            return 0.0 if horizon > latency else -self._get("cost_floor")
+        if t is BoundDerivationType.MAX_DISPLACEMENT_MINUS_FLOOR:
+            return self._get("max_displacement") - self._get("cost_floor")
+        return -self._get("cost_floor")
 
 
 @dataclass(frozen=True)
@@ -1706,13 +1922,22 @@ class ImpossibilityCertificate:
     domain: str
     #: Hypothèses sous lesquelles la démonstration tient.
     hypotheses: tuple[str, ...]
-    #: Borne supérieure **calculée** du surplus oracle sur Ω.
-    computed_upper_bound: float
+    #: Dérivation **exécutable** de la borne. Le certificat ne reçoit jamais la valeur
+    #: normative : il la recalcule.
+    derivation: "BoundDerivation"
     #: Données et constantes utilisées, avec leur provenance.
     constants_used: tuple[tuple[str, str], ...]
     proof_version: str
     declared_by: str
     unit: str = "USD/oz"
+
+    @property
+    def computed_upper_bound(self) -> float:
+        """Recalculée à chaque lecture — jamais fournie par l'appelant.
+
+            preuve recalculable  ≠  valeur fournie + documentation
+        """
+        return self.derivation.recompute()
 
     def __post_init__(self) -> None:
         missing = [
@@ -1747,8 +1972,9 @@ class ImpossibilityCertificate:
         return (
             f"U_oracle(Ω) = {self.computed_upper_bound:.4f} {self.unit} {relation} "
             f"δ_MEU = {delta_meu:.4f} {self.unit} · {self.property_proven} sur {self.domain} "
-            f"· hypothèses : {'; '.join(self.hypotheses)} · démonstration "
-            f"{self.proof_version} ({self.declared_by})"
+            f"· hypothèses : {'; '.join(self.hypotheses)} · dérivation "
+            f"{self.derivation.derivation_type.value}/{self.derivation.calculator_version} "
+            f"· démonstration {self.proof_version} ({self.declared_by})"
         )
 
 
@@ -1810,8 +2036,7 @@ def oracle_verdict(
     assessment: OracleAssessment,
     minimum_frequency_per_second: float,
     minimum_contribution_per_second: float,
-    min_clusters: int = 20,
-    capacity_safety_factor: float = 2.0,
+    min_clusters: int,
     certificate: ImpossibilityCertificate | None = None,
     surplus_bound: SurplusUpperBound | None = None,
 ) -> tuple[OracleVerdict, str]:
@@ -1853,29 +2078,18 @@ def oracle_verdict(
             f"{bound.quality.value} sur {bound.trials} unités",
         )
 
-    # Niveau C — deux voies.
+    # Niveau C — une seule voie normative.
     #
-    # Avec au moins un survivant observé, la valeur mesurée a un sens. Sans aucun, elle
-    # vaut zéro par absence d'observation et conclure là referait l'erreur du niveau A —
-    # **sauf** si une borne physique du gain permet de majorer ce que la queue non
-    # observée pourrait rapporter :
+    # La capacité **observée**, même multipliée par un facteur de sécurité, ne démontre
+    # rien sur la capacité future : un facteur 2 n'est ni une borne statistique, ni une
+    # borne physique, ni une borne de population. C'est la même famille d'erreur que
+    # « je n'ai pas observé davantage, donc davantage n'existe pas ». Elle reste publiée
+    # comme diagnostic et n'exclut jamais.
+    #
+    # Seule une borne de population sur le taux, combinée à une borne physique du gain,
+    # majore ce que la queue non observée pourrait rapporter :
     #
     #     J_oracle ≤ λ_opp · p_U · S_U
-    #
-    # extrêmement favorable à l'oracle, donc conclusive si elle passe quand même dessous.
-    if (
-        assessment.profitable > 0
-        and assessment.capacity_value_per_second * capacity_safety_factor
-        < minimum_contribution_per_second
-    ):
-        return (
-            OracleVerdict.ORACLE_ECONOMIC_CAPACITY_NON_VIABLE,
-            f"capacité économique oracle {assessment.capacity_value_per_second * 86_400:.2f}"
-            f"/jour (marge ×{capacity_safety_factor:g}) sous la contribution requise "
-            f"{minimum_contribution_per_second * 86_400:.2f}/jour, avec au plus "
-            f"{assessment.capacity} positions sur la période",
-        )
-
     ceiling = assessment.capacity_ceiling_per_second(surplus_bound)
     if (
         ceiling is not None
