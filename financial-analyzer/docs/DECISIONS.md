@@ -4225,3 +4225,123 @@ validée avec l'historique disponible. Les fusionner transformerait un manque de
 **Conséquences.** Le défaut avait été retiré d'`oracle_verdict` mais subsistait ici : une
 décision normative silencieuse — 19 grappes indéterminées, 20 interprétables — restait dans le
 code de production.
+
+---
+
+> **Renumérotation.** L'audit propose ADR-232 à ADR-239 ; ces numéros sont pris.
+> Enregistrés sous ADR-237 à ADR-244 (décalage de +5).
+
+---
+
+## ADR-237 — Une chaîne de caractères n'accorde jamais d'autorité statistique
+
+**Statut** : figé et implémenté (Q66) · **corrige l'ADR-232**
+
+**Décision.** `CoverageQualificationCertificate` remplace le champ textuel : statut, campagne,
+empreinte de protocole, version d'estimateur, version de règle de blocs, domaine de génération,
+α, couverture visée, réplications, couverture observée, **borne inférieure**, date et auteur.
+Trois conditions simultanées accordent `DEPENDENCE_ROBUST_BOUND` : statut qualifié, borne
+inférieure atteignant la cible, et correspondance de la version **et** de l'empreinte.
+
+**Conséquences.** `"campagne de calibration en cours"` accordait le statut normatif à une
+campagne que son propre libellé déclarait inachevée — y compris dans les tests de calibration
+eux-mêmes.
+
+---
+
+## ADR-238 — Une couverture se qualifie par sa borne inférieure
+
+**Statut** : figé et implémenté (Q66)
+
+**Décision.** La qualification compare `c_L`, borne inférieure exacte de la couverture vraie, à
+la cible — jamais la proportion observée.
+
+**Conséquences.** 285 réplications couvrantes sur 300 donnent exactement 95 %, mais `c_L ≈ 92,4 %`
+au niveau de calibration déclaré. Le critère détermine aussi combien de réplications Q66 doit
+réellement mener : la mesure actuelle du bootstrap oscille entre 0,937 et 0,960, et **aucune de
+ces valeurs ne qualifie la procédure**.
+
+---
+
+## ADR-239 — Une calibration se mesure contre un paramètre connu
+
+**Statut** : figé et implémenté (Q66)
+
+**Décision.** La vérité d'une simulation de calibration est le paramètre du générateur, jamais
+une valeur estimée sur les réplications qui servent à mesurer la couverture.
+
+**Conséquences.** Les tests de conservatisme (zéro succès) et de non-stationnarité (changement de
+régime) sont **renommés** : ce ne sont pas des tests de couverture. Sous changement de régime, il
+n'existe d'ailleurs aucune probabilité stationnaire unique à couvrir.
+
+---
+
+## ADR-240 — Le plancher zéro-succès reste dans l'unité de la procédure
+
+**Statut** : figé et implémenté (Q66)
+
+**Décision.** Le plancher ne s'applique que lorsque la série ne porte aucun succès, et compare
+alors des **blocs à des blocs**.
+
+**Conséquences.** La version précédente passait un nombre de succès au niveau *épisode* comme
+succès et un nombre de *blocs* comme essais : 60 succès sur 40 blocs faisait retourner 1,0 à
+Clopper-Pearson, et la borne saturait sans que rien ne le signale. Appliqué systématiquement, le
+plancher dominait de surcroît le quantile et masquait la réaction à la dépendance.
+
+---
+
+## ADR-241 — `p_U` et `λ_U` portent sur le même processus
+
+**Statut** : figé et implémenté (Q61-A) · complète l'ADR-229
+
+**Décision.** La borne de rareté s'estime sur l'**univers complet des candidats**, comme le
+majorant du nombre de rentables et comme `λ_U`.
+
+**Conséquences.** `p_U` était encore estimée sur la planification admissible. Deux fenêtres se
+chevauchant à −1 R et +4 R : la planification retient la première, `B` disparaît des indicateurs,
+et le produit `λ_U · p_U · S_U` multipliait une probabilité de la population A par une cadence de
+la population B. Ce produit n'est pas une borne.
+
+---
+
+## ADR-242 — Les unités économiques sont propagées jusqu'au verdict
+
+**Statut** : figé et implémenté (Q61-A) · complète l'ADR-228
+
+**Décision.** `ContributionRequirement` porte valeur, unité et référence Q1 ;
+`OracleAssessment` porte son unité ; `oracle_verdict()` refuse une comparaison entre unités
+différentes et transmet l'unité au certificat.
+
+**Conséquences.** Le contrôle existait dans `BoundDerivation` mais le chemin normatif ne
+l'utilisait pas : `holds_against()` acceptait une unité optionnelle, et `oracle_verdict()` ne la
+passait pas. `λ·p_U·S_U` en `USD/oz/s` pouvait être comparé à un `float` qui aurait pu être en
+`R/s` ou en `%capital/s`.
+
+---
+
+## ADR-243 — Une exigence statistique n'entre pas dans un verdict économique
+
+**Statut** : figé et implémenté (Q64) · protège l'ADR-235
+
+**Décision.** `oracle_verdict()` n'accepte plus un `float` mais un
+`EconomicFrequencyRequirement`, dont le constructeur refuse une origine statistique et exige sa
+dérivation. La construction normative est `from_ev_upper_bound()`.
+
+**Conséquences.** Rien n'empêchait de transmettre `f_stat_min` et d'obtenir
+`ORACLE_FREQUENCY_NON_VIABLE` — soit exactement la confusion que `FrequencyAxis` venait de
+supprimer, réintroduite par une signature non typée.
+
+---
+
+## ADR-244 — Une observation n'est normative que si son protocole correspond
+
+**Statut** : figé et implémenté (Q51-A) · **corrige l'ADR-204**
+
+**Décision.** `ProtocolSnapshot` réunit commit logiciel, versions de Q1, Q64, calendrier, contrat
+de données, pipeline TARGET et qualification d'horloge. `status_of()` exige la correspondance de
+l'empreinte ; toute divergence produit `PROTOCOL_DRIFT` et ouvre un nouveau segment.
+
+**Conséquences.** Comparer les seules dates laissait passer une dérive : geler, puis changer le
+code, Q64 ou le calendrier, et continuer à classer les observations suivantes `NORMATIVE` au
+motif qu'elles étaient postérieures. La protection compte d'autant plus que Q1 est précisément
+la prochaine chose à figer.

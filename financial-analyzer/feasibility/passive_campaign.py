@@ -23,7 +23,7 @@ from __future__ import annotations
 import hashlib
 import json
 import math
-from collections.abc import Iterable, Sequence
+from collections.abc import Callable, Iterable, Sequence
 from typing import Protocol
 from dataclasses import dataclass, field, replace
 from enum import Enum
@@ -507,34 +507,141 @@ class DataStatus(str, Enum):
     #: Collectée avant le gel du protocole. Sert au réglage, au diagnostic, à
     #: l'estimation des ordres de grandeur — jamais au premier verdict normatif.
     EXPLORATORY = "EXPLORATORY"
-    #: Période contiguë postérieure au gel. Seule elle soutient le verdict normatif.
+    #: Période contiguë postérieure au gel, **et** conforme au protocole gelé. Seule
+    #: elle soutient le verdict normatif.
     NORMATIVE = "NORMATIVE"
+    #: Postérieure au gel mais produite sous un protocole différent. Ouvre un nouveau
+    #: segment ; ne fusionne jamais avec le précédent.
+    PROTOCOL_DRIFT = "PROTOCOL_DRIFT"
+
+
+@dataclass(frozen=True)
+class ProtocolSnapshot:
+    """Tout ce qui doit rester identique pour qu'une observation reste normative."""
+
+    software_commit: str
+    q1_version: str
+    q64_version: str
+    calendar_version: str
+    data_contract_version: str
+    pipeline_target_version: str
+    clock_qualification_version: str
+
+    @property
+    def fingerprint(self) -> str:
+        payload = json.dumps(self.__dict__, sort_keys=True)
+        return hashlib.sha256(payload.encode()).hexdigest()[:16]
 
 
 @dataclass(frozen=True)
 class ProtocolFreeze:
-    """Instant à partir duquel les données deviennent normatives."""
+    """Instant **et état** à partir desquels les données deviennent normatives.
+
+    Comparer les seules dates laisserait passer une dérive : geler le protocole, puis
+    changer le code, Q64, le calendrier ou la version de pipeline, et continuer à classer
+    les observations suivantes `NORMATIVE` au motif qu'elles sont postérieures au gel.
+
+    Une observation n'est normative que si son empreinte **complète** correspond. Toute
+    divergence ouvre un nouveau segment normatif — jamais une fusion avec le précédent.
+    """
 
     frozen_at_ns: int
     frozen_by: str
     inference_mode: InferenceMode
-    fingerprint: str
+    snapshot: ProtocolSnapshot
 
-    def status_of(self, observed_at_ns: int) -> DataStatus:
-        return (
-            DataStatus.NORMATIVE if observed_at_ns >= self.frozen_at_ns
-            else DataStatus.EXPLORATORY
-        )
+    @property
+    def fingerprint(self) -> str:
+        return self.snapshot.fingerprint
+
+    def status_of(
+        self, observed_at_ns: int, observed_fingerprint: str | None = None
+    ) -> DataStatus:
+        if observed_at_ns < self.frozen_at_ns:
+            return DataStatus.EXPLORATORY
+        if observed_fingerprint is None or observed_fingerprint != self.fingerprint:
+            return DataStatus.PROTOCOL_DRIFT
+        return DataStatus.NORMATIVE
 
     def partition(
-        self, observations: Sequence[PassiveObservation]
+        self,
+        observations: Sequence[PassiveObservation],
+        fingerprint_of: "Callable[[PassiveObservation], str] | None" = None,
     ) -> dict[DataStatus, tuple[PassiveObservation, ...]]:
         out: dict[DataStatus, list[PassiveObservation]] = {
-            DataStatus.EXPLORATORY: [], DataStatus.NORMATIVE: []
+            DataStatus.EXPLORATORY: [], DataStatus.NORMATIVE: [],
+            DataStatus.PROTOCOL_DRIFT: [],
         }
         for o in observations:
-            out[self.status_of(o.boundaries.local_receive_wall_ns)].append(o)
+            fp = fingerprint_of(o) if fingerprint_of is not None else None
+            out[self.status_of(o.boundaries.local_receive_wall_ns, fp)].append(o)
         return {k: tuple(v) for k, v in out.items()}
+
+
+@dataclass(frozen=True)
+class ContributionRequirement:
+    """`J_min` avec son **unité** et sa provenance Q1.
+
+    Un `float` ne distingue pas `USD/oz/s` de `R/s` ni de `%capital/s`. Comparer
+    `λ·p_U·S_U` à un nombre nu produirait un verdict d'exclusion dont les deux côtés ne
+    parlent pas de la même chose.
+    """
+
+    value_per_second: float
+    unit: str
+    q1_reference: str
+
+    def __post_init__(self) -> None:
+        if not self.unit.strip() or not self.q1_reference.strip():
+            raise CampaignError(
+                "Une exigence de contribution sans unité ni référence Q1 ne peut pas "
+                "être comparée à une capacité économique."
+            )
+
+
+class FrequencyOrigin(str, Enum):
+    """D'où vient une exigence de fréquence — et donc ce qu'elle peut conclure."""
+
+    ECONOMIC = "ECONOMIC"
+    STATISTICAL = "STATISTICAL"
+
+
+@dataclass(frozen=True)
+class EconomicFrequencyRequirement:
+    """Exigence de fréquence d'origine **économique**, seule admise par un verdict
+    d'inviabilité économique.
+
+    Un plancher statistique transmis ici produirait `ORACLE_FREQUENCY_NON_VIABLE` — soit
+    exactement la confusion que `FrequencyAxis` vient de supprimer : un manque de données
+    présenté comme un échec économique.
+    """
+
+    value_per_second: float
+    q1_reference: str
+    derived_from: str
+    origin: FrequencyOrigin = FrequencyOrigin.ECONOMIC
+
+    def __post_init__(self) -> None:
+        if self.origin is not FrequencyOrigin.ECONOMIC:
+            raise CampaignError(
+                "Une exigence de fréquence statistique ne peut pas fonder un verdict "
+                "d'inviabilité économique : c'est un axe différent."
+            )
+        if not self.q1_reference.strip() or not self.derived_from.strip():
+            raise CampaignError(
+                "Une exigence économique doit déclarer sa dérivation et sa référence Q1."
+            )
+
+    @classmethod
+    def from_ev_upper_bound(
+        cls, thresholds: "EconomicThresholds", ev_upper: float, q1_reference: str
+    ) -> "EconomicFrequencyRequirement":
+        """Seule construction normative : `f = (J_min + C) / EV_U`."""
+        return cls(
+            value_per_second=thresholds.necessary_frequency_from_ev_bound(ev_upper),
+            q1_reference=q1_reference,
+            derived_from=f"(J_min + coûts) / EV_U avec EV_U = {ev_upper:g}",
+        )
 
 
 class FrequencyAxis(str, Enum):
@@ -1613,6 +1720,7 @@ class OracleAssessment:
     clusters: int
     rarity: RarityBound
     kind: OracleKind
+    unit: str = "USD/oz"
     opportunity_rate_per_second: float = float("nan")
 
     def capacity_ceiling_per_second(
@@ -1655,19 +1763,22 @@ def assess_oracle(
     selected = opportunities.admissible()
     kept = surplus[selected] if selected.size else np.array([])
 
-    profitable_flags = kept > delta_meu
     # Majorant sur l'**univers des candidats**, pas sur la planification retenue. Une
     # planification outcome-independent peut garder une fenêtre à −1 R et écarter la
     # fenêtre chevauchante à +4 R : compter les rentables sur elle **sous-estimerait**
     # ce qu'un oracle pourrait choisir, et sous-estimer est le mauvais sens pour exclure.
     profitable = opportunities.profitable_count_upper_bound(surplus, delta_meu)
+    # `p_U` doit décrire **le même processus** que `λ_U`. Estimée sur la planification
+    # admissible, elle porterait sur une population A pendant que la cadence porte sur
+    # une population B — et leur produit `λ·p_U·S_U` ne serait plus une borne.
+    profitable_flags = surplus > delta_meu
     n = int(selected.size)
     rate = profitable / n if n else 0.0
     bound = rarity_bound(
         profitable_flags.astype(float),
-        capture.episode_ids[selected] if capture.episode_ids.size else np.array([]),
+        capture.episode_ids if capture.episode_ids.size else np.array([]),
         alpha, independence_proven, estimator,
-        starts_ns=capture.starts_ns[selected] if capture.starts_ns.size else None,
+        starts_ns=capture.starts_ns if capture.starts_ns.size else None,
     )
 
     span_s = capture.span_ns / NS_PER_SECOND if capture.span_ns else float("nan")
@@ -1700,6 +1811,7 @@ def assess_oracle(
         clusters=capture.clusters,
         rarity=bound,
         kind=opportunities.kind,
+        unit=cost_floor.unit,
         opportunity_rate_per_second=opportunities.opportunity_rate_upper_bound(
             capture.span_ns
         ),
@@ -1728,6 +1840,125 @@ class DependenceMethod:
                     f"Une méthode de dépendance sans {field_name} n'en est pas une : "
                     "elle rendrait à nouveau une hypothèse de Bernoulli implicite."
                 )
+
+
+def clopper_pearson_lower(successes: int, trials: int, alpha: float) -> float:
+    """Borne **inférieure** exacte d'une proportion — pour qualifier une couverture.
+
+    285 réplications couvrantes sur 300 donnent exactement 95 %, mais la borne inférieure
+    unilatérale à 95 % vaut ≈ 92,4 %. Conclure « couverture vraie ≥ 95 % » depuis la
+    seule proportion observée est le même raccourci que partout ailleurs dans ce projet.
+    """
+    if trials <= 0:
+        return 0.0
+    if successes <= 0:
+        return 0.0
+    if successes >= trials:
+        return alpha ** (1.0 / trials)
+    if trials - successes > 4_000:
+        return max(0.0, successes / trials - math.sqrt(math.log(1.0 / alpha) / (2 * trials)))
+
+    def survival(pp: float) -> float:
+        return sum(
+            math.comb(trials, i) * pp**i * (1.0 - pp) ** (trials - i)
+            for i in range(successes, trials + 1)
+        )
+
+    lo, hi = 0.0, successes / trials
+    for _ in range(80):
+        mid = (lo + hi) / 2.0
+        if survival(mid) > alpha:
+            hi = mid
+        else:
+            lo = mid
+    return lo
+
+
+class QualificationStatus(str, Enum):
+    QUALIFIED = "QUALIFIED"
+    IN_PROGRESS = "IN_PROGRESS"
+    FAILED = "FAILED"
+
+
+@dataclass(frozen=True)
+class CoverageQualificationCertificate:
+    """Q66 — preuve **structurée** qu'une procédure atteint la couverture annoncée.
+
+    Une chaîne de caractères ne peut pas modifier une autorité statistique :
+    `"campagne de calibration en cours"` accordait jusqu'ici le statut normatif à une
+    campagne qui, par son propre libellé, n'était pas terminée.
+
+    La qualification exige que la **borne inférieure** de la couverture atteigne la cible,
+    pas la proportion observée — et que le protocole corresponde à l'estimateur employé.
+    """
+
+    status: QualificationStatus
+    campaign_id: str
+    protocol_hash: str
+    estimator_version: str
+    block_rule_version: str
+    data_generating_domain: str
+    alpha: float
+    target_coverage: float
+    simulation_repetitions: int
+    covering_repetitions: int
+    calibration_confidence: float
+    qualified_at_ns: int
+    qualified_by: str
+
+    def __post_init__(self) -> None:
+        for name in ("campaign_id", "protocol_hash", "estimator_version",
+                     "block_rule_version", "data_generating_domain", "qualified_by"):
+            if not getattr(self, name).strip():
+                raise CampaignError(
+                    f"Certificat de couverture sans {name} : une référence textuelle ne "
+                    "peut pas promouvoir un estimateur à une autorité normative."
+                )
+        if not 0 < self.target_coverage < 1:
+            raise CampaignError("la couverture visée doit être dans ]0, 1[")
+        if self.covering_repetitions > self.simulation_repetitions:
+            raise CampaignError("plus de réplications couvrantes que de réplications")
+
+    @property
+    def empirical_coverage(self) -> float:
+        if self.simulation_repetitions <= 0:
+            return float("nan")
+        return self.covering_repetitions / self.simulation_repetitions
+
+    @property
+    def coverage_lower_bound(self) -> float:
+        return clopper_pearson_lower(
+            self.covering_repetitions, self.simulation_repetitions,
+            1.0 - self.calibration_confidence,
+        )
+
+    def qualifies(self, estimator_version: str, protocol_hash: str) -> bool:
+        """Trois conditions simultanées, toutes vérifiables."""
+        return (
+            self.status is QualificationStatus.QUALIFIED
+            and self.coverage_lower_bound >= self.target_coverage
+            and self.estimator_version == estimator_version
+            and self.protocol_hash == protocol_hash
+        )
+
+    def explain(self, estimator_version: str, protocol_hash: str) -> str:
+        if self.status is not QualificationStatus.QUALIFIED:
+            return f"campagne {self.campaign_id} au statut {self.status.value}"
+        if self.estimator_version != estimator_version:
+            return (
+                f"certificat émis pour {self.estimator_version}, estimateur employé "
+                f"{estimator_version}"
+            )
+        if self.protocol_hash != protocol_hash:
+            return "empreinte de protocole différente de celle qualifiée"
+        if self.coverage_lower_bound < self.target_coverage:
+            return (
+                f"couverture empirique {self.empirical_coverage:.1%} sur "
+                f"{self.simulation_repetitions} réplications, mais borne inférieure "
+                f"{self.coverage_lower_bound:.1%} sous la cible "
+                f"{self.target_coverage:.1%}"
+            )
+        return f"campagne {self.campaign_id} qualifiée"
 
 
 class DependenceBoundEstimator(Protocol):
@@ -1761,10 +1992,10 @@ class MovingBlockBootstrapBound:
     draws: int = 2_000
     seed: int = 0
     version: str = "MBB_1.0"
-    #: Référence de la campagne de calibration ayant **vérifié la couverture** sous les
-    #: dépendances revendiquées. Vide tant qu'elle n'a pas été menée : la borne reste
-    #: alors modélisée, sans autorité normative.
-    coverage_qualification: str = ""
+    #: Certificat de la campagne ayant **vérifié la couverture** sous les dépendances
+    #: revendiquées. Absent tant qu'elle n'a pas été menée : la borne reste modélisée,
+    #: sans autorité normative.
+    coverage_certificate: CoverageQualificationCertificate | None = None
 
     def __post_init__(self) -> None:
         if self.block_length < 1:
@@ -1784,8 +2015,15 @@ class MovingBlockBootstrapBound:
         )
 
     @property
+    def protocol_hash(self) -> str:
+        payload = f"{self.block_length}|{self.draws}|{self.version}"
+        return hashlib.sha256(payload.encode()).hexdigest()[:16]
+
+    @property
     def coverage_qualified(self) -> bool:
-        return bool(self.coverage_qualification.strip())
+        if self.coverage_certificate is None:
+            return False
+        return self.coverage_certificate.qualifies(self.version, self.protocol_hash)
 
     def upper_bound(self, episode_successes: np.ndarray, alpha: float) -> float:
         n = episode_successes.size
@@ -1798,13 +2036,28 @@ class MovingBlockBootstrapBound:
         offsets = np.arange(b)
         idx = (starts[:, :, None] + offsets[None, None, :]).reshape(self.draws, -1)[:, :n]
         rates = episode_successes[idx].mean(axis=1)
-        # Le quantile bootstrap seul s'effondre à zéro lorsque aucun succès n'apparaît.
-        # Le plancher retenu est celui de la règle de trois sur le nombre de blocs — il
-        # n'est pas présenté comme exact : `n_blocks` n'est pas un nombre d'essais de
-        # Bernoulli indépendants, et c'est précisément pourquoi la borne reste
-        # `DEPENDENCE_MODELLED_BOUND` tant que sa couverture n'est pas vérifiée.
-        floor = clopper_pearson_upper(int(episode_successes.sum()), n_blocks, alpha)
-        return float(max(np.quantile(rates, 1.0 - alpha), floor))
+
+        # Le quantile bootstrap s'effondre à zéro lorsque aucun succès n'apparaît. Le
+        # plancher se calcule alors **dans la même unité statistique** que la procédure :
+        # combien de blocs disjoints portent au moins un succès, sur le nombre de blocs.
+        #
+        # La version précédente comparait un nombre de succès au niveau *épisode* à un
+        # nombre d'essais au niveau *bloc* : 60 succès sur 40 blocs faisait retourner
+        # 1,0 à Clopper-Pearson, et la borne saturait sans que rien ne le signale.
+        quantile = float(np.quantile(rates, 1.0 - alpha))
+        if episode_successes.sum() > 0:
+            return quantile
+
+        # Aucun succès : le quantile vaut zéro et ne borne rien. Le plancher se calcule
+        # alors dans la **même unité** que la procédure — la part de blocs disjoints
+        # portant un succès, qui majore la part d'épisodes porteurs.
+        #
+        # La version précédente comparait un nombre de succès au niveau *épisode* à un
+        # nombre d'essais au niveau *bloc* : 60 succès sur 40 blocs faisait retourner 1,0
+        # à Clopper-Pearson et la borne saturait sans que rien ne le signale.
+        blocks = [episode_successes[i:i + b] for i in range(0, n, b)]
+        carrying = sum(1 for blk in blocks if blk.any())
+        return float(max(quantile, clopper_pearson_upper(carrying, len(blocks), alpha)))
 
 
 class BoundQuality(str, Enum):
@@ -2258,8 +2511,8 @@ class OracleVerdict(str, Enum):
 
 def oracle_verdict(
     assessment: OracleAssessment,
-    minimum_frequency_per_second: float,
-    minimum_contribution_per_second: float,
+    minimum_frequency: EconomicFrequencyRequirement,
+    minimum_contribution: ContributionRequirement,
     min_clusters: int,
     certificate: ImpossibilityCertificate | None = None,
     surplus_bound: SurplusUpperBound | None = None,
@@ -2280,8 +2533,16 @@ def oracle_verdict(
             f"{assessment.clusters} grappes indépendantes sur {min_clusters} requises",
         )
 
+    if minimum_contribution.unit != assessment.unit:
+        raise CampaignError(
+            f"Capacité économique en {assessment.unit} comparée à une exigence en "
+            f"{minimum_contribution.unit} : conversion contractuelle requise."
+        )
+
     # Impossibilité universelle : seulement si le certificat **se vérifie**.
-    if certificate is not None and certificate.holds_against(assessment.delta_meu):
+    if certificate is not None and certificate.holds_against(
+        assessment.delta_meu, assessment.unit
+    ):
         return (
             OracleVerdict.ORACLE_UNIVERSALLY_NON_VIABLE,
             certificate.explain(assessment.delta_meu),
@@ -2292,13 +2553,14 @@ def oracle_verdict(
     # d'opportunités, reste sous le plancher exigé.
     if (
         bound.quality.usable_for_verdict
-        and assessment.profitable_frequency_upper < minimum_frequency_per_second
+        and assessment.profitable_frequency_upper < minimum_frequency.value_per_second
     ):
         return (
             OracleVerdict.ORACLE_FREQUENCY_NON_VIABLE,
             f"fréquence oracle-rentable bornée par "
             f"{assessment.profitable_frequency_upper * 86_400:.2f}/jour, sous le plancher "
-            f"de {minimum_frequency_per_second * 86_400:.2f}/jour — borne "
+            f"de {minimum_frequency.value_per_second * 86_400:.2f}/jour "
+            f"({minimum_frequency.derived_from}) — borne "
             f"{bound.quality.value} sur {bound.trials} unités",
         )
 
@@ -2318,12 +2580,13 @@ def oracle_verdict(
     if (
         ceiling is not None
         and bound.quality.usable_for_verdict
-        and ceiling < minimum_contribution_per_second
+        and ceiling < minimum_contribution.value_per_second
     ):
         return (
             OracleVerdict.ORACLE_ECONOMIC_CAPACITY_NON_VIABLE,
             f"plafond économique λ·p_U·S_U = {ceiling * 86_400:.4f}/jour sous la "
-            f"contribution requise {minimum_contribution_per_second * 86_400:.2f}/jour — "
+            f"contribution requise {minimum_contribution.value_per_second * 86_400:.2f}"
+            f"/jour — "
             f"avec p_U ≤ {bound.upper:.2%} et un gain majoré par {surplus_bound.value:.3f} "
             f"({surplus_bound.argument}), même la queue non observée ne suffirait pas",
         )

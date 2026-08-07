@@ -39,7 +39,9 @@ from .passive_campaign import (  # noqa: E402
     BlockingChoice,
     CapturabilityScope,
     ClusterAssigner,
+    ContributionRequirement,
     CostFloor,
+    EconomicFrequencyRequirement,
     MovingBlockBootstrapBound,
     OpportunitySet,
     OracleCapture,
@@ -224,15 +226,22 @@ def main() -> None:
                   mandatory_fees=0.05,
                   source="démonstration — barème contractuel à substituer (Q63)"),
     ])
-    F_MIN = 4 / 86_400.0           # quatre occasions par jour
-    J_MIN = 20.0 / 86_400.0        # contribution minimale par seconde
+    # Typées : une exigence statistique ne peut pas être passée ici, et l'unité de la
+    # contribution est vérifiée contre celle de la capacité.
+    FREQ_REQ = EconomicFrequencyRequirement(
+        value_per_second=4 / 86_400.0, q1_reference="démonstration — Q1 à figer",
+        derived_from="(J_min + coûts) / EV_U, valeurs de démonstration")
+    CONTRIB = ContributionRequirement(
+        value_per_second=20.0 / 86_400.0, unit="USD/oz",
+        q1_reference="démonstration — Q1 à figer")
     DELTA_MEU = 0.05
     MIN_CLUSTERS = 20      # à dériver du protocole de puissance (Q64), pas d'un défaut
 
     print("-" * 78)
     print("PHASE 0 PAR CELLULE — exclusion sans qu'aucun signal ne soit défini")
     print(f"horizon 500 ms · plancher de coûts {cost_floor.value:.2f} $/oz"
-          f" · δ_MEU {DELTA_MEU:.2f} · f_min {F_MIN * 86_400:.0f}/jour")
+          f" · δ_MEU {DELTA_MEU:.2f}"
+          f" · f_econ {FREQ_REQ.value_per_second * 86_400:.0f}/jour")
     print(f"période observée : {(ts[-1] - ts[0]) / NS_PER_SECOND / 60:.0f} min"
           f" — toute fréquence par jour en est une extrapolation")
     print()
@@ -258,7 +267,8 @@ def main() -> None:
                                                            "persistance réelle",
                                        reference="protocole Q59, à figer",
                                        draws=400))   # sans qualification de couverture
-        oracle, why = oracle_verdict(assessment, F_MIN, J_MIN, min_clusters=MIN_CLUSTERS)
+        oracle, why = oracle_verdict(assessment, FREQ_REQ, CONTRIB,
+                                     min_clusters=MIN_CLUSTERS)
         state, state_why = phase0_state(
             cost_excluded=False,
             passive=PassiveVerdict.PASSIVE_LATENCY_INDETERMINATE
@@ -293,7 +303,7 @@ def main() -> None:
                               span_ns=1_000 * NS_PER_SECOND,
                               overlap_policy=OverlapPolicy.CAPACITY_CONSTRAINED_ORACLE)
     tail_assessment = assess_oracle(tail, cost_floor, tail_set, DELTA_MEU)
-    tail_verdict, tail_why = oracle_verdict(tail_assessment, F_MIN, J_MIN,
+    tail_verdict, tail_why = oracle_verdict(tail_assessment, FREQ_REQ, CONTRIB,
                                             min_clusters=MIN_CLUSTERS)
 
     print("-" * 78)

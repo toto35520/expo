@@ -8,6 +8,7 @@ grappes gonflées, arrêt opportuniste, ancrage optimiste de la capturabilité.
 from __future__ import annotations
 
 import inspect
+from dataclasses import replace
 
 import numpy as np
 import pytest
@@ -53,7 +54,14 @@ from feasibility.passive_campaign import (
     EconomicTarget,
     EconomicThresholds,
     FrequencyAxis,
+    ContributionRequirement,
+    CoverageQualificationCertificate,
+    EconomicFrequencyRequirement,
+    FrequencyOrigin,
     ProtocolFreeze,
+    ProtocolSnapshot,
+    QualificationStatus,
+    clopper_pearson_lower,
     OracleCapture,
     OracleKind,
     OracleVerdict,
@@ -810,8 +818,7 @@ def test_a_low_quantile_never_excludes_when_the_tail_survives():
                       opportunities(starts, 1_000 * NS_PER_SECOND,
                                     overlap_policy=OverlapPolicy.CAPACITY_CONSTRAINED_ORACLE),
                       delta_meu=0.05)
-    verdict, why = oracle_verdict(a, min_clusters=20, minimum_frequency_per_second=1 / 86_400,
-                                  minimum_contribution_per_second=1e-9)
+    verdict, why = oracle_verdict(a, freq_req(1 / 86_400 * 86_400), contrib(), min_clusters=20)
     assert verdict is OracleVerdict.ORACLE_NOT_EXCLUDED
     assert "ne dit rien de la capacité d'un moteur" in why
 
@@ -830,7 +837,7 @@ def test_zero_survivors_observed_is_not_an_impossibility():
     """« Je n'en ai pas vu » ne devient jamais « cela n'existe pas ». Un échantillon
     fini borne une fréquence, il ne démontre pas une absence."""
     _, a = no_survivor_case()
-    verdict, why = oracle_verdict(a, 1 / 86_400, 1e-9, min_clusters=20)
+    verdict, why = oracle_verdict(a, freq_req(), contrib(), min_clusters=20)
     assert verdict is OracleVerdict.ORACLE_NO_SURVIVOR_OBSERVED
     assert not verdict.excludes
     assert "ne démontre pas l'absence" in why
@@ -861,7 +868,7 @@ def certificate(**kw) -> ImpossibilityCertificate:
 def test_a_verifiable_certificate_grants_universal_impossibility():
     """La condition est recalculable : U_oracle(Ω) < δ_MEU, pas une case cochée."""
     _, a = no_survivor_case()
-    verdict, why = oracle_verdict(a, 1 / 86_400, 1e-9, min_clusters=20,
+    verdict, why = oracle_verdict(a, freq_req(), contrib(), min_clusters=20,
                                   certificate=certificate())
     assert verdict is OracleVerdict.ORACLE_UNIVERSALLY_NON_VIABLE
     assert verdict.excludes
@@ -898,7 +905,7 @@ def test_a_certificate_whose_bound_fails_the_inequality_grants_nothing():
         calculator_version="CALC-1.0"))
     assert not weak.holds_against(0.05)
     _, a = no_survivor_case()
-    verdict, _ = oracle_verdict(a, 1 / 86_400, 1e-9, min_clusters=20, certificate=weak)
+    verdict, _ = oracle_verdict(a, freq_req(), contrib(), min_clusters=20, certificate=weak)
     assert verdict is not OracleVerdict.ORACLE_UNIVERSALLY_NON_VIABLE
 
 
@@ -920,8 +927,7 @@ def test_zero_survivors_becomes_conclusive_through_frequency_once_the_bound_is_r
                         episode_ids=np.arange(gross.size) // 40)
     a = assess_oracle(cap, floor_(0.35), opportunities(starts, 600 * NS_PER_SECOND),
                       delta_meu=0.05, estimator=estimator())
-    verdict, why = oracle_verdict(a, min_clusters=20, minimum_frequency_per_second=10.0,
-                                  minimum_contribution_per_second=1e-9)
+    verdict, why = oracle_verdict(a, freq_req(10 * 86_400), contrib(), min_clusters=20)
     assert verdict is OracleVerdict.ORACLE_FREQUENCY_NON_VIABLE
     assert verdict.excludes
     assert "DEPENDENCE_ROBUST_BOUND" in why
@@ -938,8 +944,8 @@ def test_capacity_can_conclude_without_survivors_given_a_physical_gain_bound():
     a = assess_oracle(cap, floor_(0.35), opportunities(starts, 600 * NS_PER_SECOND),
                       delta_meu=0.05, estimator=estimator())
     ceiling = gain_bound(0.85)
-    verdict, why = oracle_verdict(a, 1 / 86_400, minimum_contribution_per_second=1_000.0,
-                                  min_clusters=20, surplus_bound=ceiling)
+    verdict, why = oracle_verdict(a, freq_req(), contrib(50_000.0), min_clusters=20,
+                                  surplus_bound=ceiling)
     assert verdict is OracleVerdict.ORACLE_ECONOMIC_CAPACITY_NON_VIABLE
     assert "queue non observée" in why
 
@@ -992,16 +998,39 @@ def gain_bound(max_displacement: float, **kw) -> SurplusUpperBound:
     return SurplusUpperBound(**{**base, **kw})
 
 
+def certificate_for(est, covering: int = 990, reps: int = 1_000):
+    return CoverageQualificationCertificate(
+        status=QualificationStatus.QUALIFIED,
+        campaign_id="CAL-2026-001", protocol_hash=est.protocol_hash,
+        estimator_version=est.version, block_rule_version="BLOCK-1.0",
+        data_generating_domain="processus de Markov binaire, persistance ≤ 0,8",
+        alpha=0.05, target_coverage=0.95,
+        simulation_repetitions=reps, covering_repetitions=covering,
+        calibration_confidence=0.95,
+        qualified_at_ns=0, qualified_by="protocole Q66",
+    )
+
+
+def freq_req(per_day: float = 1.0) -> EconomicFrequencyRequirement:
+    return EconomicFrequencyRequirement(
+        value_per_second=per_day / 86_400,
+        q1_reference="Q1 v1", derived_from="(J_min + coûts) / EV_U")
+
+
+def contrib(per_day: float = 1e-9, unit: str = "USD/oz") -> ContributionRequirement:
+    return ContributionRequirement(value_per_second=per_day / 86_400, unit=unit,
+                                   q1_reference="Q1 v1")
+
+
 def estimator(qualified: bool = True) -> MovingBlockBootstrapBound:
-    return MovingBlockBootstrapBound(
+    base = MovingBlockBootstrapBound(
         block_length=3,
         dependence_argument="longueur de bloc supérieure à la persistance mesurée des "
                             "épisodes de charge et de régime",
         reference="protocole Q59 v1",
         draws=400,
-        coverage_qualification=(
-            "campagne de calibration CAL-2026-001" if qualified else ""),
     )
+    return replace(base, coverage_certificate=certificate_for(base)) if qualified else base
 
 
 def test_grouping_into_episodes_is_not_by_itself_a_robust_bound():
@@ -1055,8 +1084,7 @@ def test_an_unqualified_bootstrap_cannot_exclude():
                         episode_ids=np.arange(gross.size) // 15)
     a = assess_oracle(cap, floor_(0.35), opportunities(starts, 600 * NS_PER_SECOND),
                       delta_meu=0.05, estimator=estimator(qualified=False))
-    verdict, _ = oracle_verdict(a, min_clusters=20, minimum_frequency_per_second=10.0,
-                                minimum_contribution_per_second=1e-9)
+    verdict, _ = oracle_verdict(a, freq_req(10 * 86_400), contrib(), min_clusters=20)
     assert verdict is OracleVerdict.ORACLE_NO_SURVIVOR_OBSERVED
 
 
@@ -1082,8 +1110,7 @@ def test_an_episode_observation_cannot_produce_a_frequency_exclusion():
     """FIXED_HORIZON corrige l'arrêt optionnel, pas la dépendance entre observations."""
     _, a = no_survivor_case()
     assert a.rarity.quality is BoundQuality.EPISODE_OBSERVATION
-    verdict, _ = oracle_verdict(a, min_clusters=20, minimum_frequency_per_second=10.0,
-                                minimum_contribution_per_second=1e-9)
+    verdict, _ = oracle_verdict(a, freq_req(10 * 86_400), contrib(), min_clusters=20)
     assert verdict is OracleVerdict.ORACLE_NO_SURVIVOR_OBSERVED
 
 
@@ -1095,7 +1122,7 @@ def test_a_raw_bound_alone_cannot_produce_a_frequency_exclusion():
     a = assess_oracle(cap, floor_(0.35), opportunities(starts, 600 * NS_PER_SECOND),
                       delta_meu=0.05)
     assert a.rarity.quality is BoundQuality.RAW_EVENT_BOUND
-    assert oracle_verdict(a, 10.0, 1e-9, min_clusters=0)[0] is not (
+    assert oracle_verdict(a, freq_req(10 * 86_400), contrib(), min_clusters=0)[0] is not (
         OracleVerdict.ORACLE_FREQUENCY_NON_VIABLE
     )
 
@@ -1163,8 +1190,7 @@ def test_level_b_excludes_when_opportunities_are_too_rare():
                         episode_ids=np.arange(gross.size) // 40)
     a = assess_oracle(cap, floor_(0.35), opportunities(starts, 1_000 * NS_PER_SECOND),
                       delta_meu=0.05, estimator=estimator())
-    verdict, why = oracle_verdict(a, min_clusters=20, minimum_frequency_per_second=50.0,
-                                  minimum_contribution_per_second=1e-9)
+    verdict, why = oracle_verdict(a, freq_req(50 * 86_400), contrib(), min_clusters=20)
     assert verdict is OracleVerdict.ORACLE_FREQUENCY_NON_VIABLE
     assert "trop rarement" in why or "plancher" in why
 
@@ -1174,7 +1200,7 @@ def test_capacity_cannot_conclude_without_a_single_observed_survivor():
     impossibilité : conclure ici referait l'erreur du niveau A."""
     _, a = no_survivor_case()
     assert a.capacity_value_per_second == 0.0
-    verdict, _ = oracle_verdict(a, 1 / 86_400, minimum_contribution_per_second=1_000.0, min_clusters=20)
+    verdict, _ = oracle_verdict(a, freq_req(), contrib(50_000.0), min_clusters=20)
     assert verdict is OracleVerdict.ORACLE_NO_SURVIVOR_OBSERVED
 
 
@@ -1190,8 +1216,7 @@ def test_observed_capacity_alone_never_excludes():
     a = assess_oracle(cap, floor_(0.35), opportunities(starts, 1_000 * NS_PER_SECOND),
                       delta_meu=0.01, estimator=estimator())
     assert a.capacity_value_per_second > 0        # diagnostic disponible
-    verdict, _ = oracle_verdict(a, min_clusters=20, minimum_frequency_per_second=1 / 86_400,
-                                minimum_contribution_per_second=1_000.0)
+    verdict, _ = oracle_verdict(a, freq_req(), contrib(50_000.0), min_clusters=20)
     assert verdict is not OracleVerdict.ORACLE_ECONOMIC_CAPACITY_NON_VIABLE
     assert "capacity_safety_factor" not in inspect.signature(oracle_verdict).parameters
 
@@ -1205,9 +1230,7 @@ def test_level_c_excludes_only_through_the_population_ceiling():
     a = assess_oracle(cap, floor_(0.35), opportunities(starts, 1_000 * NS_PER_SECOND),
                       delta_meu=0.01, estimator=estimator())
     ceiling = gain_bound(0.55)
-    verdict, why = oracle_verdict(a, min_clusters=20,
-                                  minimum_frequency_per_second=1 / 86_400,
-                                  minimum_contribution_per_second=1_000.0,
+    verdict, why = oracle_verdict(a, freq_req(), contrib(50_000.0), min_clusters=20,
                                   surplus_bound=ceiling)
     assert verdict is OracleVerdict.ORACLE_ECONOMIC_CAPACITY_NON_VIABLE
     assert "queue non observée" in why
@@ -1234,7 +1257,7 @@ def test_too_few_clusters_leaves_the_oracle_indeterminate():
                         episode_ids=np.arange(60) // 20)
     a = assess_oracle(cap, floor_(0.35), opportunities(starts, 60 * NS_PER_SECOND),
                       delta_meu=0.05)
-    assert oracle_verdict(a, 1 / 86_400, 1e-9, min_clusters=20)[0] is OracleVerdict.ORACLE_INDETERMINATE
+    assert oracle_verdict(a, freq_req(), contrib(), min_clusters=20)[0] is OracleVerdict.ORACLE_INDETERMINATE
 
 
 # ---- §7-9 : un mouvement ne compte qu'une fois
@@ -1554,18 +1577,37 @@ def test_both_modes_must_be_represented():
 # ============================================= §9 — collecte ≠ échantillon normatif
 
 
+def snapshot(**kw) -> ProtocolSnapshot:
+    base = dict(software_commit="abc123", q1_version="Q1-v1", q64_version="Q64-v1",
+                calendar_version="CAL-v1", data_contract_version="DC-v1",
+                pipeline_target_version="TARGET-v1",
+                clock_qualification_version="Q57_CLOCK_1.0")
+    return ProtocolSnapshot(**{**base, **kw})
+
+
 def freeze(at_ns=1_000, mode=InferenceMode.FIXED_HORIZON) -> ProtocolFreeze:
     return ProtocolFreeze(frozen_at_ns=at_ns, frozen_by="responsable de la campagne",
-                          inference_mode=mode, fingerprint="abc123")
+                          inference_mode=mode, snapshot=snapshot())
 
 
 def test_data_collected_before_the_freeze_is_exploratory_not_lost():
     """La collecte peut démarrer immédiatement ; c'est le droit d'en tirer un verdict
     qui attend le gel."""
     f = freeze()
-    assert f.status_of(500) is DataStatus.EXPLORATORY
-    assert f.status_of(1_000) is DataStatus.NORMATIVE
-    assert f.status_of(5_000) is DataStatus.NORMATIVE
+    fp = f.fingerprint
+    assert f.status_of(500, fp) is DataStatus.EXPLORATORY
+    assert f.status_of(1_000, fp) is DataStatus.NORMATIVE
+    assert f.status_of(5_000, fp) is DataStatus.NORMATIVE
+
+
+def test_a_protocol_change_after_the_freeze_opens_a_new_segment():
+    """Geler puis changer Q64, le calendrier ou la version de pipeline ne rend pas les
+    observations suivantes normatives au seul motif qu'elles sont postérieures."""
+    f = freeze()
+    drifted = snapshot(q64_version="Q64-v2").fingerprint
+    assert drifted != f.fingerprint
+    assert f.status_of(5_000, drifted) is DataStatus.PROTOCOL_DRIFT
+    assert f.status_of(5_000, None) is DataStatus.PROTOCOL_DRIFT
 
 
 def stamped(i: int, wall_ns: int) -> PassiveObservation:
@@ -1585,7 +1627,8 @@ def stamped(i: int, wall_ns: int) -> PassiveObservation:
 def test_the_freeze_partitions_a_campaign_without_discarding_anything():
     before = [stamped(i, wall_ns=100 + i) for i in range(5)]
     after = [stamped(10 + i, wall_ns=2_000 + i) for i in range(4)]
-    parts = freeze().partition(before + after)
+    f = freeze()
+    parts = f.partition(before + after, fingerprint_of=lambda _o: f.fingerprint)
     assert len(parts[DataStatus.EXPLORATORY]) == 5
     assert len(parts[DataStatus.NORMATIVE]) == 4
     assert sum(len(v) for v in parts.values()) == 9
