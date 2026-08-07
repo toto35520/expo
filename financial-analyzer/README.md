@@ -12,14 +12,15 @@ latence et rareté des occurrences.
 | --- | --- |
 | `docs/` | spécification, journal de décisions (`DECISIONS.md`), registre des questions (`QUESTIONS.md`) |
 | `feasibility/` | **code exécutable** : les deux phases 0 et leur intersection |
-| `tests/` | 178 tests, un par garde-fou |
+| `tests/` | 254 tests, un par garde-fou |
 | `calendar-sources/` | dossier de preuve : sources normatives du calendrier |
+| `connector-capability/` | fiches Q57/Q58 : ce que les horloges et le connecteur permettent d'affirmer |
 
 ## Exécuter
 
 ```bash
 cd financial-analyzer
-python3 -m pytest tests/ -q       # 178 tests
+python3 -m pytest tests/ -q       # 254 tests
 python3 -m feasibility.report     # carte de faisabilité (données synthétiques)
 ```
 
@@ -60,6 +61,33 @@ La borne inférieure observable ignore l'inconnu, ce qui la rend asymétrique :
 borne déjà trop lente     → exclusion concluante, sans campagne d'exécution
 borne assez rapide        → seulement « non exclu à la couche messagerie »
 ```
+
+## Le contrat d'observabilité
+
+`feasibility/observability.py` répond à une question antérieure à toute mesure : **que peut-on
+revendiquer ?** Q57 qualifie les horloges, Q58 la sémantique du connecteur, et leur croisement
+produit la seule décomposition que Q19 est autorisé à utiliser.
+
+Le point structurant est que **la borne se calcule entre des frontières, jamais en additionnant
+des intervalles.** Deux intervalles nommés peuvent se recouvrir — l'aller-retour d'émission
+contient déjà le traitement courtier — et les sommer produit une « borne inférieure » supérieure
+à la durée réellement vécue :
+
+```
+14 ms d'aller-retour + 9 ms de traitement courtier situé dedans = 23 ms
+                                        sur un chemin de 20 ms
+```
+
+`LatencyPath` décrit le chemin par ses frontières : deux segments consécutifs en partagent une,
+donc ne se recouvrent jamais. Le double comptage devient impossible par construction plutôt
+qu'interdit par convention.
+
+Deux vues coexistent sans se confondre : le **chemin critique** — durée vécue, utilisée par le
+verdict — et l'**attribution** par composante, avec ses trous, utilisée pour le diagnostic.
+
+Les fiches de `connector-capability/` sont livrées **vides**, tout déclaré inconnu. C'est
+volontaire, et un test le vérifie : une fiche déclarant tout inconnu produit des bornes
+honnêtes, là où une supposition produirait des verdicts faux.
 
 ## Ce que produit `feasibility`
 

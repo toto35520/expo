@@ -176,12 +176,18 @@ la magnitude.
 
 ## B3 — La borne inférieure ignore l'inconnu, et c'est ce qui la rend concluante
 
-`observable_lower_bound_ns` somme **uniquement** les composantes réellement mesurées. Ce qui
-n'est pas observable n'est pas compté — donc la latence réelle ne peut qu'être supérieure.
-
-C'est cette asymétrie qui permet à un verdict négatif d'être concluant sans campagne
-d'exécution : si la borne inférieure dépasse déjà l'horizon, le compléter ne peut
+Ce qui n'est pas observable n'est pas compté — donc la latence réelle ne peut qu'être
+supérieure. C'est cette asymétrie qui permet à un verdict négatif d'être concluant sans
+campagne d'exécution : si la borne inférieure dépasse déjà l'horizon, la compléter ne peut
 qu'aggraver le constat.
+
+> **Correction apportée par Q57/Q58 (ADR-168).** La première version de
+> `observable_lower_bound_ns` **additionnait les intervalles**. Or `submit→ACK` contient déjà
+> le traitement courtier : les sommer produisait un total supérieur à la durée réellement
+> vécue — une « borne inférieure » qui n'en était plus une. La borne se construit désormais à
+> partir des **frontières** du chemin critique (`LatencyPath`), et `LatencyObservation` refuse
+> de se construire si deux de ses intervalles recouvrent le même mécanisme. Voir
+> `Q57-Q58-contrat-observabilite.md`, partie C.
 
 ## B4 — Ce que le module refuse
 

@@ -1,0 +1,26 @@
+{
+  "_comment": "Fiche Q58. Ne remplir QUE ce qui est démontré. Une fiche déclarant tout inconnu produit des bornes honnêtes ; une supposition produit des verdicts faux.",
+
+  "connector_id": "UNKNOWN",
+  "connector_version": "UNKNOWN",
+  "broker": "UNKNOWN",
+  "account_type": "UNKNOWN",
+
+  "submit_return_semantics": "UNKNOWN",
+  "ack_semantics": "UNKNOWN",
+  "rejection_semantics": "UNKNOWN",
+  "cancel_semantics": "UNKNOWN",
+
+  "order_active_observable": false,
+  "broker_receive_timestamp_available": false,
+  "broker_accept_timestamp_available": false,
+  "fill_timestamp_available": false,
+  "timestamp_clock_domain": null,
+
+  "reconciliation_available": false,
+  "guaranteed_orderings": [],
+  "events": [],
+
+  "qualification_status": "UNQUALIFIED",
+  "qualification_version": "Q58_CONNECTOR_1.0"
+}

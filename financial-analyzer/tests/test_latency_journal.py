@@ -37,11 +37,70 @@ from feasibility.latency_journal import (
     PerturbationCheck,
     ProbePhase,
     broker_side_split,
+    detect_interval_overlaps,
+    enforce_contract,
     feed_latency,
     measurement_quality,
     messaging_layer_verdict,
     submit_to_ack,
 )
+from feasibility.observability import (
+    AckSemantics,
+    BoundaryQuality,
+    BrokerConnectorCapability,
+    ClockDomain,
+    CorrectionMode,
+    EvidenceType,
+    EventSemantics,
+    GranularityTest,
+    LatencyBoundary,
+    LatencyPath,
+    MessageKind,
+    SubmitReturnSemantics,
+    Virtualization,
+    build_matrix,
+    qualify_clock,
+)
+
+
+def boundary(name: str, ts: int | None) -> LatencyBoundary:
+    return LatencyBoundary(
+        name, ts, ClockDomain.LOCAL_MONOTONIC,
+        BoundaryQuality.EXACT_LOCAL if ts is not None else BoundaryQuality.UNKNOWN,
+    )
+
+
+def qualified_clock():
+    g = GranularityTest(40, 48.0, 160.0, 0.0)
+    return qualify_clock(
+        host_id="H1", granularity_wall=g, granularity_monotonic=g, monotonic_failures=0,
+        wall_discontinuities=0, drift_p95_ppm=1.0, measured_uncertainty_ns=200_000,
+        correction_mode=CorrectionMode.SLEW, virtualization=Virtualization.BARE_METAL,
+        suspend_events=0, sync_method="NTP", qualified_at_ns=0,
+    )
+
+
+def proven_connector() -> BrokerConnectorCapability:
+    """Connecteur réaliste : l'accusé existe et est prouvé, mais le courtier
+    n'horodate rien."""
+    return BrokerConnectorCapability(
+        connector_id="broker:demo", connector_version="1.4.2", broker="COURTIER",
+        account_type="DEMO",
+        submit_return_semantics=SubmitReturnSemantics.LOCAL_QUEUE_ACCEPTED,
+        ack_semantics=AckSemantics.ORDER_RECEIVED,
+        rejection_semantics="motif structuré fourni par le courtier",
+        cancel_semantics="CANCEL_RECEIVED",
+        order_active_observable=False, broker_receive_timestamp_available=False,
+        broker_accept_timestamp_available=False, fill_timestamp_available=False,
+        timestamp_clock_domain=None,
+        events=(EventSemantics(
+            event_name="BROKER_ACK", observable=True, meaning="accusé courtier",
+            message_kind=MessageKind.BROKER_EVENT, timestamp_available=True,
+            clock_domain=ClockDomain.BROKER, evidence_type=EvidenceType.CONTROLLED_TEST,
+            evidence_id="TEST-2026-001", ordering_guaranteed=True,
+        ),),
+        reconciliation_available=True, qualification_status="QUALIFIED",
+    )
 
 
 def sync(state=ClockSyncState.SYNC_VERIFIED, uncertainty_ns=200_000) -> ClockSyncStatus:
@@ -349,6 +408,139 @@ def test_observable_lower_bound_ignores_unknown_components():
     )
     assert o.observable_lower_bound_ns == 11 * NS_PER_MS
     assert o.unknown_components == ("fill",)
+
+
+def test_observation_refuses_intervals_that_overlap():
+    """Le défaut central corrigé : `submit_to_ack_latency` **contient déjà**
+    `broker_processing`. Les additionner produirait une « borne inférieure » supérieure à
+    la durée réellement vécue — donc plus une borne du tout."""
+    with pytest.raises(JournalError, match="frontières"):
+        observation(
+            8 * NS_PER_MS,
+            intervals=(
+                LatencyInterval("submit_to_ack_latency", 8 * NS_PER_MS,
+                                Observability.AGGREGATE_ONLY, ClockBasis.MONOTONIC,
+                                SUBMIT_ACK_COMPONENTS),
+                LatencyInterval("broker_processing", 5 * NS_PER_MS, Observability.OBSERVED,
+                                ClockBasis.CROSS_SYSTEM),
+            ),
+        )
+
+
+def test_overlap_is_detected_transitively_through_declared_components():
+    """`outbound_leg` ne porte pas le même nom que `submit_to_ack_latency`, mais tous deux
+    comptent la file locale et le réseau aller."""
+    round_trip = LatencyInterval("submit_to_ack_latency", 8 * NS_PER_MS,
+                                 Observability.AGGREGATE_ONLY, ClockBasis.MONOTONIC,
+                                 SUBMIT_ACK_COMPONENTS)
+    leg = LatencyInterval("outbound_leg", 2 * NS_PER_MS, Observability.AGGREGATE_ONLY,
+                          ClockBasis.CROSS_SYSTEM,
+                          ("local_outbound_queue", "outbound_network"))
+    overlaps = detect_interval_overlaps((round_trip, leg))
+    assert overlaps
+    _, _, shared = overlaps[0]
+    assert set(shared) == {"local_outbound_queue", "outbound_network"}
+
+
+def test_disjoint_intervals_are_accepted_and_summed():
+    """La séquence légitime — calcul puis aller-retour — ne se recouvre pas."""
+    o = observation(
+        8 * NS_PER_MS,
+        intervals=(
+            LatencyInterval("compute", 3 * NS_PER_MS, Observability.OBSERVED,
+                            ClockBasis.MONOTONIC),
+            LatencyInterval("submit_to_ack_latency", 8 * NS_PER_MS,
+                            Observability.AGGREGATE_ONLY, ClockBasis.MONOTONIC,
+                            SUBMIT_ACK_COMPONENTS),
+            LatencyInterval("fill", None, Observability.NOT_IDENTIFIABLE,
+                            ClockBasis.CROSS_SYSTEM),
+        ),
+    )
+    assert detect_interval_overlaps(o.intervals) == ()
+    assert o.attribution_lower_bound_ns == 11 * NS_PER_MS
+
+
+def test_critical_path_takes_precedence_over_attribution():
+    """§36 — le gate utilise la durée vécue ; l'attribution sert au diagnostic. Le chemin
+    inclut les trous non mesurés entre composantes, il est donc toujours supérieur."""
+    path = LatencyPath(boundaries=(
+        boundary("quote_received", 0),
+        boundary("compute_started", 4 * NS_PER_MS),
+        boundary("ack_received", 30 * NS_PER_MS),
+    ))
+    o = observation(
+        8 * NS_PER_MS,
+        intervals=(
+            LatencyInterval("compute", 3 * NS_PER_MS, Observability.OBSERVED,
+                            ClockBasis.MONOTONIC),
+        ),
+        path=path,
+    )
+    assert o.attribution_lower_bound_ns == 3 * NS_PER_MS
+    assert o.critical_path_ns == 30 * NS_PER_MS
+    assert o.observable_lower_bound_ns == 30 * NS_PER_MS
+    assert o.consumed_fraction_at(60 * NS_PER_MS) == 0.5
+
+
+def test_low_path_coverage_does_not_weaken_the_verdict():
+    """Une couverture faible signale un manque de prise pour l'optimisation, pas un
+    défaut de fondement : la durée vécue reste mesurée."""
+    path = LatencyPath(boundaries=(
+        boundary("quote_received", 0),
+        boundary("unmeasured", None),
+        boundary("ack_received", 40 * NS_PER_MS),
+    ))
+    o = observation(0, intervals=(), path=path)
+    assert o.path_coverage == 0.0
+    assert o.observable_lower_bound_ns == 40 * NS_PER_MS
+    assert "quote_received→unmeasured" in o.unknown_components
+
+
+def test_without_a_path_the_bound_falls_back_to_attribution():
+    o = observation(8 * NS_PER_MS)
+    assert o.critical_path_ns is None
+    assert o.path_coverage is None
+    assert o.observable_lower_bound_ns == 8 * NS_PER_MS
+
+
+# ------------------------------------------------- contrat d'observabilité (Q57/Q58)
+
+
+def test_no_q19_metric_is_finer_than_the_observability_contract():
+    """Une infrastructure sans horodatage courtier ne permet pas de nommer
+    `broker_processing` : le chiffre serait crédible et faux."""
+    matrix = build_matrix(qualified_clock(), proven_connector())
+    with pytest.raises(JournalError, match="non identifiable"):
+        enforce_contract(
+            (LatencyInterval("broker_processing", 5 * NS_PER_MS, Observability.OBSERVED,
+                             ClockBasis.CROSS_SYSTEM),),
+            matrix,
+        )
+
+
+def test_contract_refuses_to_promote_an_aggregate_to_observed():
+    matrix = build_matrix(qualified_clock(), proven_connector())
+    with pytest.raises(JournalError, match="agrégat"):
+        enforce_contract(
+            (LatencyInterval("submit_to_ack", 8 * NS_PER_MS, Observability.OBSERVED,
+                             ClockBasis.MONOTONIC),),
+            matrix,
+        )
+
+
+def test_contract_accepts_what_the_infrastructure_actually_supports():
+    matrix = build_matrix(qualified_clock(), proven_connector())
+    enforce_contract(
+        (
+            LatencyInterval("compute", 3 * NS_PER_MS, Observability.OBSERVED,
+                            ClockBasis.MONOTONIC),
+            LatencyInterval("submit_to_ack", 8 * NS_PER_MS, Observability.AGGREGATE_ONLY,
+                            ClockBasis.MONOTONIC, SUBMIT_ACK_COMPONENTS),
+            LatencyInterval("broker_processing", None, Observability.NOT_IDENTIFIABLE,
+                            ClockBasis.CROSS_SYSTEM),
+        ),
+        matrix,
+    )
 
 
 def test_latency_above_horizon_counts_as_full_consumption():

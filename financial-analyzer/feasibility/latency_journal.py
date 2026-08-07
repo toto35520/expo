@@ -22,6 +22,12 @@ import json
 from dataclasses import asdict, dataclass, field
 from enum import Enum
 
+from .observability import (
+    ComponentStatus,
+    LatencyPath,
+    ObservabilityMatrix,
+)
+
 NS_PER_MS = 1_000_000
 NS_PER_SECOND = 1_000_000_000
 JOURNAL_VERSION = "Q51_JOURNAL_1.0"
@@ -91,6 +97,38 @@ class LatencyInterval:
 
     def decomposable_into(self, component: str) -> bool:
         return self.observability is Observability.OBSERVED and component == self.name
+
+    @property
+    def covers(self) -> frozenset[str]:
+        """Mécanismes que cet intervalle recouvre : lui-même et tout ce qu'il confond.
+
+        C'est ce qui rend le recouvrement détectable. `submit_to_ack_latency` recouvre
+        `broker_processing` ; les compter tous les deux additionnerait deux fois la même
+        durée physique.
+        """
+        return frozenset({self.name}) | frozenset(self.contains)
+
+    def overlaps(self, other: "LatencyInterval") -> frozenset[str]:
+        """Mécanismes comptés par les deux intervalles. Vide si disjoints."""
+        return self.covers & other.covers
+
+
+def detect_interval_overlaps(
+    intervals: tuple[LatencyInterval, ...],
+) -> tuple[tuple[str, str, tuple[str, ...]], ...]:
+    """Paires d'intervalles qui recouvrent un même mécanisme.
+
+    Deux intervalles nommés peuvent parfaitement se chevaucher — l'aller-retour
+    d'émission contient déjà des mécanismes représentés ailleurs. Les additionner
+    double-compterait silencieusement, et la « borne inférieure » cesserait d'en être une.
+    """
+    found: list[tuple[str, str, tuple[str, ...]]] = []
+    for i, a in enumerate(intervals):
+        for b in intervals[i + 1:]:
+            shared = a.overlaps(b)
+            if shared:
+                found.append((a.name, b.name, tuple(sorted(shared))))
+    return tuple(found)
 
 
 #: Composantes de l'aller-retour d'émission qu'un accusé local ne sépare pas.
@@ -486,6 +524,36 @@ def broker_side_split(
     )
 
 
+def enforce_contract(
+    intervals: tuple[LatencyInterval, ...], matrix: ObservabilityMatrix
+) -> None:
+    """Refuse toute attribution plus fine que le contrat d'observabilité (Q57 + Q58).
+
+    Q51 peut journaliser librement ; ce qui entre dans Q19 ne peut pas revendiquer plus
+    que ce que les horloges et la sémantique du connecteur permettent d'affirmer. Un
+    intervalle nommé `broker_processing` sur une infrastructure sans horodatage courtier
+    porterait un chiffre crédible et faux.
+    """
+    for i in intervals:
+        if i.observability is Observability.NOT_IDENTIFIABLE:
+            continue
+        status = matrix.status_of(i.name)
+        if status is ComponentStatus.NOT_IDENTIFIABLE:
+            raise JournalError(
+                f"{i.name} porte une durée alors que le contrat d'observabilité le déclare "
+                "non identifiable sur cette infrastructure. Q19 ne peut pas lui attribuer "
+                "de valeur."
+            )
+        if (
+            i.observability is Observability.OBSERVED
+            and status is ComponentStatus.AGGREGATE_ONLY
+        ):
+            raise JournalError(
+                f"{i.name} est déclaré observé alors que le contrat ne l'autorise qu'en "
+                "agrégat. Le nom d'un rappel n'a aucune valeur probatoire."
+            )
+
+
 # ------------------------------------------------------------------- sortie Q19
 
 
@@ -502,6 +570,13 @@ class LatencyObservation:
     Les champs absents restent `None`. **Q19 ne reconstruit jamais un horodatage manquant
     à partir de moyennes** : une composante inconnue reste inconnue et n'entre pas dans la
     borne.
+
+    Deux vues coexistent et ne se confondent pas :
+
+    - **chemin critique** (`path`) — durée réellement vécue entre deux frontières. C'est
+      elle que le verdict utilise en priorité ;
+    - **attribution** (`intervals`) — décomposition par composante, avec ses trous. Elle
+      sert au diagnostic d'optimisation, jamais à reconstituer un total.
     """
 
     trigger_wall_ns: int
@@ -513,23 +588,73 @@ class LatencyObservation:
     quality: MeasurementQuality
     cluster_id: str
     probe_sampling_probability: float | None = None
+    path: LatencyPath | None = None
+
+    def __post_init__(self) -> None:
+        overlaps = detect_interval_overlaps(self.intervals)
+        if overlaps:
+            details = " ; ".join(
+                f"{a} et {b} comptent tous deux {', '.join(shared)}" for a, b, shared in overlaps
+            )
+            raise JournalError(
+                "Intervalles se recouvrant dans une même observation : " + details + ". "
+                "Une durée se calcule entre deux frontières, jamais par addition "
+                "d'intervalles susceptibles de se chevaucher."
+            )
 
     @property
-    def observable_lower_bound_ns(self) -> int:
-        """Somme des seules composantes réellement mesurées.
+    def attribution_lower_bound_ns(self) -> int:
+        """Somme des seules composantes réellement mesurées — **vue attribution**.
 
-        C'est une **borne inférieure** de la latence totale : ce qui n'est pas observable
-        n'est pas compté, donc la vraie latence ne peut qu'être supérieure. Cette asymétrie
-        est ce qui rend un verdict négatif concluant sans campagne complète.
+        Le constructeur ayant refusé tout recouvrement, cette somme ne double-compte
+        aucun mécanisme. Elle ignore en revanche les trous entre composantes mesurées :
+        c'est un diagnostic d'optimisation, pas la durée vécue.
         """
         return sum(i.duration_ns or 0 for i in self.intervals)
 
     @property
+    def critical_path_ns(self) -> int | None:
+        """Durée vécue, de la première à la dernière frontière connue du chemin."""
+        return self.path.critical_path_ns() if self.path is not None else None
+
+    @property
+    def observable_lower_bound_ns(self) -> int:
+        """Borne inférieure utilisée par le verdict.
+
+        Le chemin critique prime quand il existe : il englobe les trous non mesurés entre
+        composantes, il est donc toujours ≥ la somme d'attribution. Il reste malgré tout
+        une borne **inférieure** de la latence totale, car rien de ce qui précède la
+        première frontière ni ne suit la dernière n'y entre.
+
+        Ce qui n'est pas observable n'est pas compté, donc la vraie latence ne peut
+        qu'être supérieure. Cette asymétrie est ce qui rend un verdict négatif concluant
+        sans campagne complète.
+        """
+        lived = self.critical_path_ns
+        attributed = self.attribution_lower_bound_ns
+        return attributed if lived is None else max(lived, attributed)
+
+    @property
     def unknown_components(self) -> tuple[str, ...]:
-        return tuple(
+        """Composantes non identifiables, vues d'attribution **et** de chemin."""
+        names = [
             i.name for i in self.intervals
             if i.observability is Observability.NOT_IDENTIFIABLE
-        )
+        ]
+        if self.path is not None:
+            names += [
+                f"{s.from_boundary}→{s.to_boundary}" for s in self.path.unknown_segments()
+            ]
+        return tuple(names)
+
+    @property
+    def path_coverage(self) -> float | None:
+        """Part du chemin critique effectivement attribuée à des composantes mesurées.
+
+        Une couverture basse ne rend pas la borne fausse : elle indique seulement que
+        l'optimisation manque de prise, pas que le verdict manque de fondement.
+        """
+        return self.path.coverage() if self.path is not None else None
 
     def consumed_fraction_at(self, horizon_ns: int) -> float:
         """Part de l'horizon consommée par la latence.

@@ -2931,7 +2931,7 @@ mesurées — exécution, position en file, sélection adverse — peuvent encor
 
 ## ADR-158 — Une borne inférieure déjà trop lente suffit à conclure
 
-**Statut** : figé et implémenté (Q51)
+**Statut** : figé et implémenté (Q51) · **mécanisme corrigé par l'ADR-168**
 
 **Décision.** La borne inférieure observable somme uniquement les composantes réellement
 mesurées : ce qui n'est pas observable n'est pas compté, donc la latence réelle ne peut
@@ -2940,6 +2940,11 @@ sans campagne d'exécution**.
 
 **Conséquences.** C'est ce qui permet de savoir si une campagne réelle plus coûteuse vaut la
 peine d'être financée, avant de la lancer.
+
+> **Correction.** L'asymétrie tient — c'est le mot « somme » qui était faux. Additionner des
+> intervalles susceptibles de se recouvrir pouvait produire une borne **supérieure** à la durée
+> réellement vécue. L'ADR-168 remplace l'addition par des frontières temporelles ; la conclusion
+> de cette décision est inchangée, sa mise en œuvre ne l'est pas.
 
 ---
 
@@ -2966,3 +2971,146 @@ refuse l'autorisation.
 **Conséquences.** Trois flux avancent en parallèle : Q50 mesure le marché, Q51 mesure la capacité
 à agir dessus, Q52 classe le temps. Leur intersection est le premier domaine de recherche qui ne
 repose plus sur des hypothèses synthétiques.
+
+---
+
+## ADR-161 — Résolution, exactitude, précision et stabilité sont quatre grandeurs distinctes
+
+**Statut** : figé et implémenté (Q57)
+
+**Décision.** La qualification d'une horloge distingue explicitement ces quatre grandeurs.
+Aucune précision affichée ne peut excéder l'incertitude qualifiée : `can_publish()` refuse toute
+publication plus fine que l'incertitude **mesurée**, et une horloge ne peut être qualifiée pour
+l'inter-systèmes sur la seule foi d'une précision annoncée.
+
+**Conséquences.** La résolution effective est mesurée sur une série d'appels — plus petit écart
+non nul réellement observé — et non lue dans la documentation de l'API. Une horloge affichant des
+nanosecondes peut n'avancer que par pas de 15 µs.
+
+---
+
+## ADR-162 — Un recul de l'horloge murale est une discontinuité quelle que soit son amplitude
+
+**Statut** : figé et implémenté (Q57) · confirme l'ADR-149
+
+**Décision.** Tout recul de la murale pendant une progression monotone constitue une
+discontinuité, sans seuil. Pour les corrections positives, une variation excessive de
+`ΔW − ΔM` produit également une discontinuité, selon une politique versionnée.
+
+**Conséquences.** Un seuil de magnitude laisserait passer les petites corrections de
+synchronisation — précisément les plus fréquentes. Le signe est un critère absolu ; la magnitude
+n'en est un que dans le sens positif.
+
+---
+
+## ADR-163 — Un intervalle inter-systèmes n'est exploitable qu'une fois les domaines qualifiés
+
+**Statut** : figé et implémenté (Q57)
+
+**Décision.** Une durée entre deux horloges différentes reste `NOT_RESOLVABLE_INTERSYSTEM` tant
+que Q57 n'a pas qualifié les domaines et leur incertitude de synchronisation — **même si les deux
+valeurs numériques existent**. La classe de résolution est un **rapport** `u/L`, jamais un seuil
+absolu.
+
+**Conséquences.** Une incertitude de 1 ms est excellente sur 100 ms et inutilisable sur 2 ms.
+Publier la seconde comme une mesure ferait passer un décalage de synchronisation pour une latence.
+
+---
+
+## ADR-164 — La sémantique des événements courtier est une capacité versionnée liée à une preuve
+
+**Statut** : figé et implémenté (Q58)
+
+**Décision.** Chaque événement porte sa sémantique, son domaine d'horloge, sa garantie d'ordre et
+un `evidence_id`. Toute modification du connecteur crée une nouvelle qualification : les
+conclusions précédentes ne sont pas supposées valables.
+
+**Conséquences.** Une mise à jour de SDK peut changer rappels, tamponnage, ordre des événements,
+horodatages et reprises. `invalidated_by()` rend la péremption explicite plutôt que tacite.
+
+---
+
+## ADR-165 — Le nom d'un rappel n'établit jamais l'état d'un ordre
+
+**Statut** : figé et implémenté (Q58)
+
+**Décision.** `on_order_accepted()` ne démontre pas qu'un ordre est reçu, accepté, actif, annulé
+ou exécuté. Un événement déclaré observable sans preuve ne se construit pas.
+`OBSERVATIONAL_INFERENCE` ne suffit jamais seule à qualifier un événement ambigu.
+
+**Conséquences.** `BROKER_ACK ≠ ORDER_ACTIVE` structurellement tant que l'activation n'est pas
+elle-même observable. Le retour d'émission n'est jamais utilisé comme accusé courtier lorsque
+seule la mise en file locale est démontrée.
+
+---
+
+## ADR-166 — Un délai dépassé produit un état inconnu, jamais un rejet implicite
+
+**Statut** : figé et implémenté (Q58)
+
+**Décision.** `TIMEOUT_UNKNOWN_STATE` produit `UNKNOWN_PENDING_RECONCILIATION`. La réconciliation
+est obligatoire pour traiter délai dépassé, reconnexion, accusé perdu, rappel perdu et panne.
+
+**Conséquences.** Résoudre un délai dépassé en rejet autoriserait l'émission d'un second ordre
+alors que le premier existe peut-être déjà chez le courtier : une position double au lieu d'une.
+
+---
+
+## ADR-167 — Q19 n'attribue jamais de composante plus fine que la matrice d'observabilité
+
+**Statut** : figé et implémenté (Q57 + Q58)
+
+**Décision.** Le croisement Q57 × Q58 produit la **seule** décomposition autorisée. Une composante
+n'est déclarée observable que si les deux la rendent observable. `enforce_contract()` lève une
+erreur sur toute attribution plus fine, et sur toute promotion d'un agrégat en observation.
+
+**Conséquences.** Sans horodatage courtier, nommer `broker_processing` produirait un chiffre
+crédible et faux. Sans accusé prouvé, l'aller-retour n'est pas « agrégé » : il est absent — un
+connecteur non démontré ne fournit pas une mesure grossière, il ne fournit rien.
+
+---
+
+## ADR-168 — La borne de latence est construite à partir de frontières, jamais par addition
+
+**Statut** : figé et implémenté (Q57 + Q58) · corrige l'ADR-158
+
+**Décision.** `LatencyPath` décrit le chemin critique par ses **frontières temporelles**. Deux
+segments consécutifs partagent une frontière : ils sont disjoints par construction. Côté journal,
+`LatencyObservation` refuse de se construire si deux de ses intervalles recouvrent le même
+mécanisme — recouvrement détecté transitivement par les composantes déclarées.
+
+**Conséquences.** L'addition naïve produisait des bornes supérieures au vécu : 14 ms
+d'aller-retour plus 9 ms de traitement courtier situé **à l'intérieur** donnent 23 ms sur un
+chemin de 20 ms. Une borne inférieure supérieure au vécu n'en est pas une. Le double comptage
+devient structurellement impossible plutôt qu'interdit par convention.
+
+---
+
+## ADR-169 — Le chemin critique sert au verdict, l'attribution au diagnostic
+
+**Statut** : figé et implémenté (Q57 + Q58)
+
+**Décision.** Deux vues sont publiées et ne se confondent pas. La vue chemin critique
+— `quote received → decision → ACK` — est la durée réellement vécue et fonde le verdict de
+faisabilité. La vue attribution sert au diagnostic d'optimisation.
+
+**Conséquences.** Le chemin critique englobe les trous non mesurés entre composantes ; il est donc
+toujours ≥ la somme d'attribution, tout en restant une borne **inférieure** de la latence totale.
+Une couverture faible signale un manque de prise pour l'optimisation, pas un défaut de fondement.
+Les qualités de mesure ne sont jamais confondues dans une même distribution.
+
+---
+
+## ADR-170 — Déclarer correctement NOT_IDENTIFIABLE est une résolution valide
+
+**Statut** : figé et implémenté (Q57 + Q58)
+
+**Décision.** Résoudre Q57/Q58 n'exige pas que toutes les composantes soient observables. Une
+synchronisation médiocre réduit le domaine mesurable sans empêcher la résolution ; un événement
+déclaré inobservable **est** qualifié. Ce qui bloque, c'est l'ambiguïté non documentée.
+
+**Conséquences.** Le champ `intersystem_uncertainty_declared_unknown` sépare deux situations que
+rien ne distinguerait autrement : ne pas avoir mesuré, et avoir cherché puis constaté qu'on ne
+peut pas mesurer. La première laisse Q57 ouverte, la seconde la résout. La fiche connecteur livrée
+vide est un résultat valide : une fiche déclarant tout inconnu produit des bornes honnêtes, là où
+une supposition produirait des verdicts faux.

@@ -84,8 +84,8 @@ l'avancement de la spécification ; elles bloqueront l'implémentation. Ce fichi
 | **Q49** | **Contribution cible par unité de temps** et coûts fixes journaliers (données, infrastructure, capital immobilisé) : ils déterminent le plancher de fréquence économique, donc peuvent exclure une famille avant tout test prédictif. | 🟠 | Q40 phase 0 §9 |
 | **Q50** | **Export de cotations bid/ask horodatées**, plusieurs journées. Une liste de spreads sans chronologie ne suffit pas : amplitude, densité, rafales et coûts doivent être calculés sur la même timeline (ADR-123). | 🔴 | Adaptateur §1 |
 | **Q51** | **Journalisation de latence** — le **moteur** est implémenté (ADR-149 à 160, 44 tests). Ce qui manque : brancher les points d'appel du connecteur courtier et **démarrer la phase passive**. Ces données ne se reconstruisent pas après coup. | ✅ moteur · 🔴 branchement | Adaptateur · Q19 §5 · Q51 |
-| **Q57** | **Synchronisation d'horloge disponible** sur l'hôte réel (NTP, chrony, PTP, horloge courtier) et **incertitude revendicable**. Aucune latence inter-systèmes ne peut être publiée plus finement. | 🔴 | Q51 §4 |
-| **Q58** | **Sémantique exacte de l'API courtier** : que signifient retour d'émission, accusé, ordre accepté, ordre actif, annulation confirmée ? Aucune décomposition fine n'est validable avant cette réponse. | 🔴 | Q51 §14 |
+| **Q57** | **Qualification d'horloge** — le **moteur** est implémenté (ADR-161 à 163 et 167 à 170, 48 tests avec Q58). Ce qui manque : **instrumenter l'hôte qui exécutera réellement l'analyseur** — murale, monotone, dérive, discontinuités, synchronisation, résolution effective. Fiche : `connector-capability/host-clock-capability.json`. Une synchronisation médiocre n'empêche pas la résolution ; elle réduit le domaine mesurable (ADR-170). | ✅ moteur · 🔴 mesure | Q51 §4 · Q57 §38 |
+| **Q58** | **Sémantique de l'API courtier** — le **moteur** est implémenté (ADR-164 à 167). Ce qui manque : **remplir la fiche** `connector-capability/broker-connector-capability.json` avec ce qui est démontré. Une grande partie se qualifie **sans émettre d'ordre** : documentation, code du connecteur, rappels de connexion, chronologie d'une session sans trading. Le reste attend Q42. | ✅ moteur · 🔴 contenu | Q51 §14 · Q58 §39 |
 | **Q59** | **Politique d'échantillonnage** : couverture minimale voulue pour NORMAL, P75, P95, P99 et fenêtres macro, sans générer une charge artificielle excessive. | 🟠 | Q51 §28 |
 | **Q60** | **Surcoût maximal acceptable** du journal avant que la campagne soit considérée comme modifiant l'objet qu'elle mesure. | 🟠 | Q51 §38 |
 | **Q52** | **Calendrier de marché versionné** — le **moteur** est implémenté (ADR-129 à 138, 30 tests) ; ce qui manque est le **contenu réel** : horaires, fériés, demi-séances et maintenances du courtier et de la place, avec leurs sources. | 🔴 | Adaptateur B7 · Q52 |
@@ -105,3 +105,30 @@ Si une seule séance est consacrée à répondre, dans cet ordre :
 3. **Q9 / Q21** — classe de données listées et profondeur d'historique de carnet. Décident si les moteurs 3.1 à 3.6 sont mesurables ou restent en veto permanent.
 4. **Q4 / Q18** — alerte ou exécution, et conduite en mode dégradé avec position ouverte.
 5. **Q5** — indépendance réelle des fournisseurs spot. En dessous de trois sources indépendantes, aucune décision n'est autorisée (ADR-006).
+
+---
+
+## Ce qui n'attend plus qu'une mesure
+
+Cinq questions ont désormais leur **moteur implémenté et testé**, et attendent uniquement des
+données que personne d'autre que l'infrastructure réelle ne peut fournir :
+
+| # | Moteur | Ce qui manque |
+| --- | --- | --- |
+| **Q50** | adaptateur | export bid/ask horodaté, plusieurs journées |
+| **Q51** | journal de latence | brancher les points d'appel, démarrer la phase passive |
+| **Q52 / Q53** | calendrier + chaîne de preuve | horaires, fériés, maintenances, avec leurs sources |
+| **Q57** | qualification d'horloge | instrumenter l'hôte réel |
+| **Q58** | sémantique du connecteur | remplir la fiche avec ce qui est démontré |
+
+Q51 et Q57 partagent une propriété qu'aucune autre question du registre ne possède : **leurs
+données ne se reconstruisent pas après coup.** Une latence non journalisée au moment où elle
+s'est produite est perdue définitivement ; une horloge non instrumentée pendant une session
+ne peut pas être requalifiée rétrospectivement.
+
+Q57 et Q58 se qualifient en grande partie **sans risque financier** — instrumentation locale,
+documentation, code du connecteur, chronologie d'une session sans trading.
+
+Une fois Q19 alimenté par ces mesures, l'embranchement suivant est déterminé par un seul
+chiffre : si la borne de latence élimine déjà les horizons microstructurels, financer Q42
+est inutile ; sinon, Q42 devient la prochaine dépense rationnelle.

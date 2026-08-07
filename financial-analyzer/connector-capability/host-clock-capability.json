@@ -1,0 +1,29 @@
+{
+  "_comment": "Fiche Q57. À produire par instrumentation de l'hôte qui exécutera réellement l'analyseur — pas de l'hôte de développement.",
+
+  "host_id": "UNKNOWN",
+  "wall_clock_source": "UNKNOWN",
+  "monotonic_clock_source": "UNKNOWN",
+
+  "sync_method": "UNKNOWN",
+  "sync_server": null,
+  "advertised_accuracy_ns": null,
+  "measured_uncertainty_ns": null,
+  "intersystem_uncertainty_declared_unknown": false,
+
+  "correction_mode": "UNKNOWN",
+  "virtualization_state": "UNKNOWN",
+
+  "monotonic_resolution_ns": 0,
+  "wall_resolution_ns": 0,
+  "wall_mono_samples": 0,
+
+  "monotonic_failures": 0,
+  "wall_discontinuities": 0,
+  "drift_p95_ppm": 0.0,
+  "suspend_events": 0,
+
+  "qualification": "CLOCK_UNQUALIFIED",
+  "qualified_at_ns": 0,
+  "qualification_version": "Q57_CLOCK_1.0"
+}
