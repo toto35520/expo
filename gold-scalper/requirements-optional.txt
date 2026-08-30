@@ -1,0 +1,3 @@
+# Le coeur de goldscalp n'a AUCUNE dependance : il tourne avec Python 3.9+ nu.
+# Ce fichier ne concerne que le pont MetaTrader 5 (Windows uniquement).
+MetaTrader5>=5.0.45 ; sys_platform == "win32"
