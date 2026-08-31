@@ -401,7 +401,7 @@ def build_plan(confluence: Confluence, calibration: Calibration, risk: RiskConfi
     invalidation = (
         f"Thèse invalidée si le prix clôture {'sous' if direction > 0 else 'au-dessus de'} "
         f"{stop_mid:.2f} en M5, ou si la structure M15 passe "
-        f"{'baissiere' if direction > 0 else 'haussiere'}."
+        f"{'baissière' if direction > 0 else 'haussière'}."
     )
 
     notes: list[str] = []

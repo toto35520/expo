@@ -22,6 +22,7 @@ Contraintes du serverless, et comment elles sont traitees :
 
 from __future__ import annotations
 
+import dataclasses
 import json
 import os
 import sys
@@ -37,6 +38,7 @@ from goldscalp import __version__, engine                       # noqa: E402
 from goldscalp.cli import to_payload                            # noqa: E402
 from goldscalp.config import Config                             # noqa: E402
 from goldscalp.core.calibration import Calibration, add_anchor  # noqa: E402
+from goldscalp.core.plan import build_plan                        # noqa: E402
 from goldscalp.util import setup_logging                        # noqa: E402
 
 setup_logging(os.environ.get("GOLDSCALP_LOG", "warn"))
@@ -166,6 +168,52 @@ def build_config(params: dict[str, list[str]]) -> Config:
     return config
 
 
+def add_preview(payload: dict, analysis, calibration, config) -> dict:
+    """Plan de PRÉPARATION quand aucun signal ne franchit le seuil.
+
+    Ouvrir l'outil pour lire « aucun plan » n'apprend rien. On construit donc
+    le plan que le moteur poserait SI la confiance montait, avec les niveaux
+    déjà calculés. Il est marqué comme non exécutable et n'est jamais fourni
+    quand un veto est actif : un veto n'est pas une question de confiance,
+    c'est un refus.
+    """
+    if payload["plan"]["valid"] or analysis.confluence.vetoes:
+        return payload
+
+    score = analysis.confluence.final_score
+    direction = 1 if score > 0 else -1 if score < 0 else 0
+    if direction == 0:
+        return payload
+
+    probe = dataclasses.replace(analysis.confluence, direction=direction)
+    news_multiplier = analysis.data.news.size_multiplier if analysis.data.news else 1.0
+    plan = build_plan(probe, calibration, config.risk, config.market,
+                      analysis.session, news_multiplier)
+    if not plan.valid:
+        return payload
+
+    payload["preview"] = {
+        "side": plan.side,
+        "entry": plan.entry,
+        "entry_type": plan.entry_type,
+        "stop_loss": plan.stop,
+        "stop_distance": plan.stop_distance,
+        "take_profits": [
+            {"label": t.label, "price": t.price, "r_multiple": t.r_multiple,
+             "share": t.share, "rationale": t.rationale}
+            for t in plan.targets
+        ],
+        "lots": plan.lots,
+        "rr1": plan.rr1,
+        "rr2": plan.rr2,
+        "blocked_by": payload["plan"].get("rejection", ""),
+        "missing_confidence": round(
+            max(0.0, config.engine.min_confidence - analysis.confluence.confidence), 1
+        ),
+    }
+    return payload
+
+
 def run_analysis(params: dict[str, list[str]]) -> dict:
     config = build_config(params)
     problems = config.risk.validate()
@@ -185,6 +233,8 @@ def run_analysis(params: dict[str, list[str]]) -> dict:
         spread_override=_as_float(params, "spread"),
     )
     payload = to_payload(analysis)
+    if _as_bool(params, "preview", True):
+        payload = add_preview(payload, analysis, calibration, config)
     payload["notes"] = notes
     payload["version"] = __version__
     payload["region"] = os.environ.get("VERCEL_REGION", "inconnue")

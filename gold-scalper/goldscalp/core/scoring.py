@@ -37,6 +37,16 @@ COMPONENT_WEIGHTS = {
 # Poids de base par timeframe, ajustés ensuite selon le régime M15.
 TF_BASE_WEIGHTS = {"M15": 0.42, "M5": 0.36, "M1": 0.22}
 
+# Les valeurs internes servent de clés de comparaison dans tout le moteur :
+# elles restent en ASCII et ne sont traduites qu'au moment de l'affichage.
+TREND_FR = {"haussier": "haussière", "baissier": "baissière", "range": "en range"}
+DIVERGENCE_FR = {
+    "bullish": "haussière classique",
+    "bearish": "baissière classique",
+    "hidden_bullish": "haussière cachée",
+    "hidden_bearish": "baissière cachée",
+}
+
 
 @dataclass
 class Component:
@@ -124,7 +134,7 @@ def _score_trend(ind: IndicatorSet) -> Component:
         norm = clamp(slope21 / (ind.atr_value * 0.30), -1.0, 1.0)
         parts.append((norm, 0.20))
         if abs(norm) > 0.35:
-            details.append(f"EMA21 en pente {'haussiere' if norm > 0 else 'baissiere'} ({norm:+.2f} ATR/barre)")
+            details.append(f"EMA21 en pente {'haussière' if norm > 0 else 'baissière'} ({norm:+.2f} ATR/barre)")
 
     if ind.st_dir:
         direction = ind.st_dir[-1]
@@ -170,7 +180,7 @@ def _score_momentum(ind: IndicatorSet) -> Component:
             growing = abs(hist) > abs(prev)
             details.append(
                 f"MACD histogramme {hist:+.3f} "
-                f"({'accelere' if growing else 'ralentit'})"
+                f"({'accélère' if growing else 'ralentit'})"
             )
 
     srsi = last_valid(ind.srsi_k)
@@ -207,7 +217,7 @@ def _score_structure(ind: IndicatorSet, structure: StructureView) -> Component:
 
     mapping = {"haussier": 1.0, "baissier": -1.0, "range": 0.0}
     parts.append((mapping.get(structure.trend, 0.0), 0.26))
-    details.append(f"structure {structure.trend}")
+    details.append(f"structure {TREND_FR.get(structure.trend, structure.trend)}")
 
     if structure.last_event != "aucun":
         recency = clamp(1.0 - structure.event_bars_ago / 25.0, 0.0, 1.0)
@@ -228,10 +238,10 @@ def _score_structure(ind: IndicatorSet, structure: StructureView) -> Component:
         profile = ind.profile
         if price > profile.vah:
             parts.append((0.7, 0.14))
-            details.append(f"au-dessus de la Value Area ({profile.vah:.2f}) - acceptation haussiere")
+            details.append(f"au-dessus de la Value Area ({profile.vah:.2f}) - acceptation haussière")
         elif price < profile.val:
             parts.append((-0.7, 0.14))
-            details.append(f"sous la Value Area ({profile.val:.2f}) - acceptation baissiere")
+            details.append(f"sous la Value Area ({profile.val:.2f}) - acceptation baissière")
         else:
             pos = safe_div(price - profile.val, profile.vah - profile.val, 0.5)
             parts.append((clamp((pos - 0.5) * 1.2, -1.0, 1.0), 0.10))
@@ -330,7 +340,10 @@ def _score_meanrev(ind: IndicatorSet) -> Component:
         div = ind.divergence
         sign = 1.0 if "bullish" in div.kind else -1.0
         parts.append((sign * div.strength, 0.30))
-        details.append(f"divergence {div.kind} (force {div.strength:.2f}, il y a {div.bars_ago} barres)")
+        details.append(
+            f"divergence {DIVERGENCE_FR.get(div.kind, div.kind)} "
+            f"(force {div.strength:.2f}, il y a {div.bars_ago} barres)"
+        )
 
     willr = last_valid(ind.willr)
     if willr is not None:
@@ -479,7 +492,7 @@ def fuse(views: dict[str, TimeframeView], fundamental: FundamentalView, micro: M
             else:
                 vetoes.append(
                     "Signal contre une tendance M15 forte "
-                    f"({'haussiere' if context.regime.direction > 0 else 'baissiere'}). "
+                    f"({'haussière' if context.regime.direction > 0 else 'baissière'}). "
                     "Utilise --allow-counter-trend pour l'autoriser."
                 )
 

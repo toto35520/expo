@@ -171,7 +171,7 @@ def classify_trend(swings: list[Swing], candles: Sequence[Candle]) -> tuple[str,
 
 def impulse_leg(swings: list[Swing], candles: Sequence[Candle],
                 lookback_swings: int = 12) -> tuple[Optional[float], Optional[float], bool]:
-    """Jambe d'impulsion courante -> (haut, bas, haussiere).
+    """Jambe d'impulsion courante -> (haut, bas, haussière).
 
     On prend les extrêmes des `lookback_swings` derniers pivots : c'est cette
     amplitude-la qui porte les retracements exploitables en scalp, pas

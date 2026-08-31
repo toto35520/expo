@@ -375,7 +375,9 @@ def cmd_levels(args: argparse.Namespace, config: Config, palette: Palette) -> in
         if view is None:
             continue
         structure = view.structure
-        print(palette.blue(f"\n  {timeframe} - structure {structure.trend}, "
+        from goldscalp.core.scoring import TREND_FR
+
+        print(palette.blue(f"\n  {timeframe} - structure {TREND_FR.get(structure.trend, structure.trend)}, "
                            f"dernier événement {structure.last_event}"))
 
         def line(level, above: bool) -> str:

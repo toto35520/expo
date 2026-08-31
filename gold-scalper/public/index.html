@@ -19,9 +19,18 @@
     font:14px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
     padding-bottom:env(safe-area-inset-bottom)}
   a{color:var(--info)}
-  .wrap{max-width:1120px;margin:0 auto;padding:16px}
+  .wrap{max-width:1120px;margin:0 auto;padding:14px}
 
-  header{display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin-bottom:14px}
+  header{display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin-bottom:12px;
+    position:sticky;top:0;z-index:20;background:linear-gradient(var(--bg) 78%,transparent);
+    padding:10px 0 12px;margin-top:-10px}
+  @media(max-width:560px){
+    .wrap{padding:10px}
+    .price{font-size:30px}
+    header{gap:8px}
+    header .grow{flex:1 0 100%;order:3;display:flex;gap:8px}
+    header .grow button{flex:1}
+  }
   .brand{font-weight:700;letter-spacing:.02em;font-size:16px}
   .brand span{color:var(--warn)}
   .price{font-family:var(--mono);font-size:26px;font-weight:700;font-variant-numeric:tabular-nums}
@@ -49,6 +58,15 @@
   .badge.buy{background:rgba(34,197,94,.14);color:var(--buy);border-color:rgba(34,197,94,.4)}
   .badge.sell{background:rgba(239,68,68,.14);color:var(--sell);border-color:rgba(239,68,68,.4)}
   .badge.none{background:#151a24;color:var(--dim);border-color:var(--line)}
+  @media(max-width:560px){.badge{font-size:19px;padding:9px 14px}}
+
+  /* Plan de préparation : lisible, mais visuellement non exécutable. */
+  .prep{border:1px dashed #3a445c;border-radius:10px;padding:10px;background:#0e131c}
+  .prep .head{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:8px}
+  .prep .lbl{font-size:10px;font-weight:800;letter-spacing:.12em;padding:4px 8px;border-radius:999px;
+    background:#1b2233;color:var(--dim);border:1px solid var(--line)}
+  .prep .rung .val{opacity:.72}
+  .prep .why{font-size:12px;color:var(--warn)}
   .turbo{font-size:11px;font-weight:800;letter-spacing:.12em;padding:5px 10px;border-radius:999px;
     background:rgba(168,85,247,.16);color:var(--turbo);border:1px solid rgba(168,85,247,.45)}
   .conf{flex:1;min-width:180px}
@@ -130,8 +148,10 @@
       <div class="src" id="src">en attente</div>
     </div>
     <div class="spacer"></div>
-    <button id="refresh" class="primary">Analyser</button>
-    <button id="auto" aria-pressed="false">Auto <span id="countdown"></span></button>
+    <div class="grow">
+      <button id="refresh" class="primary">Analyser</button>
+      <button id="auto" aria-pressed="false">Auto <span id="countdown"></span></button>
+    </div>
   </header>
 
   <details class="settings" id="settings">
@@ -353,7 +373,9 @@
     if(d.simulated) banner.push(`<div class="alert stop"><strong>DONNÉES SIMULÉES</strong> — aucun prix réel. Ne jamais trader ce signal.</div>`);
     (d.notes || []).forEach(n => banner.push(`<div class="alert">${esc(n)}</div>`));
     if(d.calibration && d.calibration.health === "critique" && !d.simulated)
-      banner.push(`<div class="alert stop">Calibration <strong>critique</strong> (${fmt(d.calibration.quality,0)}/100) — les niveaux peuvent être décalés de plusieurs dollars.</div>`);
+      banner.push(`<div class="alert stop">Calibration <strong>critique</strong> (${fmt(d.calibration.quality,0)}/100) —
+        les niveaux peuvent être décalés de plusieurs dollars.
+        <button style="margin-top:6px" onclick="document.getElementById('settings').open=true;document.getElementById('alpha').focus()">Régler maintenant</button></div>`);
     $("banner").innerHTML = banner.join("");
 
     $("badge").className = "badge " + side;
@@ -367,7 +389,35 @@
     $("vetoes").innerHTML = (sig.vetoes||[]).map(v => `<div class="alert stop">${esc(v)}</div>`).join("");
 
     /* plan */
-    if(!plan.valid){
+    if(!plan.valid && d.preview){
+      const pv = d.preview, pdir = pv.side === "ACHAT" ? 1 : -1;
+      const prung = (cls, tag, price, meta) =>
+        `<div class="rung ${cls}"><div class="tag">${tag}</div><div class="val">${fmt(price)}</div><div class="meta">${meta}</div></div>`;
+      const ptps = pv.take_profits || [];
+      const ptop = pdir > 0
+        ? [...ptps].reverse().map(t => prung("tp", t.label, t.price, `${fmt(t.r_multiple)}R · ${Math.round(t.share*100)}%`))
+        : [prung("sl","STOP",pv.stop_loss,`${fmt(pv.stop_distance)} $`)];
+      const pbot = pdir > 0
+        ? [prung("sl","STOP",pv.stop_loss,`${fmt(pv.stop_distance)} $`)]
+        : ptps.map(t => prung("tp", t.label, t.price, `${fmt(t.r_multiple)}R · ${Math.round(t.share*100)}%`));
+      $("plan").innerHTML =
+        `<div class="prep">
+           <div class="head">
+             <span class="lbl">PRÉPARATION</span>
+             <strong class="${pdir>0?"pos":"neg"}">${esc(pv.side)}</strong>
+             <span class="mut">${fmt(pv.lots)} lots · ${fmt(pv.rr1)}/${fmt(pv.rr2)} R</span>
+           </div>
+           <div class="ladder">
+             ${ptop.join("")}
+             ${prung("entry","ENTRÉE " + pv.entry_type.toUpperCase(), pv.entry, "")}
+             ${pbot.join("")}
+           </div>
+           <p class="why" style="margin:8px 0 0">
+             Ne pas exécuter : ${esc(pv.blocked_by)}.
+             ${pv.missing_confidence > 0 ? `Il manque ${fmt(pv.missing_confidence,0)} points de confiance.` : ""}
+           </p>
+         </div>`;
+    }else if(!plan.valid){
       $("plan").innerHTML = `<div class="alert">Aucun plan : ${esc(plan.rejection)}</div>`;
     }else{
       const tps = plan.take_profits || [];
@@ -488,8 +538,11 @@
   });
 
   const saved = load();
-  if(!saved.alpha) $("settings").open = true;
-  refresh();
+  // On analyse tout de suite : ouvrir l'outil doit donner un verdict, pas un
+  // formulaire. L'absence de calibration est signalée par un bandeau, elle
+  // n'empêche pas la lecture.
+  if(saved.interval === undefined || saved.interval === "") $("interval").value = "60";
+  startAuto();
 })();
 </script>
 </body>

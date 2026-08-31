@@ -242,7 +242,7 @@ def collect(config: Config, *, demo: bool = False, seed: Optional[int] = None,
                 config.engine.news_caution_min,
             )
             bundle.sources["calendrier"] = (
-                f"{len(events)} événements ({'repli embarque' if calendar.is_estimated else 'ForexFactory'})"
+                f"{len(events)} événements ({'repli embarqué' if calendar.is_estimated else 'ForexFactory'})"
             )
         except Exception as exc:
             bundle.problems.append(f"calendrier indisponible : {exc}")
