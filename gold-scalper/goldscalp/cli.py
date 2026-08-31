@@ -63,6 +63,10 @@ def build_parser() -> argparse.ArgumentParser:
         sp.add_argument("--symbol", help="symbole MT5 (défaut: XAUUSD)")
         sp.add_argument("--bybit-symbol", help="symbole Bybit (défaut: détection auto XAUTUSDT/PAXGUSDT)")
         sp.add_argument("--bybit-category", choices=["spot", "linear"], help="catégorie du marché Bybit")
+        sp.add_argument("--yahoo-symbol",
+                        help="symbole Yahoo du repli (défaut : XAUUSD=X puis GC=F)")
+        sp.add_argument("--no-yahoo", action="store_true",
+                        help="désactive le repli Yahoo quand Bybit est injoignable")
         sp.add_argument("--balance", type=float, help="capital du compte")
         sp.add_argument("--risk", type=float, help="pourcentage du capital risque par trade")
         sp.add_argument("--min-confidence", type=float, help="seuil de confiance pour émettre un signal")
@@ -129,6 +133,10 @@ def apply_overrides(config: Config, args: argparse.Namespace) -> Config:
         market.bybit_symbol = args.bybit_symbol
     if getattr(args, "bybit_category", None):
         market.bybit_category = args.bybit_category
+    if getattr(args, "yahoo_symbol", None):
+        market.yahoo_symbol = args.yahoo_symbol
+    if getattr(args, "no_yahoo", False):
+        eng.use_yahoo_fallback = False
     if getattr(args, "balance", None) is not None:
         risk.account_balance = args.balance
     if getattr(args, "risk", None) is not None:

@@ -51,6 +51,24 @@ compris le week-end quand le forex est fermé, et il expose un **carnet d'ordres
 un flux d'exécutions, le funding et l'open interest** — des données que MT5 ne
 donne pas.
 
+### Deux sources de prix, dans cet ordre
+
+| Source | Quand | Ce qu'elle apporte | Ce qui manque |
+|---|---|---|---|
+| **MT5** | paquet `MetaTrader5` installé, terminal ouvert | le prix exact de ton broker, aucun recalage nécessaire | Windows uniquement |
+| **Bybit** `XAUTUSDT` | par défaut | 24/7, carnet, flux, funding, open interest | prime XAUT à recalibrer ; **filtré par pays** |
+| **Yahoo** `XAUUSD=X` | repli automatique | **or spot** — l'écart au broker se réduit à son markup | pas de volume, pas de microstructure, fermé le week-end |
+
+Le repli Yahoo n'est pas cosmétique : Bybit filtre par pays **au niveau de son
+CDN**. Depuis un serveur américain, l'API renvoie
+`403 — The Amazon CloudFront distribution is configured to block access from
+your country`. Sans seconde source, l'outil serait inutilisable là où il est
+déployé plutôt que là où tu te trouves.
+
+Quand le repli s'active, l'outil le dit : la source affichée passe à `YAHOO`, et
+l'absence de volume est signalée explicitement — les indicateurs de participation
+se rabattent alors sur une pondération temporelle.
+
 ### Le modèle appliqué
 
 ```
@@ -571,14 +589,33 @@ npx vercel --prod
 
 ### Le point qui casse tout : la région
 
-**Bybit filtre les adresses IP américaines.** Une fonction déployée dans une
-région américaine reçoit une erreur, pas des bougies. `vercel.json` épingle donc
-la région sur **`fra1` (Francfort)**. Alternatives selon ta zone : `sin1`
-(Singapour), `hnd1` (Tokyo), `dub1` (Dublin). Ne repasse pas sur `iad1` ou
-`sfo1`.
+**Bybit filtre les adresses IP américaines**, au niveau de son CDN. Une fonction
+déployée à Washington (`iad1`, la région par défaut de beaucoup de comptes)
+reçoit ceci :
 
-Si l'API répond `502` avec `kind: "source_indisponible"`, c'est ce problème :
-la réponse indique la région d'exécution pour te le confirmer.
+```
+403 — The Amazon CloudFront distribution is configured to block access
+      from your country
+```
+
+`vercel.json` demande `fra1` (Francfort), mais **ce champ n'est pas toujours
+honoré** : selon le plan, la région des fonctions est imposée par le projet. Le
+réglage fiable est dans l'interface :
+
+> **Project Settings → Functions → Function Region → Frankfurt, Germany (fra1)**
+>
+> puis **redéploie** — le changement ne s'applique pas au déploiement existant.
+
+Autres régions convenables : `dub1` (Dublin), `cdg1` (Paris), `sin1`
+(Singapour), `hnd1` (Tokyo). À éviter : `iad1`, `sfo1`, `cle1`, `pdx1`.
+
+**Depuis l'ajout du repli Yahoo, ce n'est plus bloquant** : si Bybit refuse,
+l'outil bascule seul sur l'or spot Yahoo et continue de produire des signaux.
+Corriger la région reste préférable — tu récupères le 24/7, le volume et la
+microstructure.
+
+Pour vérifier la région servie : `https://<ton-projet>.vercel.app/api/health`
+renvoie le champ `region`.
 
 ### La calibration en serverless
 
@@ -639,6 +676,11 @@ projet.
   quelques minutes.
 - **La calibration vieillit.** Recalibre toutes les 2 à 4 heures. L'outil
   t'avertit, mais il ne peut pas le deviner à ta place.
+- **Le repli Yahoo n'est pas l'égal de Bybit.** Pas de volume sur `XAUUSD=X`,
+  donc pas de vraie lecture de participation ; pas de carnet ni de flux, donc
+  pas de microstructure ; et l'or spot ferme du vendredi 22 h au dimanche 22 h
+  UTC. L'outil signale chacun de ces manques plutôt que de les combler par des
+  valeurs inventées.
 - **La microstructure vient de Bybit, pas de ton broker.** Le carnet XAUT n'est
   pas le carnet de ton courtier. Le signal de flux reste informatif sur la
   direction du métal, pas sur l'exécution que tu obtiendras.
@@ -678,6 +720,7 @@ goldscalp/
 │   └── backtest.py         walk-forward sans fuite du futur
 ├── data/
 │   ├── bybit.py            client API v5 (public, sans clé)
+│   ├── yahoo.py            source de repli (or spot, non géo-bloquée)
 │   ├── mt5.py              pont MetaTrader 5 (facultatif)
 │   ├── macro.py            Yahoo Finance / Stooq
 │   ├── calendar.py         ForexFactory + calendrier de repli
@@ -696,9 +739,10 @@ vercel.json             region, duree maximale, reecritures
 python3 -m unittest discover -s tests
 ```
 
-78 tests couvrant les bornes des indicateurs, la causalité, l'identifiabilité de
+94 tests couvrant les bornes des indicateurs, la causalité, l'identifiabilité de
 la pente de calibration, la géométrie des plans, la non-inversion des signaux,
-l'honnêteté du backtest et le CLI.
+l'honnêteté du backtest, la bascule de source quand Bybit est géo-bloqué, et le
+CLI.
 
 ---
 

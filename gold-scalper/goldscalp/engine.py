@@ -29,6 +29,7 @@ from goldscalp.data.bybit import BybitClient, BybitError, Instrument
 from goldscalp.data.calendar import EconomicCalendar, NewsRisk
 from goldscalp.data.macro import MacroFeed, MacroSeries
 from goldscalp.data.mt5 import Mt5Bridge
+from goldscalp.data.yahoo import YahooError, YahooGoldClient, has_usable_volume
 from goldscalp.util import LOG, now_ms
 
 TF_ROLES = {
@@ -168,6 +169,35 @@ def collect(config: Config, *, demo: bool = False, seed: Optional[int] = None,
             except BybitError as exc:
                 bundle.problems.append(f"Bybit {timeframe} : {exc}")
 
+    # -- repli Yahoo -------------------------------------------------------- #
+    # Bybit filtre par pays au niveau de son CDN : une fonction hébergée aux
+    # États-Unis reçoit un 403. Sans seconde source, l'outil serait inutilisable
+    # là où il est déployé plutôt que là où l'utilisateur se trouve.
+    yahoo_series: dict[str, Series] = {}
+    yahoo_instrument = None
+    if not bybit_series and not mt5_series and config.engine.use_yahoo_fallback:
+        yahoo = YahooGoldClient()
+        try:
+            yahoo_instrument = yahoo.resolve_instrument(config.market.yahoo_symbol)
+            LOG.info("repli Yahoo : %s (%s)", yahoo_instrument.symbol, yahoo_instrument.description)
+        except YahooError as exc:
+            bundle.problems.append(f"Yahoo inaccessible : {exc}")
+        if yahoo_instrument is not None:
+            for timeframe in timeframes + ["D1"]:
+                if yahoo.offline:
+                    break
+                try:
+                    fetched = yahoo.klines(yahoo_instrument, timeframe,
+                                           config.engine.bars.get(timeframe, 1000))
+                    if len(fetched) > 60:
+                        yahoo_series[timeframe] = fetched
+                    else:
+                        bundle.problems.append(
+                            f"Yahoo {timeframe} : seulement {len(fetched)} bougies"
+                        )
+                except YahooError as exc:
+                    bundle.problems.append(f"Yahoo {timeframe} : {exc}")
+
     # Choix de la source de prix : MT5 s'il couvre tous les timeframes.
     if all(tf in mt5_series for tf in timeframes):
         for timeframe in timeframes:
@@ -182,9 +212,32 @@ def collect(config: Config, *, demo: bool = False, seed: Optional[int] = None,
         bundle.daily = bybit_series.get("D1")
         bundle.price_source = "BYBIT"
         symbol = instrument.symbol if instrument else "?"
-        bundle.sources["prix"] = f"Bybit {symbol} recalibre vers MT5"
+        bundle.sources["prix"] = f"Bybit {symbol} recalibré vers MT5"
+    elif yahoo_series:
+        for timeframe in timeframes:
+            if timeframe in yahoo_series:
+                bundle.series[timeframe] = yahoo_series[timeframe]
+        bundle.daily = yahoo_series.get("D1")
+        bundle.price_source = "YAHOO"
+        symbol = yahoo_instrument.symbol if yahoo_instrument else "?"
+        bundle.sources["prix"] = f"Yahoo {symbol} recalibré vers MT5"
+        reference = bundle.series.get("M5") or next(iter(bundle.series.values()))
+        if not has_usable_volume(reference):
+            bundle.problems.append(
+                "Yahoo ne publie pas de volume sur ce symbole : VWAP, OBV et profil "
+                "se rabattent sur une pondération temporelle, et la composante "
+                "participation perd de sa valeur."
+            )
+        if reference and not reference.is_fresh(now_ms(), tolerance_bars=6):
+            age_h = (now_ms() - reference.last.ts) / 3_600_000
+            bundle.problems.append(
+                f"Dernière bougie vieille de {age_h:.1f} h : l'or spot suit les "
+                "horaires du forex, fermé du vendredi 22 h au dimanche 22 h UTC."
+            )
     else:
-        bundle.problems.append("aucune source de prix disponible")
+        bundle.problems.append(
+            "aucune source de prix disponible (MT5, Bybit et Yahoo ont tous échoué)"
+        )
         bundle.fetch_seconds = round(time.time() - started, 3)
         return bundle
 
@@ -265,9 +318,10 @@ def analyse(bundle: DataBundle, config: Config, calibration: Calibration,
             + ("; ".join(bundle.problems) if bundle.problems else "sources injoignables")
         )
 
-    # Recalibrage : uniquement si le prix vient de Bybit. Une série MT5 est
-    # déjà dans le bon référentiel, la recaler serait une double correction.
-    needs_shift = bundle.price_source == "BYBIT"
+    # Recalibrage : toute source externe doit être ramenée au référentiel du
+    # broker. Une série MT5 y est déjà : la recaler serait une double
+    # correction de plusieurs dollars.
+    needs_shift = bundle.price_source in ("BYBIT", "YAHOO")
     price_bybit: Optional[float] = None
 
     views: dict[str, TimeframeView] = {}

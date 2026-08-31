@@ -160,6 +160,10 @@ def build_config(params: dict[str, list[str]]) -> Config:
     bybit_symbol = _first(params, "bybit_symbol")
     if bybit_symbol:
         config.market.bybit_symbol = bybit_symbol
+    yahoo_symbol = _first(params, "yahoo_symbol")
+    if yahoo_symbol:
+        config.market.yahoo_symbol = yahoo_symbol
+    config.engine.use_yahoo_fallback = _as_bool(params, "yahoo", True)
 
     config.engine.use_macro = _as_bool(params, "macro", True)
     config.engine.use_calendar = _as_bool(params, "calendar", True)

@@ -50,6 +50,7 @@ class EngineConfig:
     news_block_after_min: int = 15
     news_caution_min: int = 60
     swing_span: dict[str, int] = field(default_factory=lambda: {"M1": 3, "M5": 3, "M15": 4})
+    use_yahoo_fallback: bool = True         # repli quand Bybit est géo-bloqué
     use_macro: bool = True
     use_calendar: bool = True
     use_microstructure: bool = True
@@ -60,6 +61,7 @@ class MarketConfig:
     mt5_symbol: str = "XAUUSD"
     bybit_symbol: Optional[str] = None      # None = détection auto
     bybit_category: Optional[str] = None    # None = linear puis spot
+    yahoo_symbol: Optional[str] = None      # None = XAUUSD=X puis GC=F
     contract_size: float = 100.0            # 1 lot XAUUSD = 100 onces
     digits: int = 2
     default_spread: float = 0.30

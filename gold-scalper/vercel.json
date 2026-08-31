@@ -1,11 +1,13 @@
 {
   "$schema": "https://openapi.vercel.sh/vercel.json",
   "regions": ["fra1"],
+  "functionFailoverRegions": ["dub1", "cdg1"],
   "outputDirectory": "public",
   "functions": {
     "api/*.py": {
       "maxDuration": 60,
       "memory": 1024,
+      "regions": ["fra1"],
       "excludeFiles": "{tests/**,**/test_*.py,**/__pycache__/**,README.md}"
     }
   },
