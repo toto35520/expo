@@ -201,8 +201,17 @@ chose qu'il ne peut pas deviner, c'est ce qu'affiche ton terminal.
 C'est ce `+0.15 $` qui compte : la marge de ton courtier. Elle ne dérive
 pratiquement pas, contrairement aux `+7.35 $` d'écart brut à Bybit.
 
-**Sur le tableau de bord web**, c'est le même geste : un champ *Prix affiché par
-ton MT5*, un bouton *Calibrer*.
+**Sur le tableau de bord web**, c'est le même geste, et c'est la seule chose
+visible en haut de page :
+
+```
+PRIX MT5  [ 4444.30 ]  [ Calibrer ]
+Calibré · écart au prix de ton broker 0.15 $
+```
+
+Capital, risque, seuil, sources : tout le reste a un défaut raisonnable et vit
+dans le tiroir *Réglages*, replié. Les modifications y sont enregistrées
+automatiquement — pas de bouton à valider.
 
 #### Variantes
 

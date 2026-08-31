@@ -126,8 +126,9 @@
 
   details.settings{background:var(--panel);border:1px solid var(--line);border-radius:12px;
     padding:0;margin-bottom:12px;overflow:hidden}
-  details.settings>summary{cursor:pointer;padding:12px 14px;font-size:12px;font-weight:700;
-    letter-spacing:.09em;text-transform:uppercase;color:var(--dim);list-style:none}
+  details.settings{margin-bottom:12px}
+  details.settings>summary{cursor:pointer;padding:10px 14px;font-size:11px;font-weight:700;
+    letter-spacing:.09em;text-transform:uppercase;color:var(--faint);list-style:none}
   details.settings>summary::-webkit-details-marker{display:none}
   details.settings>summary::after{content:" ▾";color:var(--faint)}
   details.settings[open]>summary::after{content:" ▴"}
@@ -135,13 +136,14 @@
     grid-template-columns:repeat(auto-fit,minmax(140px,1fr))}
   .form label{font-size:11px;color:var(--dim);display:block;margin-bottom:4px;
     text-transform:uppercase;letter-spacing:.05em}
-  .calib{grid-column:1/-1;background:#0e1420;border:1px solid #2c3a55;border-radius:10px;padding:12px}
-  .calib .row{display:flex;gap:8px}
-  .calib .row input{flex:1;font-size:17px;font-weight:700}
-  .calib .row button{flex:none;white-space:nowrap}
-  .calib .hint{margin:8px 0 0;font-size:12px;color:var(--faint);line-height:1.5}
-  .calib .hint.ok{color:var(--buy)} .calib .hint.warn{color:var(--warn)}
-  .calib .hint.err{color:var(--sell)}
+  .calibbar{display:flex;align-items:center;gap:8px;background:#0e1420;
+    border:1px solid #2c3a55;border-radius:10px;padding:10px 12px;flex-wrap:wrap}
+  .calibbar label{flex:none;font-size:11px;color:var(--dim);text-transform:uppercase;
+    letter-spacing:.06em}
+  .calibbar input{flex:1;min-width:120px;font-size:18px;font-weight:700;font-family:var(--mono)}
+  .calibbar button{flex:none;white-space:nowrap}
+  .hint{margin:6px 2px 12px;font-size:12px;color:var(--faint);line-height:1.5}
+  .hint.ok{color:var(--buy)} .hint.warn{color:var(--warn)} .hint.err{color:var(--sell)}
   details.advanced{grid-column:1/-1}
   details.advanced>summary{cursor:pointer;font-size:11px;color:var(--faint);
     text-transform:uppercase;letter-spacing:.06em;padding:4px 0}
@@ -175,19 +177,18 @@
     </div>
   </header>
 
+  <!-- La seule chose que l'outil ne peut pas deviner : le prix du broker.
+       Tout le reste a un défaut raisonnable et vit dans le tiroir « Réglages ». -->
+  <div class="calibbar">
+    <label for="mt5price">Prix MT5</label>
+    <input type="number" id="mt5price" step="0.01" inputmode="decimal" placeholder="4444.30">
+    <button id="calibrate" class="primary">Calibrer</button>
+  </div>
+  <p class="hint" id="calibState">Recopie ici le prix affiché par ton MT5. C'est tout.</p>
+
   <details class="settings" id="settings">
-    <summary>Réglages — calibration MT5, risque, sources</summary>
+    <summary>Réglages</summary>
     <div class="form">
-      <div class="calib">
-        <label for="mt5price">Prix affiché par ton MT5</label>
-        <div class="row">
-          <input type="number" id="mt5price" step="0.01" inputmode="decimal"
-                 placeholder="ex. 2412.45">
-          <button id="calibrate" class="primary">Calibrer</button>
-        </div>
-        <p class="hint" id="calibState">Ouvre MT5 sur XAUUSD, recopie le prix ici.
-          Le reste est mesuré automatiquement.</p>
-      </div>
       <div>
         <label for="balance">Capital ($)</label>
         <input type="number" id="balance" step="100" placeholder="10000">
@@ -208,8 +209,15 @@
         <label for="symbol">Symbole MT5</label>
         <input type="text" id="symbol" placeholder="XAUUSD">
       </div>
+      <div class="toggles">
+        <button data-flag="macro" aria-pressed="true">Macro</button>
+        <button data-flag="calendar" aria-pressed="true">Calendrier</button>
+        <button data-flag="micro" aria-pressed="true">Microstructure</button>
+        <button data-flag="counter_trend" aria-pressed="false">Contre-tendance</button>
+        <button data-flag="demo" aria-pressed="false">Démo (hors ligne)</button>
+      </div>
       <details class="advanced">
-        <summary>Réglages avancés du calage</summary>
+        <summary>Calage manuel</summary>
         <div class="adv-grid">
           <div>
             <label for="alpha">Alpha ($)</label>
@@ -224,29 +232,11 @@
             <input type="number" id="spread" step="0.01" placeholder="0.30">
           </div>
         </div>
+        <p class="foot" style="margin:8px 0 0">
+          Renseignés automatiquement par le bouton <em>Calibrer</em>. À ne toucher que
+          si tu sais ce que tu fais.
+        </p>
       </details>
-      <div class="toggles">
-        <button data-flag="macro" aria-pressed="true">Macro</button>
-        <button data-flag="calendar" aria-pressed="true">Calendrier</button>
-        <button data-flag="micro" aria-pressed="true">Microstructure</button>
-        <button data-flag="counter_trend" aria-pressed="false">Contre-tendance</button>
-        <button data-flag="demo" aria-pressed="false">Démo (hors ligne)</button>
-      </div>
-      <div class="actions">
-        <button id="save" class="primary">Enregistrer</button>
-        <span class="src" id="saved"></span>
-      </div>
-      <p class="foot" style="grid-column:1/-1;margin:0">
-        <strong>Comment calibrer :</strong> ouvre MT5 sur XAUUSD, lis le prix, recopie-le
-        ci-dessus, appuie sur <em>Calibrer</em>. L'outil relève lui-même le prix de référence
-        et mesure l'écart : il n'a besoin que de ce que ton terminal affiche.<br><br>
-        Il en déduit le <strong>markup de ton broker</strong> — quelques dizaines de centimes,
-        stables sur plusieurs jours. Si la référence spot est momentanément indisponible
-        (week-end, réseau), il retombe sur un écart brut à Bybit, qu'il faut refaire toutes
-        les 2 à 4 heures ; il te le dit alors en jaune.<br><br>
-        Pour mesurer aussi le spread, saisis le prix comme <code>bid ask</code> en ligne de
-        commande : <code>goldscalp calibrate --mt5 2412.30 2412.60</code>.
-      </p>
     </div>
   </details>
 
@@ -352,23 +342,30 @@
     });
     return out;
   }
+  // Sauvegarde silencieuse : un bouton « Enregistrer » est une étape de plus
+  // à comprendre pour un réglage qui n'a aucune raison d'être annulable.
   function save(){
     try{ localStorage.setItem(KEY, JSON.stringify(collect())); }catch(e){}
-    $("saved").textContent = "enregistré";
-    setTimeout(() => { $("saved").textContent = ""; }, 1800);
   }
   document.querySelectorAll("[data-flag]").forEach(btn => {
     btn.addEventListener("click", () => {
       btn.setAttribute("aria-pressed", btn.getAttribute("aria-pressed") === "true" ? "false" : "true");
+      save();
+      refresh();
     });
   });
-  $("save").addEventListener("click", () => { save(); refresh(); });
+  FIELDS.filter(f => f !== "mt5price").forEach(field => {
+    $(field).addEventListener("change", () => { save(); refresh(); });
+  });
 
   /* ---------- calibrage : un seul chiffre à saisir ---------- */
-  function calibState(text, cls){
+  function calibState(text, cls, fresh){
     const el = $("calibState");
     el.className = "hint" + (cls ? " " + cls : "");
     el.textContent = text;
+    // `fresh` marque un message issu d'un calibrage explicite : il ne doit pas
+    // être écrasé par l'état générique de l'analyse suivante.
+    if(fresh){ el.dataset.fresh = "1"; setTimeout(() => delete el.dataset.fresh, 20000); }
   }
 
   async function calibrate(){
@@ -392,7 +389,7 @@
       const detail = data.basis && data.basis.ok
         ? ` · base ${fmt(data.basis.value)} $ sur ${data.basis.samples} bougies`
         : "";
-      calibState(data.message + detail, data.durable ? "ok" : "warn");
+      calibState(data.message + detail, data.durable ? "ok" : "warn", true);
       refresh();
     }catch(err){
       calibState("Calibrage impossible : " + err, "err");
@@ -461,11 +458,13 @@
 
     const banner = [];
     if(d.simulated) banner.push(`<div class="alert stop"><strong>DONNÉES SIMULÉES</strong> — aucun prix réel. Ne jamais trader ce signal.</div>`);
-    (d.notes || []).forEach(n => banner.push(`<div class="alert">${esc(n)}</div>`));
-    if(d.calibration && d.calibration.health === "critique" && !d.simulated)
-      banner.push(`<div class="alert stop">Calibration <strong>critique</strong> (${fmt(d.calibration.quality,0)}/100) —
-        les niveaux peuvent être décalés de plusieurs dollars.
-        <button style="margin-top:6px" onclick="document.getElementById('settings').open=true;document.getElementById('alpha').focus()">Régler maintenant</button></div>`);
+    // Les notes de calibrage sont déjà résumées sous le champ « Prix MT5 » :
+    // les répéter en bandeau noierait ce qui compte vraiment.
+    (d.notes || [])
+      .filter(n => !/calibrat|alpha/i.test(n))
+      .forEach(n => banner.push(`<div class="alert">${esc(n)}</div>`));
+    // Pas de bandeau de calibrage : la ligne sous le champ « Prix MT5 » dit
+    // déjà où on en est, et deux messages pour la même chose noient le reste.
     $("banner").innerHTML = banner.join("");
 
     $("badge").className = "badge " + side;
@@ -627,15 +626,15 @@
       </table>
       ${(d.data.problems||[]).map(p=>`<div class="alert">${esc(p)}</div>`).join("")}`;
 
-    if(d.calibration && d.calibration.anchors){
-      const ref = d.calibration.reference === "spot"
-        ? "markup broker (valable plusieurs jours)"
-        : "écart brut à Bybit (à refaire toutes les 2-4 h)";
+    if(!$("calibState").dataset.fresh){
       const res = d.conversion ? d.conversion.residual_error : null;
-      if(!$("calibState").classList.contains("ok") && !$("calibState").classList.contains("err")){
-        calibState(`α ${fmt(d.calibration.alpha)} $ — ${ref}`
-          + (res !== null && res < 100 ? ` · écart résiduel ${fmt(res)} $` : ""),
-          d.calibration.reference === "spot" ? "ok" : "warn");
+      if(!d.calibration || !d.calibration.anchors){
+        calibState("Pas encore calibré — les prix affichés ne sont pas ceux de ton broker.", "warn");
+      }else if(d.calibration.reference === "spot"){
+        calibState(`Calibré · écart au prix de ton broker ${res !== null && res < 100 ? fmt(res) + " $" : "inconnu"}`, "ok");
+      }else{
+        calibState(`Calibré à l'ancienne · à refaire toutes les 2-4 h`
+          + (res !== null && res < 100 ? ` · écart ${fmt(res)} $` : ""), "warn");
       }
     }
 
@@ -673,9 +672,9 @@
 
   const saved = load();
   // On analyse tout de suite : ouvrir l'outil doit donner un verdict, pas un
-  // formulaire. L'absence de calibration est signalée par un bandeau, elle
+  // formulaire. L'absence de calibrage est signalée sous le champ, elle
   // n'empêche pas la lecture.
-  if(saved.interval === undefined || saved.interval === "") $("interval").value = "60";
+  if(!$("interval").value) $("interval").value = "60";
   startAuto();
 })();
 </script>
