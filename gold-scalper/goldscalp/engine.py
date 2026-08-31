@@ -16,12 +16,14 @@ from dataclasses import dataclass, field
 from typing import Optional
 
 from goldscalp.config import Config
+from goldscalp.core.basis import Basis, best_common_timeframe, estimate_basis
 from goldscalp.core.calibration import Calibration, health as calibration_health
 from goldscalp.core.fundamental import FundamentalView, analyse_fundamentals
 from goldscalp.core.indicators import compute_indicators
 from goldscalp.core.microstructure import MicroView, analyse_derivatives, build_micro
 from goldscalp.core.plan import TradePlan, build_plan, rejected_plan
 from goldscalp.core.regime import SessionInfo, current_session, detect_regime
+from goldscalp.core.scalp import ScalpView, analyse_scalp
 from goldscalp.core.scoring import Confluence, TimeframeView, build_timeframe_view, fuse
 from goldscalp.core.series import Series, resample
 from goldscalp.core.structure import build_structure
@@ -49,6 +51,7 @@ class DataBundle:
     macro: dict[str, MacroSeries] = field(default_factory=dict)
     news: Optional[NewsRisk] = None
     instrument: Optional[Instrument] = None
+    basis: Basis = field(default_factory=Basis)
     price_source: str = "?"
     simulated: bool = False
     fetch_seconds: float = 0.0
@@ -58,6 +61,80 @@ class DataBundle:
     @property
     def bars_total(self) -> int:
         return sum(len(s) for s in self.series.values())
+
+
+def _conversion(bundle: "DataBundle", calibration: Calibration):
+    """Construit la fonction série -> référentiel broker, et la décrit.
+
+    Renvoie (convertisseur, description de la chaîne, écart résiduel estimé).
+    Le résiduel est l'incertitude qui subsiste APRÈS conversion : c'est le
+    chiffre qui répond honnêtement à « de combien mes niveaux peuvent-ils être
+    faux ? ».
+    """
+    source = bundle.price_source
+    basis = bundle.basis
+
+    if source == "MT5":
+        return (lambda series: series), "aucune (série broker directe)", 0.0
+
+    if not calibration.anchors:
+        return (
+            lambda series: series,
+            f"AUCUNE — prix {source} bruts, non recalés",
+            999.0,
+        )
+
+    calibration_error = calibration.residual_std + calibration.half_spread
+
+    # Étape 1 : ramener la source à l'or spot.
+    if source == "YAHOO":
+        to_spot = lambda series: series                      # noqa: E731 — déjà du spot
+        step1 = "Yahoo = or spot"
+        basis_error = 0.0
+    elif basis.ok:
+        to_spot = basis.apply
+        step1 = f"Bybit {basis.value:+.2f} $ (base mesurée sur {basis.samples} bougies)"
+        basis_error = basis.dispersion
+    else:
+        # Sans base, on ne peut convertir que si l'ancrage vise déjà Bybit.
+        if calibration.reference == "bybit":
+            return (
+                calibration.apply,
+                f"Bybit {calibration.alpha:+.2f} $ (ancrage manuel direct, base non mesurée)",
+                round(calibration_error + 2.0, 2),
+            )
+        return (
+            lambda series: series,
+            "IMPOSSIBLE — ancrage adossé au spot mais base Bybit→spot non mesurée",
+            999.0,
+        )
+
+    # Étape 2 : de l'or spot au prix du broker.
+    if calibration.reference == "spot":
+        spot_to_broker = calibration
+    else:
+        # L'ancrage a été pris contre Bybit : on le retranscrit en référentiel
+        # spot grâce à la base, plutôt que de refuser de l'exploiter.
+        if not basis.ok:
+            return (calibration.apply, "ancrage direct Bybit", round(calibration_error + 2.0, 2))
+        spot_to_broker = Calibration(
+            alpha=round(calibration.alpha - basis.value, 6),
+            beta=calibration.beta,
+            spread=calibration.spread,
+            anchors=calibration.anchors,
+            residual_std=calibration.residual_std,
+            slope_fitted=calibration.slope_fitted,
+            reference="spot",
+            note="ancrage Bybit retranscrit en référentiel spot",
+        )
+
+    step2 = f"spot {spot_to_broker.alpha:+.2f} $ (markup broker)"
+    residual = round(basis_error + calibration_error, 2)
+
+    def convert(series):
+        return spot_to_broker.apply(to_spot(series))
+
+    return convert, f"{step1} -> {step2}", residual
 
 
 @dataclass
@@ -74,6 +151,11 @@ class Analysis:
     plan: TradePlan
     data: DataBundle
     config: Config
+    scalp: ScalpView = field(default_factory=ScalpView)
+    # Chaîne de conversion vers le référentiel broker, et incertitude qui
+    # subsiste une fois cette conversion faite.
+    conversion_chain: str = ""
+    residual_error: float = 0.0
 
     @property
     def has_trade(self) -> bool:
@@ -123,6 +205,14 @@ def collect(config: Config, *, demo: bool = False, seed: Optional[int] = None,
             price, m1[-30].close if len(m1) > 30 else price,
         )
         bundle.macro = synthetic.generate_macro(seed=base_seed, gold_bias=bias)
+
+        # Base simulée : le mode démo doit exercer la chaîne de conversion
+        # complète, sinon la fonctionnalité qui ramène l'écart broker à
+        # quelques centimes reste invisible hors ligne.
+        premium = 7.25 + (base_seed % 7) * 0.15
+        spot_reference = m1.apply_calibration(-premium, 1.0)
+        bundle.basis = estimate_basis(m1, spot_reference)
+        bundle.sources["base spot"] = f"simulée — {bundle.basis.describe()}"
         bundle.price_source = "SIMULATION"
         bundle.simulated = True
         bundle.sources = {"prix": "simulateur interne", "macro": "simule", "calendrier": "non consulte"}
@@ -175,6 +265,36 @@ def collect(config: Config, *, demo: bool = False, seed: Optional[int] = None,
     # là où il est déployé plutôt que là où l'utilisateur se trouve.
     yahoo_series: dict[str, Series] = {}
     yahoo_instrument = None
+
+    # Référence spot : même quand Bybit répond, on récupère une série d'or spot
+    # pour MESURER la base Bybit→spot. C'est ce qui permet de ramener l'écart
+    # au prix broker de plusieurs dollars à quelques dizaines de centimes, sans
+    # ancrage manuel à répéter toutes les deux heures.
+    if bybit_series and config.engine.use_spot_reference:
+        reference_client = YahooGoldClient()
+        try:
+            reference_instrument = reference_client.resolve_instrument(config.market.yahoo_symbol)
+            for timeframe in ("M1", "M5"):
+                if timeframe not in bybit_series or reference_client.offline:
+                    continue
+                fetched = reference_client.klines(reference_instrument, timeframe, 400)
+                if len(fetched) > 30:
+                    yahoo_series[timeframe] = fetched
+            timeframe = best_common_timeframe(bybit_series, yahoo_series)
+            if timeframe:
+                bundle.basis = estimate_basis(bybit_series[timeframe], yahoo_series[timeframe])
+                bundle.sources["base spot"] = (
+                    f"{reference_instrument.symbol} sur {timeframe} — {bundle.basis.describe()}"
+                )
+            else:
+                bundle.problems.append(
+                    "Aucune bougie commune entre Bybit et l'or spot : la base ne peut "
+                    "pas être mesurée, le recalage retombe sur l'ancrage manuel."
+                )
+        except YahooError as exc:
+            bundle.problems.append(f"Référence spot indisponible : {exc}")
+        yahoo_series = {}      # série de référence, pas série de prix
+
     if not bybit_series and not mt5_series and config.engine.use_yahoo_fallback:
         yahoo = YahooGoldClient()
         try:
@@ -318,16 +438,18 @@ def analyse(bundle: DataBundle, config: Config, calibration: Calibration,
             + ("; ".join(bundle.problems) if bundle.problems else "sources injoignables")
         )
 
-    # Recalibrage : toute source externe doit être ramenée au référentiel du
-    # broker. Une série MT5 y est déjà : la recaler serait une double
-    # correction de plusieurs dollars.
-    needs_shift = bundle.price_source in ("BYBIT", "YAHOO")
+    # Conversion vers le référentiel broker, en deux temps explicites :
+    #   1. source -> or spot   (base mesurée, automatique)
+    #   2. or spot -> broker   (markup, ancrage manuel)
+    # Une série MT5 est déjà au bon référentiel : la convertir serait une
+    # double correction de plusieurs dollars.
+    convert, chain, residual = _conversion(bundle, calibration)
     price_bybit: Optional[float] = None
 
     views: dict[str, TimeframeView] = {}
     daily = bundle.daily
-    if needs_shift and daily is not None:
-        daily = calibration.apply(daily)
+    if daily is not None:
+        daily = convert(daily)
 
     for timeframe in config.engine.timeframes:
         series = bundle.series.get(timeframe)
@@ -336,7 +458,7 @@ def analyse(bundle: DataBundle, config: Config, calibration: Calibration,
             continue
         if timeframe == "M1" and series:
             price_bybit = series.last.close
-        working = calibration.apply(series) if needs_shift else series
+        working = convert(series)
         closed = working.closed_only
         if len(closed) < 60:
             continue
@@ -368,7 +490,32 @@ def analyse(bundle: DataBundle, config: Config, calibration: Calibration,
         calibration.quality(),
         config.engine.min_confidence,
         config.engine.allow_counter_trend,
+        config.engine.turbo_confidence,
     )
+
+    # -- qualité d'exécution ------------------------------------------------ #
+    # La confluence dit OÙ va le marché ; ceci dit si le trade est exécutable
+    # MAINTENANT, au prix du scalp. Le turbo exige les deux.
+    view_m1 = views.get("M1")
+    view_m5 = views.get("M5") or view_m1
+    hint = confluence.direction or (
+        1 if confluence.final_score > 0 else -1 if confluence.final_score < 0 else 0
+    )
+    scalp = ScalpView()
+    if view_m1 is not None and view_m5 is not None:
+        scalp = analyse_scalp(
+            hint, view_m1.indicators, view_m5.indicators, view_m5.structure,
+            session, calibration.spread, view_m5.regime.target_multiplier,
+        )
+        if confluence.turbo and not scalp.turbo_ready:
+            confluence.turbo = False
+            confluence.warnings.append(
+                f"Turbo refusé par l'analyse d'exécution ({scalp.score:.0%}) : {scalp.turbo_refusal}"
+            )
+            confluence.turbo_blockers.append(f"exécution : {scalp.turbo_refusal}")
+        for blocker in scalp.blockers:
+            if confluence.direction != 0:
+                confluence.warnings.append(f"Exécution : {blocker.detail}")
 
     news_multiplier = bundle.news.size_multiplier if bundle.news else 1.0
     if confluence.direction != 0:
@@ -391,13 +538,51 @@ def analyse(bundle: DataBundle, config: Config, calibration: Calibration,
         calibration=calibration,
         calibration_level=level,
         calibration_problems=problems,
+        conversion_chain=chain,
+        residual_error=residual,
         session=session,
         fundamental=fundamental,
         confluence=confluence,
         plan=plan,
         data=bundle,
         config=config,
+        scalp=scalp,
     )
+
+
+def measure_basis(config: Config) -> Basis:
+    """Mesure la base Bybit → or spot, sans lancer d'analyse complète.
+
+    Sert au moment de la calibration : convertir le prix Bybit relevé en son
+    équivalent SPOT permet à l'ancrage de mesurer le seul markup du broker,
+    donc de rester valable des jours au lieu de quelques heures.
+    """
+    client = BybitClient()
+    try:
+        instrument = client.resolve_instrument(config.market.bybit_symbol,
+                                               config.market.bybit_category)
+    except BybitError as exc:
+        LOG.info("base non mesurable, Bybit indisponible : %s", exc)
+        return Basis(note=f"Bybit indisponible ({exc})")
+
+    yahoo = YahooGoldClient()
+    try:
+        reference = yahoo.resolve_instrument(config.market.yahoo_symbol)
+    except YahooError as exc:
+        LOG.info("base non mesurable, or spot indisponible : %s", exc)
+        return Basis(note=f"or spot indisponible ({exc})")
+
+    for timeframe in ("M1", "M5"):
+        try:
+            left = client.klines(instrument, timeframe, 300)
+            right = yahoo.klines(reference, timeframe, 300)
+        except (BybitError, YahooError) as exc:
+            LOG.debug("base %s : %s", timeframe, exc)
+            continue
+        basis = estimate_basis(left, right)
+        if basis.ok:
+            return basis
+    return Basis(note="aucune bougie commune entre les deux sources")
 
 
 def run(config: Config, calibration: Calibration, *, demo: bool = False,

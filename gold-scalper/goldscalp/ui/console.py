@@ -147,6 +147,20 @@ def render(analysis: Analysis, palette: Optional[Palette] = None,
     level_color = {"ok": p.green, "attention": p.yellow, "critique": p.red}[analysis.calibration_level]
     out.append(_section("CALIBRAGE BYBIT -> MT5", p))
     out.append(f"  {level_color(analysis.calibration_level.upper())}  {analysis.calibration.describe()}")
+    if analysis.conversion_chain:
+        out.append(p.grey(f"  chaîne : {analysis.conversion_chain}"))
+    if analysis.residual_error < 100:
+        colorize = (p.green if analysis.residual_error <= 0.35
+                    else p.yellow if analysis.residual_error <= 1.0 else p.red)
+        out.append(
+            f"  écart résiduel estimé au prix broker : "
+            f"{colorize(f'{analysis.residual_error:.2f} $')}"
+        )
+    basis = data.basis
+    if basis.ok:
+        out.append(p.grey(f"  {basis.describe()}"))
+        for warning in basis.warnings():
+            out.append(p.yellow(f"  ! {warning}"))
     for problem in analysis.calibration_problems:
         out.append(p.yellow(f"  ! {problem}"))
 
@@ -181,7 +195,7 @@ def render(analysis: Analysis, palette: Optional[Palette] = None,
         side_color = p.green if plan.side == "ACHAT" else p.red
         out.append(
             f"  {side_color(p.bold(plan.side))}  ordre {p.bold(plan.entry_type)} "
-            f"a {p.bold(f'{plan.entry:.2f}')}"
+            f"à {p.bold(f'{plan.entry:.2f}')}"
             + (f"  (zone {plan.entry_zone[0]:.2f} - {plan.entry_zone[1]:.2f})"
                if plan.entry_type == "limite" else "")
         )
@@ -201,7 +215,7 @@ def render(analysis: Analysis, palette: Optional[Palette] = None,
         )
         expectancy_color = p.green if plan.expectancy_r > 0 else p.red
         out.append(
-            f"  {'Esperance':<12} {expectancy_color(f'{plan.expectancy_r:>+10.3f} R')} par trade"
+            f"  {'Espérance':<12} {expectancy_color(f'{plan.expectancy_r:>+10.3f} R')} par trade"
             + (p.grey("   (taux mesurés par le backtest)") if backtest and backtest.count >= 12
                else p.grey("   (estimation prudente, lance `backtest` pour des taux mesurés)"))
         )
@@ -211,6 +225,34 @@ def render(analysis: Analysis, palette: Optional[Palette] = None,
         out.append(p.grey(f"  {plan.invalidation}"))
         for note in plan.notes:
             out.append(p.yellow(f"  ! {note}"))
+
+    # -- exécution scalp ---------------------------------------------------- #
+    scalp = analysis.scalp
+    if scalp.checks:
+        out.append(_section("EXÉCUTION SCALP", p))
+        colorize = p.green if scalp.score >= 0.65 else (p.yellow if scalp.score >= 0.45 else p.red)
+        out.append(
+            f"  Qualité d'exécution {colorize(p.bold(f'{scalp.score:.0%}'))}  "
+            f"{p.grey('|')} {scalp.verdict}"
+        )
+        out.append(p.grey(
+            f"  cible estimée {scalp.estimated_target:.2f} $ · spread {scalp.spread_share:.0%} "
+            f"de la cible · espace {scalp.room:.2f} $ · vitesse {scalp.velocity:.2f} $/min"
+            + (f" · {scalp.window}" if scalp.window else "")
+        ))
+        for check in scalp.checks:
+            if check.passed:
+                mark = p.green("  ok  ")
+            elif check.blocking:
+                mark = p.red("BLOQUE")
+            else:
+                mark = p.yellow("faible")
+            out.append(f"  [{mark}] {check.name:<26}{p.grey(check.detail)}")
+
+        if c.turbo:
+            out.append(p.magenta("  Facteurs corroborants : " + ", ".join(c.turbo_reasons)))
+        elif c.direction != 0 and c.turbo_blockers:
+            out.append(p.grey("  Turbo refusé : " + " ; ".join(c.turbo_blockers[:3])))
 
     # -- timeframes -------------------------------------------------------- #
     out.append(_section("LECTURE PAR TIMEFRAME", p))

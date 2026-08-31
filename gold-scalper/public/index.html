@@ -67,6 +67,15 @@
     background:#1b2233;color:var(--dim);border:1px solid var(--line)}
   .prep .rung .val{opacity:.72}
   .prep .why{font-size:12px;color:var(--warn)}
+
+  .chk{display:flex;gap:9px;align-items:baseline;padding:5px 0;border-bottom:1px solid #171d29;
+    font-size:12.5px}
+  .chk:last-child{border-bottom:0}
+  .chk .m{flex:none;width:58px;font-size:10px;font-weight:800;letter-spacing:.06em}
+  .chk .n{flex:none;width:112px;color:var(--dim)}
+  .chk .d{flex:1;color:#aab4c4}
+  .chk.ok .m{color:var(--buy)} .chk.warn .m{color:var(--warn)} .chk.stop .m{color:var(--sell)}
+  @media(max-width:560px){.chk{flex-wrap:wrap}.chk .n{width:auto;font-weight:600}.chk .d{flex-basis:100%}}
   .turbo{font-size:11px;font-weight:800;letter-spacing:.12em;padding:5px 10px;border-radius:999px;
     background:rgba(168,85,247,.16);color:var(--turbo);border:1px solid rgba(168,85,247,.45)}
   .conf{flex:1;min-width:180px}
@@ -231,6 +240,11 @@
       <div class="card">
         <h2>Plan de trade</h2>
         <div id="plan"></div>
+      </div>
+
+      <div class="card" id="scalpCard" hidden>
+        <h2>Exécution scalp</h2>
+        <div id="scalp"></div>
       </div>
 
       <div class="card">
@@ -447,6 +461,33 @@
          ${(plan.notes||[]).map(n=>`<div class="alert">${esc(n)}</div>`).join("")}`;
     }
 
+    /* exécution scalp */
+    const sc = d.scalp;
+    $("scalpCard").hidden = !(sc && sc.checks && sc.checks.length);
+    if(sc && sc.checks && sc.checks.length){
+      const col = sc.score >= .65 ? "var(--buy)" : sc.score >= .45 ? "var(--warn)" : "var(--sell)";
+      $("scalp").innerHTML =
+        `<p style="margin:0 0 4px">Qualité d'exécution
+           <strong style="color:${col}">${Math.round(sc.score*100)}%</strong>
+           <span class="mut">· ${esc(sc.verdict)}</span></p>
+         <p class="foot" style="margin:0 0 10px">
+           cible estimée ${fmt(sc.estimated_target)} $ · spread ${Math.round(sc.spread_share*100)}% de la cible ·
+           espace ${fmt(sc.room)} $ · vitesse ${fmt(sc.velocity)} $/min${sc.window ? " · " + esc(sc.window) : ""}
+         </p>` +
+        sc.checks.map(ck => {
+          const cls = ck.passed ? "ok" : (ck.blocking ? "stop" : "warn");
+          const mark = ck.passed ? "ok" : (ck.blocking ? "BLOQUÉ" : "faible");
+          return `<div class="chk ${cls}"><span class="m">${mark}</span>
+                    <span class="n">${esc(ck.name)}</span>
+                    <span class="d">${esc(ck.detail)}</span></div>`;
+        }).join("") +
+        (sig.turbo
+          ? `<p class="foot" style="color:var(--turbo);margin-top:10px">Facteurs corroborants : ${esc((sig.turbo_reasons||[]).join(", "))}</p>`
+          : (sig.direction && (sig.turbo_blockers||[]).length
+             ? `<p class="foot" style="margin-top:10px">Turbo refusé : ${esc(sig.turbo_blockers.slice(0,3).join(" ; "))}</p>`
+             : ""));
+    }
+
     /* timeframes */
     $("tfs").innerHTML = ["M15","M5","M1"].filter(t => d.timeframes[t]).map(t => {
       const v = d.timeframes[t], w = Math.min(Math.abs(v.score),1)*50;
@@ -499,7 +540,12 @@
     const bars = d.data.bars || {};
     $("data").innerHTML = `<table>
         ${Object.keys(bars).map(k=>`<tr><td class="mut">${esc(k)}</td><td>${bars[k]} bougies</td></tr>`).join("")}
-        <tr><td class="mut">Calibration</td><td>α ${fmt(d.calibration.alpha)} · ${fmt(d.calibration.quality,0)}/100</td></tr>
+        <tr><td class="mut">Calibration</td><td>α ${fmt(d.calibration.alpha)} · ${esc(d.calibration.reference||"")} · ${fmt(d.calibration.quality,0)}/100</td></tr>
+        ${d.conversion ? `<tr><td class="mut">Écart résiduel</td>
+          <td style="color:${d.conversion.residual_error<=0.35?"var(--buy)":d.conversion.residual_error<=1?"var(--warn)":"var(--sell)"}">
+          ${d.conversion.residual_error>100?"non recalé":fmt(d.conversion.residual_error)+" $"}</td></tr>` : ""}
+        ${d.conversion && d.conversion.basis && d.conversion.basis.ok ? `<tr><td class="mut">Base Bybit→spot</td>
+          <td>${fmt(d.conversion.basis.value)} $ ± ${fmt(d.conversion.basis.dispersion)}</td></tr>` : ""}
         <tr><td class="mut">Collecte</td><td>${fmt(d.data.fetch_seconds,2)} s</td></tr>
         <tr><td class="mut">Région</td><td>${esc(d.region||"—")}</td></tr>
       </table>

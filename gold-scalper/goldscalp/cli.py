@@ -105,6 +105,11 @@ def build_parser() -> argparse.ArgumentParser:
     p_cal.add_argument("--symbol", help="symbole MT5 pour l'ancrage automatique")
     p_cal.add_argument("--show", action="store_true", help="affiché la calibration courante")
     p_cal.add_argument("--reset", action="store_true", help="efface tous les ancrages")
+    p_cal.add_argument("--no-basis", action="store_true",
+                       help="n'essaie pas de mesurer la base Bybit→spot (ancrage brut)")
+    p_cal.add_argument("--bybit-symbol", help="symbole Bybit")
+    p_cal.add_argument("--bybit-category", choices=["spot", "linear"])
+    p_cal.add_argument("--yahoo-symbol", help="symbole Yahoo pour l'or spot")
     p_cal.add_argument("--json", action="store_true")
 
     p_bt = sub.add_parser("backtest", help="backtest walk-forward du coeur technique", parents=[common])
@@ -264,7 +269,14 @@ def cmd_calibrate(args: argparse.Namespace, config: Config, palette: Palette) ->
             print(palette.red(f"prix Bybit inaccessible : {exc}"), file=sys.stderr)
             return 1
         print(palette.grey(f"prix Bybit {instrument.symbol} : {bybit_price:.2f}"))
-        updated = auto_anchor_from_mt5(calibration, bybit_price, args.symbol or config.market.mt5_symbol)
+        spot = None
+        if not args.no_basis:
+            basis = engine.measure_basis(config)
+            if basis.ok:
+                spot = round(basis.to_spot(bybit_price), 4)
+                print(palette.grey(f"  base mesurée : {basis.value:+.2f} $ -> or spot {spot:.2f}"))
+        updated = auto_anchor_from_mt5(calibration, bybit_price,
+                                       args.symbol or config.market.mt5_symbol, spot=spot)
         if updated is calibration:
             print(palette.red(
                 "ancrage automatique impossible. Releve bid/ask dans MT5 et utilise :\n"
@@ -278,9 +290,31 @@ def cmd_calibrate(args: argparse.Namespace, config: Config, palette: Palette) ->
         if args.bid is None or args.ask is None:
             print(palette.red("--bid et --ask sont requis avec --bybit"), file=sys.stderr)
             return 2
-        calibration = add_anchor(calibration, args.bybit, args.bid, args.ask, source="manuel")
+        spot = None
+        if not args.no_basis:
+            basis = engine.measure_basis(config)
+            if basis.ok:
+                spot = round(basis.to_spot(args.bybit), 4)
+                print(palette.grey(
+                    f"  base Bybit->spot mesurée : {basis.value:+.2f} $ "
+                    f"(± {basis.dispersion:.2f} sur {basis.samples} bougies)"
+                ))
+                print(palette.grey(f"  prix Bybit {args.bybit:.2f} -> or spot {spot:.2f}"))
+            else:
+                print(palette.yellow(
+                    f"  base non mesurée ({basis.note}) : l'ancrage restera adossé au "
+                    "prix Bybit brut et se périmera en quelques heures."
+                ))
+        calibration = add_anchor(calibration, args.bybit, args.bid, args.ask,
+                                 source="manuel", spot=spot)
         save_calibration(calibration)
-        print(palette.green("ancrage enregistre."))
+        if calibration.reference == "spot":
+            print(palette.green(
+                f"Ancrage enregistré — markup broker mesuré : {calibration.alpha:+.2f} $. "
+                "Il reste valable plusieurs jours."
+            ))
+        else:
+            print(palette.green("Ancrage enregistré (adossé au prix Bybit brut)."))
 
     elif not args.show:
         print(palette.yellow(
@@ -485,6 +519,7 @@ def to_payload(analysis: engine.Analysis, backtest: Optional[BacktestResult] = N
             "quality": analysis.calibration.quality(),
             "health": analysis.calibration_level,
             "anchors": len(analysis.calibration.anchors),
+            "reference": analysis.calibration.reference,
         },
         "signal": {
             "direction": c.direction,
@@ -494,6 +529,8 @@ def to_payload(analysis: engine.Analysis, backtest: Optional[BacktestResult] = N
             "final_score": c.final_score,
             "alignment": c.alignment,
             "turbo": c.turbo,
+            "turbo_reasons": c.turbo_reasons,
+            "turbo_blockers": c.turbo_blockers,
             "style": c.style,
             "vetoes": c.vetoes,
             "warnings": c.warnings,
@@ -534,6 +571,35 @@ def to_payload(analysis: engine.Analysis, backtest: Optional[BacktestResult] = N
                 }
                 if analysis.fundamental.news else None
             ),
+        },
+        "scalp": {
+            "score": analysis.scalp.score,
+            "verdict": analysis.scalp.verdict,
+            "turbo_ready": analysis.scalp.turbo_ready,
+            "burst": analysis.scalp.burst,
+            "chase_bars": analysis.scalp.chase_bars,
+            "spread_share": analysis.scalp.spread_share,
+            "room": analysis.scalp.room,
+            "velocity": analysis.scalp.velocity,
+            "window": analysis.scalp.window,
+            "estimated_target": analysis.scalp.estimated_target,
+            "checks": [
+                {"name": ck.name, "passed": ck.passed, "blocking": ck.blocking,
+                 "value": ck.value, "detail": ck.detail}
+                for ck in analysis.scalp.checks
+            ],
+        },
+        "conversion": {
+            "chain": analysis.conversion_chain,
+            "residual_error": analysis.residual_error,
+            "basis": {
+                "ok": analysis.data.basis.ok,
+                "value": analysis.data.basis.value,
+                "dispersion": analysis.data.basis.dispersion,
+                "drift_per_hour": analysis.data.basis.drift_per_hour,
+                "samples": analysis.data.basis.samples,
+                "quality": analysis.data.basis.quality(),
+            },
         },
         "microstructure": {
             "score": analysis.data.micro.score,

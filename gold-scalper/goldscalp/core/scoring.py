@@ -423,6 +423,8 @@ class Confluence:
     vetoes: list[str] = field(default_factory=list)
     alignment: float = 0.0         # 0..1, accord entre timeframes
     turbo: bool = False
+    turbo_reasons: list[str] = field(default_factory=list)
+    turbo_blockers: list[str] = field(default_factory=list)
     style: str = "suivi"           # suivi | fade
 
     @property
@@ -436,7 +438,8 @@ class Confluence:
 
 def fuse(views: dict[str, TimeframeView], fundamental: FundamentalView, micro: MicroView,
          session: SessionInfo, calibration_quality: float,
-         min_confidence: float = 55.0, allow_counter_trend: bool = False) -> Confluence:
+         min_confidence: float = 55.0, allow_counter_trend: bool = False,
+         turbo_confidence: float = 78.0) -> Confluence:
     """Fusionne tout en un signal unique, tracable et defendable."""
     present = {tf: v for tf, v in views.items() if tf in TF_BASE_WEIGHTS}
     if not present:
@@ -582,19 +585,48 @@ def fuse(views: dict[str, TimeframeView], fundamental: FundamentalView, micro: M
     elif driver_tf is not None and driver_tf.regime.favors_trend:
         style = "suivi"
 
+    # -- mode turbo ---------------------------------------------------------- #
+    # Une conjonction de huit conditions ne se réalise jamais : un mode turbo
+    # qui ne se déclenche pas n'est pas sélectif, il est mort. On sépare donc
+    # ce qui est NON NÉGOCIABLE de ce qui CORROBORE.
+    #
+    # Non négociable : un signal net, aucun veto, une session liquide.
+    # Corroborant : il en faut au moins trois sur quatre.
+    turbo_reasons: list[str] = []
+    turbo_blockers: list[str] = []
+
+    if direction == 0:
+        turbo_blockers.append("aucun signal")
+    if session.is_poor:
+        turbo_blockers.append(f"session {session.name} trop peu liquide")
+    if confidence < turbo_confidence:
+        turbo_blockers.append(
+            f"confiance {confidence:.0f} sous le seuil turbo de {turbo_confidence:.0f}"
+        )
+
+    micro_confirms = abs(micro_score) > 0.10 and (micro_score > 0) == (final > 0)
+    boosters = {
+        "les 3 timeframes alignés": alignment >= 0.99,
+        "volatilité haute ou extrême": (
+            driver_tf is not None and driver_tf.regime.volatility_state in ("haute", "extreme")
+        ),
+        "flux confirmant le sens": micro_confirms,
+        "configuration de suivi de tendance": style == "suivi",
+    }
+    for label, satisfied in boosters.items():
+        (turbo_reasons if satisfied else turbo_blockers).append(label)
+
+    satisfied_count = sum(1 for value in boosters.values() if value)
     turbo = bool(
         direction != 0
-        and alignment >= 0.99
-        and confidence >= 78
-        and session.is_prime
-        and driver_tf is not None
-        and driver_tf.regime.volatility_state in ("haute", "extreme")
-        and abs(micro_score) > 0.15
-        and (micro_score > 0) == (direction > 0)
+        and not vetoes
+        and not session.is_poor
+        and confidence >= turbo_confidence
+        and satisfied_count >= 3
     )
+    if not turbo and direction != 0 and confidence >= turbo_confidence and satisfied_count < 3:
+        turbo_blockers.append(f"seulement {satisfied_count} facteurs corroborants sur 4 (3 requis)")
 
-    # Insertion en tête dans l'ordre inverse : le lecteur voit d'abord le
-    # contexte M15, puis la configuration M5, puis le déclencheur M1.
     for tf in ("M1", "M5", "M15"):
         if tf in present:
             reasons = present[tf].top_reasons(2) + reasons
@@ -611,5 +643,7 @@ def fuse(views: dict[str, TimeframeView], fundamental: FundamentalView, micro: M
         vetoes=vetoes,
         alignment=round(alignment, 3),
         turbo=turbo,
+        turbo_reasons=turbo_reasons,
+        turbo_blockers=turbo_blockers,
         style=style,
     )

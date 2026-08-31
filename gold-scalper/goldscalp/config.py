@@ -51,6 +51,7 @@ class EngineConfig:
     news_caution_min: int = 60
     swing_span: dict[str, int] = field(default_factory=lambda: {"M1": 3, "M5": 3, "M15": 4})
     use_yahoo_fallback: bool = True         # repli quand Bybit est géo-bloqué
+    use_spot_reference: bool = True         # mesure automatique de la base Bybit→spot
     use_macro: bool = True
     use_calendar: bool = True
     use_microstructure: bool = True

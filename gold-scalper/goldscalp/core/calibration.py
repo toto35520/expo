@@ -44,13 +44,21 @@ MIN_RANGE_FOR_SLOPE = 8.0                 # $ d'amplitude minimale entre ancrage
 
 @dataclass
 class Anchor:
-    """Un point de calage : prix Bybit et prix MT5 observés SIMULTANEMENT."""
+    """Un point de calage : prix source et prix MT5 observés SIMULTANÉMENT.
+
+    `spot` est le prix de l'or spot au même instant, quand il est connu (prix
+    Bybit corrigé de la base mesurée, ou cotation spot directe). Un ancrage qui
+    le renseigne mesure le seul MARKUP DU BROKER, quantité petite et stable.
+    Sans lui, l'ancrage mesure l'écart brut à Bybit, qui inclut la prime XAUT
+    et se périme en quelques heures.
+    """
 
     ts: int
     bybit: float
     mt5_bid: float
     mt5_ask: float
     source: str = "manuel"
+    spot: Optional[float] = None
 
     @property
     def mt5_mid(self) -> float:
@@ -64,7 +72,16 @@ class Anchor:
 
     @property
     def offset(self) -> float:
-        return round(self.mt5_mid - self.bybit, 5)
+        """Écart au prix de référence de cet ancrage."""
+        return round(self.mt5_mid - self.reference_price, 5)
+
+    @property
+    def reference_price(self) -> float:
+        return self.spot if self.spot is not None else self.bybit
+
+    @property
+    def is_spot_based(self) -> bool:
+        return self.spot is not None
 
 
 @dataclass
@@ -76,7 +93,8 @@ class Calibration:
     fitted_at: int = 0
     residual_std: float = 0.0
     slope_fitted: bool = False
-    note: str = "non calibre"
+    note: str = "non calibré"
+    reference: str = "bybit"     # "spot" quand alpha mesure le markup broker
 
     # -- conversions ------------------------------------------------------- #
     def to_mt5(self, bybit_price: float) -> float:
@@ -106,8 +124,18 @@ class Calibration:
         return max(0, now_ms() - max(a.ts for a in self.anchors))
 
     @property
+    def stale_after_ms(self) -> int:
+        """Durée de vie utile de la calibration selon son référentiel.
+
+        Un ancrage adossé au spot mesure le markup du broker : il tient des
+        jours. Un ancrage adossé au prix Bybit brut inclut la prime XAUT, qui
+        dérive en quelques heures.
+        """
+        return ANCHOR_MAX_AGE_MS * (28 if self.reference == "spot" else 1)
+
+    @property
     def is_stale(self) -> bool:
-        return self.age_ms > ANCHOR_MAX_AGE_MS
+        return self.age_ms > self.stale_after_ms
 
     def quality(self) -> float:
         """Score 0-100 : peut-on faire confiance aux prix MT5 produits ?"""
@@ -116,25 +144,31 @@ class Calibration:
         score = 30.0
         score += min(len(self.anchors), 6) * 5.0          # jusqu'à +30
         age = self.age_ms
-        if age <= ANCHOR_WARN_AGE_MS:
+        warn_at = ANCHOR_WARN_AGE_MS * (28 if self.reference == "spot" else 1)
+        stale_at = self.stale_after_ms
+        if age <= warn_at:
             score += 25.0
-        elif age <= ANCHOR_MAX_AGE_MS:
-            score += 25.0 * (1 - (age - ANCHOR_WARN_AGE_MS) / (ANCHOR_MAX_AGE_MS - ANCHOR_WARN_AGE_MS))
+        elif age <= stale_at:
+            score += 25.0 * (1 - (age - warn_at) / max(stale_at - warn_at, 1))
         if self.slope_fitted:
             score += 8.0
         if self.residual_std > 0:
             score -= clamp(self.residual_std * 8.0, 0.0, 25.0)
         if any(a.source.startswith("mt5") for a in self.anchors):
             score += 7.0
+        if self.reference == "spot":
+            # Un markup broker vieillit infiniment mieux qu'une prime XAUT.
+            score += 12.0
         return round(clamp(score, 0.0, 100.0), 1)
 
     def describe(self) -> str:
         if not self.anchors:
-            return "AUCUNE calibration - les prix affichés sont des prix Bybit bruts"
+            return "AUCUNE calibration - les prix affichés sont des prix bruts, non recalés"
         sign = "+" if self.alpha >= 0 else "-"
         beta_txt = f" x{self.beta:.6f}" if self.slope_fitted else ""
+        left = "spot" if self.reference == "spot" else "Bybit"
         return (
-            f"MT5 = Bybit {sign} {abs(self.alpha):.2f}{beta_txt} | "
+            f"MT5 = {left} {sign} {abs(self.alpha):.2f}{beta_txt} | "
             f"spread {self.spread:.2f}$ | {len(self.anchors)} ancrage(s) | "
             f"qualité {self.quality():.0f}/100 | dernier {ms_to_iso(max(a.ts for a in self.anchors))}"
         )
@@ -147,7 +181,11 @@ class Calibration:
 
     @classmethod
     def from_dict(cls, data: dict) -> "Calibration":
-        anchors = [Anchor(**a) for a in data.get("anchors", [])]
+        known = {"ts", "bybit", "mt5_bid", "mt5_ask", "source", "spot"}
+        anchors = [
+            Anchor(**{k: v for k, v in a.items() if k in known})
+            for a in data.get("anchors", [])
+        ]
         return cls(
             alpha=float(data.get("alpha", 0.0)),
             beta=float(data.get("beta", 1.0)),
@@ -157,6 +195,7 @@ class Calibration:
             residual_std=float(data.get("residual_std", 0.0)),
             slope_fitted=bool(data.get("slope_fitted", False)),
             note=str(data.get("note", "")),
+            reference=str(data.get("reference", "bybit")),
         )
 
 
@@ -185,18 +224,32 @@ def save_calibration(calib: Calibration, path: Optional[str] = None) -> str:
 
 
 def fit(anchors: list[Anchor], max_anchors: int = 24) -> Calibration:
-    """Ajuste alpha/beta sur les ancrages, du plus robuste au plus prudent."""
-    fresh = [a for a in anchors if now_ms() - a.ts <= ANCHOR_MAX_AGE_MS * 4]
+    """Ajuste alpha/beta sur les ancrages, du plus robuste au plus prudent.
+
+    Un ancrage adossé au spot ne se périme quasiment pas : il mesure le markup
+    du broker, pas la prime du métal tokenisé. On garde donc les ancrages spot
+    beaucoup plus longtemps que les ancrages bruts.
+    """
+    spot_anchors = [a for a in anchors if a.is_spot_based]
+    # Les ancrages spot survivent 5 fois plus longtemps que les ancrages bruts.
+    horizon = ANCHOR_MAX_AGE_MS * (20 if spot_anchors else 4)
+    fresh = [a for a in anchors if now_ms() - a.ts <= horizon]
     fresh.sort(key=lambda a: a.ts)
     fresh = fresh[-max_anchors:]
 
     if not fresh:
         return Calibration(note="aucun ancrage exploitable")
 
-    spread = round(median([a.spread for a in fresh if a.spread > 0]) or 0.30, 5)
+    # Référentiel homogène : si l'on dispose d'ancrages spot, on ignore les
+    # ancrages bruts. Mélanger les deux reviendrait à additionner un markup
+    # broker et une prime XAUT dans le même alpha.
+    usable = [a for a in fresh if a.is_spot_based] or fresh
+    reference = "spot" if usable[0].is_spot_based else "bybit"
 
-    if len(fresh) == 1:
-        anchor = fresh[0]
+    spread = round(median([a.spread for a in usable if a.spread > 0]) or 0.30, 5)
+
+    if len(usable) == 1:
+        anchor = usable[0]
         return Calibration(
             alpha=round(anchor.offset, 6),
             beta=1.0,
@@ -205,10 +258,15 @@ def fit(anchors: list[Anchor], max_anchors: int = 24) -> Calibration:
             fitted_at=now_ms(),
             residual_std=0.0,
             slope_fitted=False,
-            note="décalage simple (1 ancrage)",
+            note=(
+                "markup broker mesuré sur 1 ancrage spot" if reference == "spot"
+                else "décalage simple (1 ancrage)"
+            ),
+            reference=reference,
         )
 
-    xs = [a.bybit for a in fresh]
+    fresh = usable
+    xs = [a.reference_price for a in fresh]
     ys = [a.mt5_mid for a in fresh]
     coverage = max(xs) - min(xs)
 
@@ -245,15 +303,23 @@ def fit(anchors: list[Anchor], max_anchors: int = 24) -> Calibration:
         residual_std=round(stdev(residuals), 4),
         slope_fitted=slope_fitted,
         note=note,
+        reference=reference,
     )
 
 
 def add_anchor(calib: Calibration, bybit: float, mt5_bid: float, mt5_ask: float,
-               source: str = "manuel", ts: Optional[int] = None) -> Calibration:
-    """Ajoute un ancrage et refit. Renvoie une NOUVELLE calibration."""
+               source: str = "manuel", ts: Optional[int] = None,
+               spot: Optional[float] = None) -> Calibration:
+    """Ajoute un ancrage et refit. Renvoie une NOUVELLE calibration.
+
+    Fournir `spot` (prix de l'or spot au même instant) transforme l'ancrage :
+    il mesure alors le markup du broker au lieu de l'écart brut à Bybit, et
+    reste valable des jours au lieu de quelques heures.
+    """
     if mt5_ask < mt5_bid:
         mt5_bid, mt5_ask = mt5_ask, mt5_bid
-    anchor = Anchor(ts=ts or now_ms(), bybit=bybit, mt5_bid=mt5_bid, mt5_ask=mt5_ask, source=source)
+    anchor = Anchor(ts=ts or now_ms(), bybit=bybit, mt5_bid=mt5_bid, mt5_ask=mt5_ask,
+                    source=source, spot=spot)
     drift = None
     if calib.anchors:
         drift = anchor.mt5_mid - calib.to_mt5(anchor.bybit)
@@ -266,7 +332,8 @@ def add_anchor(calib: Calibration, bybit: float, mt5_bid: float, mt5_ask: float,
     return fit(calib.anchors + [anchor])
 
 
-def auto_anchor_from_mt5(calib: Calibration, bybit_price: float, symbol: str = "XAUUSD") -> Calibration:
+def auto_anchor_from_mt5(calib: Calibration, bybit_price: float, symbol: str = "XAUUSD",
+                         spot: Optional[float] = None) -> Calibration:
     """Ancrage automatique en lisant le tick live du terminal MT5.
 
     Necessite le paquet `MetaTrader5` (Windows) et un terminal ouvert.
@@ -290,7 +357,8 @@ def auto_anchor_from_mt5(calib: Calibration, bybit_price: float, symbol: str = "
             LOG.warning("aucun tick %s disponible", symbol)
             return calib
         LOG.info("ancrage MT5 auto : bid %.2f / ask %.2f", tick.bid, tick.ask)
-        return add_anchor(calib, bybit_price, float(tick.bid), float(tick.ask), source="mt5_auto")
+        return add_anchor(calib, bybit_price, float(tick.bid), float(tick.ask),
+                          source="mt5_auto", spot=spot)
     finally:
         mt5.shutdown()
 
@@ -302,17 +370,35 @@ def health(calib: Calibration) -> tuple[str, list[str]]:
 
     if not calib.anchors:
         return "critique", [
-            "Aucun ancrage MT5 : les niveaux sont en prix BYBIT, pas en prix broker.",
+            "Aucun ancrage MT5 : les niveaux ne sont pas en prix broker.",
             "Lance `goldscalp calibrate --bybit <prix> --bid <bid> --ask <ask>` avant de trader.",
         ]
 
     age = calib.age_ms
-    if age > ANCHOR_MAX_AGE_MS:
+    if calib.reference == "spot":
+        # L'ancrage mesure le markup du broker, pas la prime du métal tokenisé :
+        # il reste valable des jours. Le seul risque est un changement de
+        # conditions chez le courtier.
+        if age > calib.stale_after_ms:
+            level = "critique"
+            problems.append(
+                f"Ancrage spot vieux de {age / 86400000:.1f} jours - reprends un relevé."
+            )
+        elif age > calib.stale_after_ms / 2:
+            level = "attention"
+            problems.append(
+                f"Ancrage spot vieux de {age / 86400000:.1f} jours - vérifie que ton "
+                "broker n'a pas modifié son markup."
+            )
+    elif age > ANCHOR_MAX_AGE_MS:
         level = "critique"
         problems.append(f"Ancrage vieux de {age / 3600000:.1f} h - recalibre avant d'entrer.")
     elif age > ANCHOR_WARN_AGE_MS:
         level = "attention"
-        problems.append(f"Ancrage vieux de {age / 60000:.0f} min - la prime XAUT a pu deriver.")
+        problems.append(
+            f"Ancrage vieux de {age / 60000:.0f} min et adossé au prix Bybit brut - "
+            "la prime XAUT a pu dériver. Mesurer la base spot supprimerait ce problème."
+        )
 
     if calib.residual_std > 1.0:
         level = "critique" if calib.residual_std > 2.5 else "attention"

@@ -164,6 +164,12 @@ def build_config(params: dict[str, list[str]]) -> Config:
     if yahoo_symbol:
         config.market.yahoo_symbol = yahoo_symbol
     config.engine.use_yahoo_fallback = _as_bool(params, "yahoo", True)
+    # Mesure automatique de la base Bybit→spot : c'est elle qui ramène l'écart
+    # au prix broker de plusieurs dollars à quelques dizaines de centimes.
+    config.engine.use_spot_reference = _as_bool(params, "basis", True)
+    turbo_confidence = _as_float(params, "turbo_confidence")
+    if turbo_confidence is not None:
+        config.engine.turbo_confidence = turbo_confidence
 
     config.engine.use_macro = _as_bool(params, "macro", True)
     config.engine.use_calendar = _as_bool(params, "calendar", True)

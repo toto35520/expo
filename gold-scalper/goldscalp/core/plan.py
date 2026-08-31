@@ -156,7 +156,7 @@ def _entry_zone(ind_m1: IndicatorSet, structure_m5: StructureView, price: float,
     a condition qu'il reste à portée (moins de 0.8 ATR M5).
     """
     if turbo:
-        return price, "marche", (price, price)
+        return price, "marché", (price, price)
 
     candidates: list[float] = []
     ema21 = last_valid(ind_m1.ema21)
@@ -178,7 +178,7 @@ def _entry_zone(ind_m1: IndicatorSet, structure_m5: StructureView, price: float,
 
     max_distance = atr_m5 * 0.8
     if best is None or abs(price - best) > max_distance or abs(price - best) < atr_m5 * 0.05:
-        return price, "marche", (price, price)
+        return price, "marché", (price, price)
 
     low, high = (best, price) if direction > 0 else (price, best)
     return best, "limite", (round(low, 2), round(high, 2))
@@ -236,6 +236,12 @@ def build_plan(confluence: Confluence, calibration: Calibration, risk: RiskConfi
     # Bornes : ni un stop ridicule qui saute sur le bruit, ni un stop enorme.
     min_distance = max(atr_m5 * risk.min_stop_atr, spread * 3.0)
     max_distance = atr_m5 * risk.max_stop_atr
+    if confluence.turbo:
+        # Un scalp turbo dure quelques minutes. Lui accorder 2 ATR M5 de stop,
+        # c'est risquer une heure de range sur un trade censé en durer dix : le
+        # stop doit s'aligner sur l'horizon réel du trade, donc sur l'ATR M1.
+        max_distance = min(max_distance, max(ind_m1.atr_value * 1.6, spread * 5.0))
+        min_distance = min(min_distance, max_distance * 0.85)
     raw_distance = abs(mid_entry - stop_mid)
     distance = clamp(raw_distance, min_distance, max_distance)
     if abs(distance - raw_distance) > 1e-9:
@@ -382,12 +388,12 @@ def build_plan(confluence: Confluence, calibration: Calibration, risk: RiskConfi
 
     # -- gestion ------------------------------------------------------------#
     management = [
-        f"Sortir {risk.tp1_share:.0%} de la position a TP1 ({targets[0].price:.2f}).",
-        f"Des TP1 touche, remonter le stop a l'entrée + spread "
+        f"Sortir {risk.tp1_share:.0%} de la position à TP1 ({targets[0].price:.2f}).",
+        f"Dès TP1 touché, remonter le stop à l'entrée + spread "
         f"({calibration.ask(entry) if direction > 0 else calibration.bid(entry):.2f}) : le trade devient gratuit.",
-        f"Suivre le reste sous l'EMA9 M1 ou a {regime.stop_multiplier:.2f} x ATR, "
+        f"Suivre le reste sous l'EMA9 M1 ou à {regime.stop_multiplier:.2f} x ATR, "
         f"en ne relâchant jamais le stop.",
-        f"Stop temporel : si TP1 n'est pas touche en {_time_stop_bars(regime)} bougies M1, sortir au marché - "
+        f"Stop temporel : si TP1 n'est pas touché en {_time_stop_bars(regime)} bougies M1, sortir au marché - "
         "la thèse avait une durée de vie, elle est expirée.",
     ]
     if session.minutes_to_next < 25:

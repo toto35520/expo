@@ -69,23 +69,66 @@ Quand le repli s'active, l'outil le dit : la source affichée passe à `YAHOO`, 
 l'absence de volume est signalée explicitement — les indicateurs de participation
 se rabattent alors sur une pondération temporelle.
 
-### Le modèle appliqué
+### Le modèle appliqué : deux étapes, pas une
+
+La correction se fait en deux temps, et cette séparation est ce qui rend
+l'écart final négligeable :
 
 ```
-prix_MT5 = alpha + beta × prix_Bybit
+1.  Bybit  →  or spot     base mesurée automatiquement, à chaque analyse
+2.  or spot →  MT5        markup du broker, un ancrage manuel qui dure
 ```
 
-- **alpha** absorbe la prime XAUT et le markup broker ;
-- **beta** absorbe la dérive proportionnelle (peg USDT, markup en pourcentage).
+**Étape 1 — la base, mesurée toute seule.** L'outil récupère déjà l'or spot
+(Yahoo `XAUUSD=X`). Il aligne les deux séries sur leurs horodatages et mesure
+l'écart bougie par bougie. Cette mesure est refaite à chaque analyse, donc la
+prime XAUT peut dériver autant qu'elle veut : elle est suivie en continu.
 
-**Garde-fou important :** sans plusieurs ancrages pris à des **prix écartés**
-(au moins 3, séparés de plus de 8 $), la pente `beta` n'est **pas
-identifiable** — la régression n'ajusterait que du bruit. L'outil la force
-alors à 1,0 et applique un décalage constant. Il te le dit explicitement plutôt
-que d'inventer une pente.
+L'estimateur est une **régression de Theil–Sen projetée sur la dernière
+bougie** : pente médiane des paires, insensible aux valeurs aberrantes
+contrairement aux moindres carrés, et évaluée *maintenant* plutôt qu'au centre
+de la fenêtre. Prendre la médiane d'une base en pente introduirait un retard
+égal à la moitié de la dérive — plusieurs dizaines de centimes d'erreur
+permanente sur tous les niveaux.
 
-Une pente hors de l'intervalle [0,97 ; 1,03] est rejetée d'office : deux
-cotations du même métal ne peuvent pas diverger à ce point.
+**Étape 2 — le markup, ancré une fois.** Ce qui reste entre l'or spot et le
+XAUUSD de ton broker, c'est sa marge : quelques dizaines de centimes, stable
+sur des jours. C'est ce que mesure désormais ton ancrage manuel.
+
+### Ce que ça change concrètement
+
+Mesures sur marché simulé dont on connaît la vérité terrain, avec une prime
+XAUT qui dérive de 0,9 $/heure :
+
+| Méthode | Écart moyen au vrai prix broker |
+|---|---|
+| Ancrage brut, pris à l'instant | 0,06 $ |
+| **Ancrage brut, vieux de 4 heures** | **3,74 $** |
+| Base mesurée + ancrage spot, à l'instant | **0,00 $** |
+| **Base mesurée + ancrage spot vieux de 4 heures** | **0,00 $** |
+| Base mesurée, prime dérivant à 3,6 $/h | 0,00 $ |
+| Base mesurée, cotations bruitées de 0,30 $ | 0,22 $ |
+
+L'ancrage cesse donc de se périmer : c'est la dérive qui était le problème, et
+elle est maintenant mesurée au lieu d'être subie.
+
+Le rapport affiche en permanence la **chaîne de conversion** appliquée et
+l'**écart résiduel estimé** — le chiffre qui répond à « de combien mes niveaux
+peuvent-ils être faux ? ».
+
+### Garde-fous
+
+- Sans plusieurs ancrages à des **prix écartés** (au moins 3, séparés de plus
+  de 8 $), la pente `beta` n'est **pas identifiable** : l'outil la force à 1,0
+  et le dit, plutôt que d'ajuster du bruit.
+- Une pente hors de [0,97 ; 1,03] est rejetée : deux cotations du même métal ne
+  divergent pas à ce point.
+- Une base hors de ± 80 $ est refusée : ce ne sont alors pas deux cotations de
+  l'or.
+- L'extrapolation de la dérive ne peut jamais sortir de la plage réellement
+  observée : une pente mal estimée ne produit pas un prix fantaisiste.
+- Un ancrage adossé au spot **sans base mesurée** ne convertit rien : l'outil
+  refuse plutôt que de produire un prix faux de plusieurs dollars.
 
 ---
 
@@ -149,6 +192,21 @@ silence : il affiche `CRITIQUE` tant que rien n'est calé.
 python3 -m goldscalp calibrate --bybit 2405.10 --bid 2412.30 --ask 2412.60
 ```
 
+L'outil mesure alors la base Bybit→spot et convertit ton relevé en son
+équivalent spot. Il te répond :
+
+```
+  base Bybit->spot mesurée : -7.35 $ (± 0.08 sur 240 bougies)
+  prix Bybit 2405.10 -> or spot 2397.75
+Ancrage enregistré — markup broker mesuré : +0.15 $. Il reste valable
+plusieurs jours.
+```
+
+C'est ce `+0.15 $` qui compte : la marge de ton courtier. Elle ne dérive
+pratiquement pas, contrairement aux `+7.35 $` d'écart brut à Bybit.
+
+Ajoute `--no-basis` pour forcer l'ancien comportement (ancrage brut).
+
 ### Méthode automatique (Windows, terminal MT5 ouvert)
 
 ```bash
@@ -170,8 +228,16 @@ CALIBRATION
   etat : OK
 ```
 
-**Recalibre toutes les 2 à 4 heures.** La prime XAUT dérive. Au-delà de 45 min
-l'outil passe en `attention`, au-delà de 6 h en `critique`.
+**À quelle fréquence recalibrer ?** Cela dépend du référentiel de ton ancrage,
+et le `--show` te le dit (`MT5 = spot + …` ou `MT5 = Bybit + …`) :
+
+| Référentiel | Ce que mesure alpha | Durée de vie |
+|---|---|---|
+| **spot** (base mesurée) | markup du broker | **plusieurs jours** |
+| bybit (base indisponible) | markup + prime XAUT | 2 à 4 heures |
+
+Un ancrage adossé au spot ne passe en `attention` qu'au bout de plusieurs
+jours. Un ancrage brut passe en `attention` à 45 min et en `critique` à 6 h.
 
 Pour identifier la pente en plus du décalage, ajoute des ancrages à des moments
 où le prix a bougé de plus de 8 $ : l'outil bascule automatiquement sur une
@@ -460,21 +526,65 @@ remplacées par des **taux mesurés** sur ton historique réel.
 
 ---
 
-## 8. Le mode TURBO
+## 8. Le mode TURBO et l'analyse d'exécution
 
-Le drapeau `[TURBO]` n'apparaît que si **six conditions** sont réunies
-simultanément :
+La confluence multi-timeframe dit **où va le marché**. Elle ne dit rien de
+l'**instant** ni du **coût** — or c'est exactement ce que le scalp exige et que
+le swing ignore. Un signal directionnellement juste peut être un mauvais scalp
+pour des raisons qui n'apparaissent dans aucun score de tendance.
 
-1. les 3 timeframes sont alignés (accord 100 %) ;
-2. confiance ≥ 78/100 ;
-3. session à forte liquidité (Londres, Londres+NY) ;
-4. volatilité haute ou extrême ;
-5. score de microstructure supérieur à 0,15 en valeur absolue ;
-6. ce flux va **dans le sens** du signal.
+### Les onze contrôles d'exécution
 
-En turbo, l'entrée passe **au marché** au lieu d'attendre un repli. C'est rare,
-et c'est fait exprès : un mode turbo qui se déclenche tout le temps n'est pas un
-mode turbo.
+| Contrôle | Ce qu'il vérifie | Bloquant |
+|---|---|---|
+| **coût du spread** | le spread représente moins de 15 % de la cible | oui |
+| **espace disponible** | il reste de la place avant le premier niveau *défendu* | si < 35 % de la cible |
+| **impulsion du déclencheur** | corps ≥ 45 % du range, clôture dans le sens, amplitude ≥ 0,8 ATR | — |
+| **absence de rejet** | la mèche contre le sens reste sous 40 % du range | — |
+| **micro-tendance M1** | EMA3/EMA8 séparées dans le sens du trade | — |
+| **vitesse** | le marché avance assez vite pour atteindre la cible avant expiration | — |
+| **expansion** | l'amplitude dépasse la médiane des 20 dernières bougies | — |
+| **entrée non tardive** | moins de 4 bougies d'impulsion déjà parcourues | — |
+| **cohérence M5** | l'EMA21 M5 penche dans le sens du trade | — |
+| **fenêtre horaire** | session liquide, ou ouverture de Londres / New York | — |
+| **stabilité de session** | pas de bascule de régime dans les 8 minutes | — |
+
+Un contrôle **bloquant** interdit le turbo quelle que soit la conviction
+directionnelle : aucune confiance ne compense une cible inaccessible ou un
+spread qui mange le gain.
+
+Le calcul des obstacles ne retient que les niveaux de **force ≥ 0,55**. Compter
+chaque chiffre rond ou chaque swing touché une seule fois déclarerait le marché
+infranchissable en permanence : le prix traverse ces niveaux sans ralentir.
+
+### La porte turbo
+
+Elle sépare ce qui est **non négociable** de ce qui **corrobore** — une
+conjonction de huit conditions ne se réalise jamais, et un mode turbo qui ne se
+déclenche pas n'est pas sélectif, il est mort.
+
+**Non négociable** — tout doit être vrai :
+- un signal net, aucun veto ;
+- session liquide ;
+- confiance ≥ 78/100 ;
+- exécution sans contrôle bloquant, qualité ≥ 70 % ;
+- **la bougie déclencheuse est une impulsion** — entrer au marché sans
+  impulsion revient à payer le spread pour rien.
+
+**Corroborants** — il en faut au moins **3 sur 4** :
+- les 3 timeframes alignés ;
+- volatilité haute ou extrême ;
+- flux confirmant le sens ;
+- configuration de suivi de tendance.
+
+### Ce que le turbo change dans le plan
+
+- **Entrée au marché** au lieu d'un ordre limite sur repli.
+- **Stop calibré sur l'ATR M1**, plafonné à 1,6 × ATR M1 au lieu de 2 × ATR M5.
+  Un trade censé durer dix minutes ne peut pas porter un stop dimensionné pour
+  l'horizon M5 : ce serait risquer une heure de range sur un scalp.
+
+Quand le turbo est refusé, le rapport dit **laquelle** des conditions a manqué.
 
 ---
 
@@ -681,6 +791,14 @@ projet.
   pas de microstructure ; et l'or spot ferme du vendredi 22 h au dimanche 22 h
   UTC. L'outil signale chacun de ces manques plutôt que de les combler par des
   valeurs inventées.
+- **Le mode turbo est délibérément rare.** Sur données simulées il ne concerne
+  que quelques pour cent des signaux. C'est voulu : il exige une impulsion
+  réelle sur la bougie déclencheuse, et la plupart des signaux valables n'en
+  ont pas. Un turbo fréquent ne serait plus un turbo.
+- **La base spot n'est mesurable que si les deux sources répondent.** Sans
+  Yahoo (réseau coupé, marché forex fermé le week-end), l'outil retombe sur
+  l'ancrage brut et le dit — l'écart résiduel affiché passe alors de quelques
+  centimes à environ deux dollars.
 - **La microstructure vient de Bybit, pas de ton broker.** Le carnet XAUT n'est
   pas le carnet de ton courtier. Le signal de flux reste informatif sur la
   direction du métal, pas sur l'exécution que tu obtiendras.
@@ -713,6 +831,8 @@ goldscalp/
 │   ├── structure.py        swings, BOS/CHoCH, S/R, pivots, fibs, liquidité
 │   ├── microstructure.py   carnet, CVD, funding, open interest
 │   ├── calibration.py      recalibrage affine Bybit -> MT5
+│   ├── basis.py            mesure automatique de la base Bybit ↔ or spot
+│   ├── scalp.py            analyse d'exécution (11 contrôles) et porte turbo
 │   ├── regime.py           régimes de marché et sessions
 │   ├── fundamental.py      dollar, taux, risque
 │   ├── scoring.py          fusion multi-timeframe
@@ -739,10 +859,12 @@ vercel.json             region, duree maximale, reecritures
 python3 -m unittest discover -s tests
 ```
 
-94 tests couvrant les bornes des indicateurs, la causalité, l'identifiabilité de
-la pente de calibration, la géométrie des plans, la non-inversion des signaux,
-l'honnêteté du backtest, la bascule de source quand Bybit est géo-bloqué, et le
-CLI.
+136 tests couvrant les bornes des indicateurs, la causalité, l'identifiabilité
+de la pente de calibration, la **précision du recalage mesurée contre une vérité
+terrain**, la géométrie des plans, la non-inversion des signaux, l'honnêteté du
+backtest, la bascule de source quand Bybit est géo-bloqué, les onze contrôles
+d'exécution scalp, la porte turbo testée par construction (et non par
+échantillonnage), et le CLI.
 
 ---
 
