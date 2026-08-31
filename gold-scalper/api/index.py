@@ -53,6 +53,28 @@ def _first(params: dict[str, list[str]], key: str, default: str | None = None) -
     return values[0] if values else default
 
 
+# Vercel réécrit /api/<quelque chose> vers /api/index : la fonction ne voit
+# donc PAS le chemin demandé par le navigateur, elle voit « index ». Router
+# sur le seul chemin renvoyait alors une analyse à qui demandait un calibrage
+# — avec un HTTP 200, donc sans que rien ne signale l'erreur.
+# Le paramètre `route` est la seule information qui traverse la réécriture
+# intacte ; le chemin ne sert plus que de secours (serveur local, ou appel
+# direct de /api/calibrate sans réécriture).
+ROUTES = {
+    "calibrate": "calibrate", "calibrage": "calibrate",
+    "health": "health", "sante": "health",
+    "analyse": "analyse", "analyze": "analyse",
+}
+
+
+def resolve_route(path: str, params: dict[str, list[str]]) -> str:
+    explicit = (_first(params, "route") or "").strip().lower()
+    if explicit in ROUTES:
+        return ROUTES[explicit]
+    tail = urlparse(path).path.rstrip("/").rsplit("/", 1)[-1].lower()
+    return ROUTES.get(tail, "analyse")
+
+
 def _as_float(params: dict[str, list[str]], key: str, default: float | None = None) -> float | None:
     raw = _first(params, key)
     if raw is None or raw == "":
@@ -342,9 +364,9 @@ class handler(BaseHTTPRequestHandler):
     def do_GET(self) -> None:  # noqa: N802
         parsed = urlparse(self.path)
         params = parse_qs(parsed.query)
-        route = parsed.path.rstrip("/").rsplit("/", 1)[-1] or "analyse"
+        route = resolve_route(self.path, params)
 
-        if route in ("calibrate", "calibrage"):
+        if route == "calibrate":
             try:
                 self._send(200, run_calibration(params))
             except ValueError as exc:
@@ -357,7 +379,7 @@ class handler(BaseHTTPRequestHandler):
                                  "kind": "erreur_interne"})
             return
 
-        if route in ("health", "sante"):
+        if route == "health":
             self._send(200, {
                 "ok": True,
                 "version": __version__,

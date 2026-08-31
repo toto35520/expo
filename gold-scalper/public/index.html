@@ -382,13 +382,23 @@
     $("calibrate").disabled = true;
     calibState("Relevé de l'index or et alignement sur ton broker…");
     try{
-      const params = new URLSearchParams({ bid: String(bid), ask: String(ask) });
+      // `route` est obligatoire : Vercel réécrit /api/* vers /api/index, la
+      // fonction ne peut donc pas deviner l'appel depuis le chemin seul.
+      const params = new URLSearchParams({ route: "calibrate",
+                                           bid: String(bid), ask: String(ask) });
       const s = collect();
       if(s.symbol) params.set("symbol", s.symbol);
       const res = await fetch("/api/calibrate?" + params, { cache:"no-store" });
       const data = await res.json();
       if(!res.ok){ calibState(data.error || "échec du calibrage", "err"); return; }
 
+      // Un 200 ne prouve pas qu'on a bien été routé vers le calibrage : sans
+      // alpha exploitable, mieux vaut le dire que d'écrire « undefined ».
+      if(typeof data.alpha !== "number" || !isFinite(data.alpha)){
+        calibState("Réponse inattendue du serveur : calibrage non appliqué. "
+                   + "Recharge la page et réessaie.", "err");
+        return;
+      }
       $("alpha").value = data.alpha;
       if(data.spread) $("spread").value = data.spread;
       reference = data.reference;
@@ -396,7 +406,8 @@
       const detail = data.basis && data.basis.ok
         ? ` · base ${fmt(data.basis.value)} $ sur ${data.basis.samples} bougies`
         : "";
-      calibState(data.message + detail, data.durable ? "ok" : "warn", true);
+      const dit = data.message || `Aligné sur ton broker : ${fmt(data.alpha)} $.`;
+      calibState(dit + detail, data.durable ? "ok" : "warn", true);
       refresh();
     }catch(err){
       calibState("Calibrage impossible : " + err, "err");
@@ -411,7 +422,7 @@
 
   /* ---------- requête ---------- */
   function query(){
-    const s = collect(), p = new URLSearchParams();
+    const s = collect(), p = new URLSearchParams({ route: "analyse" });
     const map = { alpha:"alpha", beta:"beta", spread:"spread", balance:"balance",
                   risk:"risk", minconf:"min_confidence", symbol:"symbol" };
     Object.keys(map).forEach(k => { if(s[k]) p.set(map[k], s[k]); });

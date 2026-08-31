@@ -32,8 +32,19 @@ class DevHandler(SimpleHTTPRequestHandler):
     def _is_api(self) -> bool:
         return urlparse(self.path).path.startswith("/api/")
 
+    def _rewrite(self) -> None:
+        """Reproduit le rewrite de vercel.json : /api/(.*) -> /api/index.
+
+        Sans ça, le serveur local voit /api/calibrate alors que la fonction
+        deployee voit /api/index : un bug de routage passait vert en local et
+        cassait en production. Le serveur de dev doit mentir comme Vercel.
+        """
+        parsed = urlparse(self.path)
+        self.path = "/api/index" + (f"?{parsed.query}" if parsed.query else "")
+
     def do_GET(self):  # noqa: N802
         if self._is_api():
+            self._rewrite()
             _api.handler.do_GET(self)  # type: ignore[arg-type]
             return
         super().do_GET()
