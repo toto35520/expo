@@ -17,7 +17,7 @@ from typing import Optional
 
 from goldscalp.config import Config
 from goldscalp.core.basis import Basis, best_common_timeframe, estimate_basis
-from goldscalp.core.calibration import Calibration, health as calibration_health
+from goldscalp.core.calibration import Calibration, add_anchor, health as calibration_health
 from goldscalp.core.fundamental import FundamentalView, analyse_fundamentals
 from goldscalp.core.indicators import compute_indicators
 from goldscalp.core.microstructure import MicroView, analyse_derivatives, build_micro
@@ -583,6 +583,98 @@ def measure_basis(config: Config) -> Basis:
         if basis.ok:
             return basis
     return Basis(note="aucune bougie commune entre les deux sources")
+
+
+@dataclass
+class CalibrationProbe:
+    """Tout ce qu'il faut pour caler une calibration à partir du SEUL prix MT5.
+
+    L'outil sait déjà lire le prix Bybit et mesurer la base Bybit→spot. La
+    seule chose qu'il ne peut pas deviner, c'est ce qu'affiche le terminal de
+    l'utilisateur : c'est donc la seule chose à lui demander.
+    """
+
+    bybit: Optional[float] = None
+    spot: Optional[float] = None
+    basis: Basis = field(default_factory=Basis)
+    symbol: str = ""
+    problem: str = ""
+
+    @property
+    def ok(self) -> bool:
+        return self.bybit is not None
+
+    @property
+    def reference(self) -> str:
+        return "spot" if self.spot is not None else "bybit"
+
+
+def probe_reference_price(config: Config) -> CalibrationProbe:
+    """Relève le prix de référence courant, par ordre de préférence.
+
+    1. Bybit + base mesurée : on obtient le prix temps réel ET son équivalent
+       spot, donc un ancrage qui mesure le seul markup du broker.
+    2. Or spot Yahoo seul : suffisant, puisque c'est déjà le bon référentiel.
+       Indispensable là où Bybit est filtré par pays.
+    """
+    problems: list[str] = []
+
+    client = BybitClient()
+    try:
+        instrument = client.resolve_instrument(config.market.bybit_symbol,
+                                               config.market.bybit_category)
+        ticker = client.ticker(instrument)
+        price = float(ticker.get("lastPrice") or ticker.get("markPrice") or 0.0)
+        if price:
+            probe = CalibrationProbe(bybit=price, symbol=instrument.symbol)
+            probe.basis = measure_basis(config)
+            if probe.basis.ok:
+                probe.spot = round(probe.basis.to_spot(price), 4)
+            else:
+                probe.problem = probe.basis.note
+            return probe
+        problems.append("Bybit n'a renvoyé aucun prix")
+    except BybitError as exc:
+        problems.append(f"Bybit : {exc}")
+
+    # Repli : l'or spot suffit, c'est déjà le référentiel visé.
+    yahoo = YahooGoldClient()
+    try:
+        reference = yahoo.resolve_instrument(config.market.yahoo_symbol)
+        spot = yahoo.last_price(reference)
+        if spot:
+            return CalibrationProbe(
+                bybit=spot, spot=round(spot, 4), symbol=reference.symbol,
+                problem="; ".join(problems),
+            )
+        problems.append("Yahoo n'a renvoyé aucun prix")
+    except YahooError as exc:
+        problems.append(f"Yahoo : {exc}")
+
+    return CalibrationProbe(problem=" | ".join(problems))
+
+
+def calibrate_from_mt5(config: Config, calibration: Calibration, mt5_bid: float,
+                       mt5_ask: Optional[float] = None) -> tuple[Calibration, CalibrationProbe]:
+    """Cale la calibration à partir du seul prix affiché par MetaTrader 5.
+
+    Si un seul prix est fourni, il est traité comme le MILIEU du marché et le
+    spread connu est conservé : mieux vaut réutiliser un spread déjà mesuré
+    que d'en inventer un.
+    """
+    probe = probe_reference_price(config)
+    if not probe.ok:
+        return calibration, probe
+
+    if mt5_ask is None:
+        half = calibration.half_spread if calibration.anchors else 0.15
+        bid, ask = mt5_bid - half, mt5_bid + half
+    else:
+        bid, ask = min(mt5_bid, mt5_ask), max(mt5_bid, mt5_ask)
+
+    updated = add_anchor(calibration, probe.bybit, bid, ask,
+                         source="prix_mt5", spot=probe.spot)
+    return updated, probe
 
 
 def run(config: Config, calibration: Calibration, *, demo: bool = False,

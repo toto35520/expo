@@ -181,31 +181,48 @@ Sans calibration, les niveaux affichés sont des **prix Bybit bruts**, décalés
 plusieurs dollars par rapport à ton broker. L'outil refuse de le passer sous
 silence : il affiche `CRITIQUE` tant que rien n'est calé.
 
-### Méthode manuelle (fonctionne partout)
+### La seule chose à saisir : le prix de ton MT5
 
-1. Ouvre MT5 sur XAUUSD, note le **bid** et l'**ask**.
-2. Note le prix Bybit **au même instant** (c'est le point critique : quelques
-   secondes d'écart en session active suffisent à fausser l'ancrage).
-3. Enregistre :
+Ouvre MT5 sur XAUUSD, lis le prix, recopie-le. C'est tout.
 
 ```bash
-python3 -m goldscalp calibrate --bybit 2405.10 --bid 2412.30 --ask 2412.60
+python3 -m goldscalp calibrate --mt5 2412.45
 ```
 
-L'outil mesure alors la base Bybit→spot et convertit ton relevé en son
-équivalent spot. Il te répond :
+```
+  prix XAUTUSDT relevé : 2405.10
+  base Bybit->spot : -7.35 $ (± 0.08 sur 240 bougies) -> or spot 2397.75
+Calibré. Markup de ton broker : +0.15 $. Valable plusieurs jours.
+```
 
-```
-  base Bybit->spot mesurée : -7.35 $ (± 0.08 sur 240 bougies)
-  prix Bybit 2405.10 -> or spot 2397.75
-Ancrage enregistré — markup broker mesuré : +0.15 $. Il reste valable
-plusieurs jours.
-```
+L'outil relève lui-même le prix de référence et mesure la base : la seule
+chose qu'il ne peut pas deviner, c'est ce qu'affiche ton terminal.
 
 C'est ce `+0.15 $` qui compte : la marge de ton courtier. Elle ne dérive
 pratiquement pas, contrairement aux `+7.35 $` d'écart brut à Bybit.
 
-Ajoute `--no-basis` pour forcer l'ancien comportement (ancrage brut).
+**Sur le tableau de bord web**, c'est le même geste : un champ *Prix affiché par
+ton MT5*, un bouton *Calibrer*.
+
+#### Variantes
+
+```bash
+# Mesurer aussi le spread : donne bid et ask
+python3 -m goldscalp calibrate --mt5 2412.30 2412.60
+
+# Lire le tick directement dans MT5 (Windows, terminal ouvert)
+python3 -m goldscalp calibrate --auto
+
+# Calage complet à la main (si tu veux tout contrôler)
+python3 -m goldscalp calibrate --bybit 2405.10 --bid 2412.30 --ask 2412.60
+```
+
+Avec un prix unique, l'outil le traite comme le **milieu** du marché et conserve
+le spread déjà connu : réutiliser une mesure vaut mieux qu'en inventer une.
+
+Si Bybit est injoignable (filtrage par pays), l'outil se cale directement sur
+l'or spot Yahoo — le calibrage fonctionne quand même, puisque le spot est
+justement le référentiel visé.
 
 ### Méthode automatique (Windows, terminal MT5 ouvert)
 
@@ -251,7 +268,7 @@ où le prix a bougé de plus de 8 $ : l'outil bascule automatiquement sur une
 |---|---|
 | `analyse` | analyse complète et plan de trade |
 | `watch` | surveillance continue, une ligne par évaluation |
-| `calibrate` | gère le calage Bybit → MT5 |
+| `calibrate` | cale l'outil sur ton broker — `--mt5 <prix>` suffit |
 | `backtest` | backtest walk-forward du cœur technique |
 | `levels` | niveaux clés en prix MT5 |
 | `selftest` | vérifie l'intégrité du moteur |
@@ -733,10 +750,18 @@ Une fonction serverless **ne garde rien entre deux appels** : le fichier
 `~/.goldscalp/calibration.json` de la ligne de commande n'existe pas. La
 calibration doit donc être fournie à chaque requête, par ordre de priorité :
 
-1. **un ancrage complet** dans l'URL : `?bybit=2405.10&bid=2412.30&ask=2412.60` ;
-2. **alpha / beta / spread** dans l'URL : `?alpha=7.35&spread=0.30` ;
-3. **les variables d'environnement du projet Vercel** :
-   `GOLDSCALP_ALPHA`, `GOLDSCALP_BETA`, `GOLDSCALP_SPREAD`.
+1. **le bouton *Calibrer* du tableau de bord** : tu saisis le prix de ton MT5,
+   la page appelle `/api/calibrate?mt5=…`, récupère l'alpha calculé et le
+   conserve dans le stockage local du navigateur ;
+2. **un ancrage complet** dans l'URL : `?bybit=2405.10&bid=2412.30&ask=2412.60` ;
+3. **alpha / spread** dans l'URL, avec leur référentiel :
+   `?alpha=0.15&ref=spot&spread=0.30` ;
+4. **les variables d'environnement du projet Vercel** :
+   `GOLDSCALP_ALPHA`, `GOLDSCALP_REF`, `GOLDSCALP_BETA`, `GOLDSCALP_SPREAD`.
+
+Le **référentiel voyage toujours avec l'alpha** : `+0.15` en spot (markup
+broker) et `+0.15` en brut (écart à Bybit) ne décrivent pas le même écart, et
+les confondre décalerait tous les prix de la prime XAUT entière.
 
 Le tableau de bord retient tes réglages dans le stockage local du navigateur et
 les renvoie à chaque appel — ils ne quittent jamais ton poste autrement que dans
@@ -745,9 +770,15 @@ et le signale en rouge.
 
 ### Paramètres de l'API
 
-`GET /api/analyse` accepte : `alpha`, `beta`, `spread`, `bybit`, `bid`, `ask`,
-`balance`, `risk`, `min_confidence`, `symbol`, `bybit_symbol`, `macro`,
-`calendar`, `micro`, `counter_trend`, `demo`, `seed`.
+`GET /api/analyse` accepte : `alpha`, `ref`, `beta`, `spread`, `bybit`, `bid`,
+`ask`, `balance`, `risk`, `min_confidence`, `turbo_confidence`, `symbol`,
+`bybit_symbol`, `yahoo_symbol`, `macro`, `calendar`, `micro`, `basis`, `yahoo`,
+`preview`, `counter_trend`, `demo`, `seed`.
+
+`GET /api/calibrate?mt5=2412.45` cale l'outil sur ton broker et renvoie l'alpha
+à conserver, son référentiel et la base mesurée. Ajoute `&ask=…` pour mesurer
+aussi le spread.
+
 `GET /api/health` renvoie la version, la région et la version de Python.
 
 ### Ce que la version web ne fait pas
@@ -859,12 +890,13 @@ vercel.json             region, duree maximale, reecritures
 python3 -m unittest discover -s tests
 ```
 
-136 tests couvrant les bornes des indicateurs, la causalité, l'identifiabilité
+150 tests couvrant les bornes des indicateurs, la causalité, l'identifiabilité
 de la pente de calibration, la **précision du recalage mesurée contre une vérité
 terrain**, la géométrie des plans, la non-inversion des signaux, l'honnêteté du
 backtest, la bascule de source quand Bybit est géo-bloqué, les onze contrôles
 d'exécution scalp, la porte turbo testée par construction (et non par
-échantillonnage), et le CLI.
+échantillonnage), le calibrage au seul prix MT5 vérifié contre une vérité
+terrain, et le CLI.
 
 ---
 

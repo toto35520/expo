@@ -135,6 +135,18 @@
     grid-template-columns:repeat(auto-fit,minmax(140px,1fr))}
   .form label{font-size:11px;color:var(--dim);display:block;margin-bottom:4px;
     text-transform:uppercase;letter-spacing:.05em}
+  .calib{grid-column:1/-1;background:#0e1420;border:1px solid #2c3a55;border-radius:10px;padding:12px}
+  .calib .row{display:flex;gap:8px}
+  .calib .row input{flex:1;font-size:17px;font-weight:700}
+  .calib .row button{flex:none;white-space:nowrap}
+  .calib .hint{margin:8px 0 0;font-size:12px;color:var(--faint);line-height:1.5}
+  .calib .hint.ok{color:var(--buy)} .calib .hint.warn{color:var(--warn)}
+  .calib .hint.err{color:var(--sell)}
+  details.advanced{grid-column:1/-1}
+  details.advanced>summary{cursor:pointer;font-size:11px;color:var(--faint);
+    text-transform:uppercase;letter-spacing:.06em;padding:4px 0}
+  .adv-grid{display:grid;gap:10px;grid-template-columns:repeat(auto-fit,minmax(110px,1fr));
+    padding-top:8px}
   .toggles{grid-column:1/-1;display:flex;gap:8px;flex-wrap:wrap}
   .actions{grid-column:1/-1;display:flex;gap:8px;flex-wrap:wrap;align-items:center}
 
@@ -166,17 +178,15 @@
   <details class="settings" id="settings">
     <summary>Réglages — calibration MT5, risque, sources</summary>
     <div class="form">
-      <div>
-        <label for="alpha">Décalage alpha ($)</label>
-        <input type="number" id="alpha" step="0.01" placeholder="ex. 7.35">
-      </div>
-      <div>
-        <label for="beta">Pente beta</label>
-        <input type="number" id="beta" step="0.000001" placeholder="1.0">
-      </div>
-      <div>
-        <label for="spread">Spread MT5 ($)</label>
-        <input type="number" id="spread" step="0.01" placeholder="0.30">
+      <div class="calib">
+        <label for="mt5price">Prix affiché par ton MT5</label>
+        <div class="row">
+          <input type="number" id="mt5price" step="0.01" inputmode="decimal"
+                 placeholder="ex. 2412.45">
+          <button id="calibrate" class="primary">Calibrer</button>
+        </div>
+        <p class="hint" id="calibState">Ouvre MT5 sur XAUUSD, recopie le prix ici.
+          Le reste est mesuré automatiquement.</p>
       </div>
       <div>
         <label for="balance">Capital ($)</label>
@@ -198,6 +208,23 @@
         <label for="symbol">Symbole MT5</label>
         <input type="text" id="symbol" placeholder="XAUUSD">
       </div>
+      <details class="advanced">
+        <summary>Réglages avancés du calage</summary>
+        <div class="adv-grid">
+          <div>
+            <label for="alpha">Alpha ($)</label>
+            <input type="number" id="alpha" step="0.0001" placeholder="calculé">
+          </div>
+          <div>
+            <label for="beta">Beta</label>
+            <input type="number" id="beta" step="0.000001" placeholder="1.0">
+          </div>
+          <div>
+            <label for="spread">Spread ($)</label>
+            <input type="number" id="spread" step="0.01" placeholder="0.30">
+          </div>
+        </div>
+      </details>
       <div class="toggles">
         <button data-flag="macro" aria-pressed="true">Macro</button>
         <button data-flag="calendar" aria-pressed="true">Calendrier</button>
@@ -210,11 +237,15 @@
         <span class="src" id="saved"></span>
       </div>
       <p class="foot" style="grid-column:1/-1;margin:0">
-        Le décalage <code>alpha</code> est la différence entre le prix MT5 de ton broker et le prix
-        Bybit, relevés <strong>au même instant</strong>. Sans lui, les niveaux affichés sont des prix
-        Bybit bruts. Obtiens-le en ligne de commande avec
-        <code>goldscalp calibrate --bybit … --bid … --ask …</code>, ou calcule
-        <code>alpha = (bid+ask)/2 − prix_bybit</code>. Recalibre toutes les 2 à 4 h.
+        <strong>Comment calibrer :</strong> ouvre MT5 sur XAUUSD, lis le prix, recopie-le
+        ci-dessus, appuie sur <em>Calibrer</em>. L'outil relève lui-même le prix de référence
+        et mesure l'écart : il n'a besoin que de ce que ton terminal affiche.<br><br>
+        Il en déduit le <strong>markup de ton broker</strong> — quelques dizaines de centimes,
+        stables sur plusieurs jours. Si la référence spot est momentanément indisponible
+        (week-end, réseau), il retombe sur un écart brut à Bybit, qu'il faut refaire toutes
+        les 2 à 4 heures ; il te le dit alors en jaune.<br><br>
+        Pour mesurer aussi le spread, saisis le prix comme <code>bid ask</code> en ligne de
+        commande : <code>goldscalp calibrate --mt5 2412.30 2412.60</code>.
       </p>
     </div>
   </details>
@@ -293,7 +324,7 @@
 (function(){
   "use strict";
   const $ = id => document.getElementById(id);
-  const FIELDS = ["alpha","beta","spread","balance","risk","minconf","interval","symbol"];
+  const FIELDS = ["alpha","beta","spread","balance","risk","minconf","interval","symbol","mt5price"];
   const FLAGS  = ["macro","calendar","micro","counter_trend","demo"];
   const KEY = "goldscalp.settings.v1";
   let timer = null, tick = null, busy = false;
@@ -302,6 +333,7 @@
   function load(){
     let saved = {};
     try{ saved = JSON.parse(localStorage.getItem(KEY) || "{}"); }catch(e){ saved = {}; }
+    if(saved.reference) reference = saved.reference;
     FIELDS.forEach(f => { if(saved[f] !== undefined && saved[f] !== null) $(f).value = saved[f]; });
     FLAGS.forEach(f => {
       const btn = document.querySelector(`[data-flag="${f}"]`);
@@ -309,8 +341,10 @@
     });
     return saved;
   }
+  let reference = "bybit";      // référentiel de l'alpha stocké
+
   function collect(){
-    const out = { flags:{} };
+    const out = { flags:{}, reference };
     FIELDS.forEach(f => { out[f] = $(f).value.trim(); });
     FLAGS.forEach(f => {
       const btn = document.querySelector(`[data-flag="${f}"]`);
@@ -330,12 +364,54 @@
   });
   $("save").addEventListener("click", () => { save(); refresh(); });
 
+  /* ---------- calibrage : un seul chiffre à saisir ---------- */
+  function calibState(text, cls){
+    const el = $("calibState");
+    el.className = "hint" + (cls ? " " + cls : "");
+    el.textContent = text;
+  }
+
+  async function calibrate(){
+    const price = parseFloat($("mt5price").value);
+    if(!(price > 0)){ calibState("Saisis le prix affiché par ton terminal MT5.", "warn"); return; }
+    $("calibrate").disabled = true;
+    calibState("Relevé du prix de référence et mesure de la base…");
+    try{
+      const params = new URLSearchParams({ mt5: String(price) });
+      const s = collect();
+      if(s.spread) params.set("spread", s.spread);
+      if(s.symbol) params.set("symbol", s.symbol);
+      const res = await fetch("/api/calibrate?" + params, { cache:"no-store" });
+      const data = await res.json();
+      if(!res.ok){ calibState(data.error || "échec du calibrage", "err"); return; }
+
+      $("alpha").value = data.alpha;
+      if(data.spread) $("spread").value = data.spread;
+      reference = data.reference;
+      save();
+      const detail = data.basis && data.basis.ok
+        ? ` · base ${fmt(data.basis.value)} $ sur ${data.basis.samples} bougies`
+        : "";
+      calibState(data.message + detail, data.durable ? "ok" : "warn");
+      refresh();
+    }catch(err){
+      calibState("Calibrage impossible : " + err, "err");
+    }finally{
+      $("calibrate").disabled = false;
+    }
+  }
+  $("calibrate").addEventListener("click", calibrate);
+  $("mt5price").addEventListener("keydown", e => { if(e.key === "Enter") calibrate(); });
+
   /* ---------- requête ---------- */
   function query(){
     const s = collect(), p = new URLSearchParams();
     const map = { alpha:"alpha", beta:"beta", spread:"spread", balance:"balance",
                   risk:"risk", minconf:"min_confidence", symbol:"symbol" };
     Object.keys(map).forEach(k => { if(s[k]) p.set(map[k], s[k]); });
+    // Le référentiel doit voyager avec l'alpha : +0.15 en spot et +0.15 en
+    // brut ne décrivent pas le même écart.
+    if(s.alpha) p.set("ref", reference);
     FLAGS.forEach(f => p.set(f, s.flags[f] ? "1" : "0"));
     return p.toString();
   }
@@ -550,6 +626,18 @@
         <tr><td class="mut">Région</td><td>${esc(d.region||"—")}</td></tr>
       </table>
       ${(d.data.problems||[]).map(p=>`<div class="alert">${esc(p)}</div>`).join("")}`;
+
+    if(d.calibration && d.calibration.anchors){
+      const ref = d.calibration.reference === "spot"
+        ? "markup broker (valable plusieurs jours)"
+        : "écart brut à Bybit (à refaire toutes les 2-4 h)";
+      const res = d.conversion ? d.conversion.residual_error : null;
+      if(!$("calibState").classList.contains("ok") && !$("calibState").classList.contains("err")){
+        calibState(`α ${fmt(d.calibration.alpha)} $ — ${ref}`
+          + (res !== null && res < 100 ? ` · écart résiduel ${fmt(res)} $` : ""),
+          d.calibration.reference === "spot" ? "ok" : "warn");
+      }
+    }
 
     $("status").className = "dot live";
     $("statusText").textContent = "actualisé à " + new Date().toLocaleTimeString("fr-FR") +

@@ -37,7 +37,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from goldscalp import __version__, engine                       # noqa: E402
 from goldscalp.cli import to_payload                            # noqa: E402
 from goldscalp.config import Config                             # noqa: E402
-from goldscalp.core.calibration import Calibration, add_anchor  # noqa: E402
+from goldscalp.core.calibration import Anchor, Calibration, add_anchor  # noqa: E402
 from goldscalp.core.plan import build_plan                        # noqa: E402
 from goldscalp.util import setup_logging                        # noqa: E402
 
@@ -114,24 +114,32 @@ def build_calibration(params: dict[str, list[str]]) -> tuple[Calibration, list[s
         )
         return Calibration(), notes
 
+    # Le référentiel change tout : un alpha de +0.15 est un markup broker
+    # (durable), un alpha de +7.35 est un écart brut à Bybit (périssable).
+    # Les confondre décalerait tous les prix de la prime XAUT entière.
+    reference = (_first(params, "ref") or os.environ.get("GOLDSCALP_REF") or "bybit").lower()
+    if reference not in ("spot", "bybit"):
+        reference = "bybit"
+
     calibration = Calibration(
         alpha=alpha,
         beta=beta if beta else 1.0,
         spread=spread if spread else 0.30,
-        note="calibration fournie par l'appelant (web)",
+        reference=reference,
+        note=f"calibration fournie par l'appelant (web, référentiel {reference})",
     )
     # Sans ancrage horodaté, quality() vaudrait 0 et le moteur degraderait la
     # confiance. On pose un ancrage synthetique cohérent avec alpha/beta pour
     # que la calibration soit consideree comme fournie, tout en gardant la
     # trace de son origine déclarative.
-    from goldscalp.core.calibration import Anchor
     from goldscalp.util import now_ms
 
-    reference = 2400.0
-    mid = calibration.to_mt5(reference)
+    pivot = 2400.0
+    mid = calibration.to_mt5(pivot)
     calibration.anchors = [
-        Anchor(now_ms(), reference, mid - calibration.spread / 2,
-               mid + calibration.spread / 2, source="declare")
+        Anchor(now_ms(), pivot, mid - calibration.spread / 2,
+               mid + calibration.spread / 2, source="declare",
+               spot=pivot if reference == "spot" else None)
     ]
     notes.append(
         "Calibration déclarative (alpha/beta fournis) : elle n'a pas été "
@@ -251,6 +259,54 @@ def run_analysis(params: dict[str, list[str]]) -> dict:
     return payload
 
 
+def run_calibration(params: dict[str, list[str]]) -> dict:
+    """Cale la calibration à partir du SEUL prix affiché par MetaTrader 5.
+
+    Le serveur relève lui-même le prix de référence et mesure la base : la
+    seule chose qu'il ne peut pas deviner est ce qu'affiche le terminal de
+    l'utilisateur. La réponse contient l'alpha à conserver côté navigateur,
+    puisqu'une fonction serverless ne garde rien entre deux appels.
+    """
+    mt5_price = _as_float(params, "mt5")
+    if mt5_price is None or mt5_price <= 0:
+        raise ValueError("paramètre 'mt5' requis : le prix affiché par ton terminal")
+    ask = _as_float(params, "ask")
+
+    config = build_config(params)
+    calibration, probe = engine.calibrate_from_mt5(config, Calibration(), mt5_price, ask)
+    if not probe.ok:
+        raise RuntimeError(
+            "Impossible de relever un prix de référence pour te comparer. "
+            + (probe.problem or "sources injoignables")
+        )
+
+    return {
+        "ok": True,
+        "alpha": round(calibration.alpha, 4),
+        "reference": calibration.reference,
+        "spread": round(calibration.spread, 4),
+        "quality": calibration.quality(),
+        "mt5": mt5_price,
+        "reference_symbol": probe.symbol,
+        "reference_price": probe.bybit,
+        "spot": probe.spot,
+        "basis": {
+            "ok": probe.basis.ok,
+            "value": probe.basis.value,
+            "dispersion": probe.basis.dispersion,
+            "samples": probe.basis.samples,
+        },
+        "durable": calibration.reference == "spot",
+        "message": (
+            f"Markup de ton broker : {calibration.alpha:+.2f} $. Valable plusieurs jours."
+            if calibration.reference == "spot"
+            else f"Écart au prix Bybit brut : {calibration.alpha:+.2f} $. "
+                 "À refaire dans 2 à 4 heures (base spot non mesurable)."
+        ),
+        "note": probe.problem or "",
+    }
+
+
 class handler(BaseHTTPRequestHandler):
     def _send(self, status: int, payload: dict) -> None:
         body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
@@ -274,6 +330,19 @@ class handler(BaseHTTPRequestHandler):
         parsed = urlparse(self.path)
         params = parse_qs(parsed.query)
         route = parsed.path.rstrip("/").rsplit("/", 1)[-1] or "analyse"
+
+        if route in ("calibrate", "calibrage"):
+            try:
+                self._send(200, run_calibration(params))
+            except ValueError as exc:
+                self._send(400, {"error": str(exc), "kind": "parametre_invalide"})
+            except RuntimeError as exc:
+                self._send(502, {"error": str(exc), "kind": "source_indisponible",
+                                 "region": os.environ.get("VERCEL_REGION", "inconnue")})
+            except Exception as exc:  # pragma: no cover
+                self._send(500, {"error": f"{type(exc).__name__}: {exc}",
+                                 "kind": "erreur_interne"})
+            return
 
         if route in ("health", "sante"):
             self._send(200, {

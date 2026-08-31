@@ -320,9 +320,12 @@ def add_anchor(calib: Calibration, bybit: float, mt5_bid: float, mt5_ask: float,
         mt5_bid, mt5_ask = mt5_ask, mt5_bid
     anchor = Anchor(ts=ts or now_ms(), bybit=bybit, mt5_bid=mt5_bid, mt5_ask=mt5_ask,
                     source=source, spot=spot)
-    drift = None
-    if calib.anchors:
-        drift = anchor.mt5_mid - calib.to_mt5(anchor.bybit)
+    # Contrôle de dérive : seulement entre ancrages du MÊME référentiel.
+    # Comparer un prix Bybit à une calibration adossée au spot produirait un
+    # écart égal à la prime XAUT entière, et donc une fausse alerte.
+    same_reference = calib.reference == ("spot" if anchor.is_spot_based else "bybit")
+    if calib.anchors and same_reference:
+        drift = anchor.mt5_mid - calib.to_mt5(anchor.reference_price)
         if abs(drift) > 3.0:
             LOG.warning(
                 "derive de %.2f$ vs la calibration précédente - "

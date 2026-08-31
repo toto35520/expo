@@ -38,7 +38,7 @@ def build_parser() -> argparse.ArgumentParser:
     common = argparse.ArgumentParser(add_help=False)
     common.add_argument("--log", default="warn", choices=["debug", "info", "warn", "error"],
                         help="verbosite des journaux (défaut: warn)")
-    common.add_argument("--no-color", action="store_true", help="désactivé les couleurs")
+    common.add_argument("--no-color", action="store_true", help="désactive les couleurs")
     common.add_argument("--config", help="chemin d'un fichier de configuration JSON")
 
     parser = argparse.ArgumentParser(
@@ -48,7 +48,7 @@ def build_parser() -> argparse.ArgumentParser:
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=(
             "exemples :\n"
-            "  goldscalp calibrate --bybit 2405.10 --bid 2412.30 --ask 2412.60\n"
+            "  goldscalp calibrate --mt5 2412.45          (le prix affiché par MT5, c'est tout)\n"
             "  goldscalp analyse --balance 5000 --risk 0.5\n"
             "  goldscalp watch --interval 30\n"
             "  goldscalp backtest --bars 6000\n"
@@ -98,7 +98,10 @@ def build_parser() -> argparse.ArgumentParser:
     p_watch.add_argument("--max-iterations", type=int, help="s'arrêté après N tours")
 
     p_cal = sub.add_parser("calibrate", help="géré le calage Bybit -> MT5", parents=[common])
-    p_cal.add_argument("--bybit", type=float, help="prix Bybit relevé")
+    p_cal.add_argument("--mt5", type=float, nargs="+", metavar="PRIX",
+                       help="prix MT5 affiché par ton terminal — c'est tout ce qu'il faut. "
+                            "Un seul nombre = milieu du marché ; deux nombres = bid et ask")
+    p_cal.add_argument("--bybit", type=float, help="prix Bybit relevé (calage manuel avancé)")
     p_cal.add_argument("--bid", type=float, help="bid MT5 au même instant")
     p_cal.add_argument("--ask", type=float, help="ask MT5 au même instant")
     p_cal.add_argument("--auto", action="store_true", help="relevé le tick MT5 automatiquement")
@@ -286,6 +289,52 @@ def cmd_calibrate(args: argparse.Namespace, config: Config, palette: Palette) ->
         calibration = updated
         save_calibration(calibration)
 
+    elif args.mt5:
+        # Le cas normal : l'utilisateur lit un prix dans MT5 et le recopie.
+        # L'outil relève lui-même le prix Bybit et mesure la base.
+        if len(args.mt5) > 2:
+            print(palette.red("--mt5 accepte un prix (milieu) ou deux (bid et ask)"),
+                  file=sys.stderr)
+            return 2
+        bid = args.mt5[0]
+        ask = args.mt5[1] if len(args.mt5) > 1 else None
+        updated, probe = engine.calibrate_from_mt5(config, calibration, bid, ask)
+        if not probe.ok:
+            print(palette.red(
+                f"Impossible de relever un prix de référence.\n  {probe.problem}\n"
+                "Sans lui, l'outil ne peut pas savoir de combien ton broker s'écarte.\n"
+                "Vérifie ta connexion, ou fournis le calage complet :\n"
+                "  goldscalp calibrate --bybit <prix> --bid <bid> --ask <ask>"
+            ), file=sys.stderr)
+            return 1
+
+        calibration = updated
+        save_calibration(calibration)
+        print(palette.grey(f"  prix {probe.symbol} relevé : {probe.bybit:.2f}"))
+        if probe.spot is not None and probe.basis.ok:
+            print(palette.grey(
+                f"  base Bybit->spot : {probe.basis.value:+.2f} $ "
+                f"(± {probe.basis.dispersion:.2f} sur {probe.basis.samples} bougies) "
+                f"-> or spot {probe.spot:.2f}"
+            ))
+        elif probe.spot is not None:
+            print(palette.grey("  référence : or spot direct (Bybit indisponible)"))
+            print(palette.green(
+                f"Calibré. Markup de ton broker : {calibration.alpha:+.2f} $. "
+                "Valable plusieurs jours."
+            ))
+        else:
+            print(palette.yellow(f"  base non mesurée ({probe.problem})"))
+            print(palette.green(
+                f"Calibré sur le prix Bybit brut : écart {calibration.alpha:+.2f} $. "
+                "À refaire dans 2 à 4 heures."
+            ))
+        if ask is None:
+            print(palette.grey(
+                f"  spread suppose a {calibration.spread:.2f} $ (prix unique fourni). "
+                "Donne bid et ask pour le mesurer : --mt5 <bid> <ask>"
+            ))
+
     elif args.bybit is not None:
         if args.bid is None or args.ask is None:
             print(palette.red("--bid et --ask sont requis avec --bybit"), file=sys.stderr)
@@ -318,8 +367,8 @@ def cmd_calibrate(args: argparse.Namespace, config: Config, palette: Palette) ->
 
     elif not args.show:
         print(palette.yellow(
-            "Rien a faire. Utilise --show, --auto, --reset, ou fournis "
-            "--bybit/--bid/--ask."
+            "Rien à faire. Le plus simple : `goldscalp calibrate --mt5 <prix affiché "
+            "par MT5>`.\nAutres options : --show, --auto, --reset."
         ))
 
     if args.json:
@@ -353,9 +402,9 @@ def cmd_calibrate(args: argparse.Namespace, config: Config, palette: Palette) ->
         ))
     else:
         print(palette.yellow(
-            "\n  Aucun ancrage. Ouvre MT5, note bid/ask de XAUUSD et le prix Bybit\n"
-            "  AU MEME INSTANT, puis :\n"
-            "    goldscalp calibrate --bybit 2405.10 --bid 2412.30 --ask 2412.60"
+            "\n  Aucun ancrage. Ouvre MT5, lis le prix de XAUUSD, et recopie-le :\n"
+            "    goldscalp calibrate --mt5 2412.45\n"
+            "  L'outil relève le prix Bybit et mesure la base tout seul."
         ))
     return 0
 
