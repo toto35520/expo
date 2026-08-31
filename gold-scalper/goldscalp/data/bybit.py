@@ -22,7 +22,14 @@ BASE_URLS = [
 ]
 
 KLINE_MAX = 1000
-CANDIDATE_SYMBOLS = ["XAUTUSDT", "PAXGUSDT"]
+# XAUUSDT est le perpetuel or « TradFi » de Bybit : son indexPrice suit la
+# reference or reelle, contrairement au XAUT tokenise dont la prime derive de
+# plusieurs dollars. C'est donc lui qu'il faut prendre comme reference de prix,
+# et le XAUT ne sert plus qu'a la microstructure.
+CANDIDATE_SYMBOLS = ["XAUUSDT", "XAUTUSDT", "PAXGUSDT"]
+
+# Symbole du perpetuel or, source de l'index de reference.
+GOLD_INDEX_SYMBOL = "XAUUSDT"
 
 
 class BybitError(RuntimeError):
@@ -40,6 +47,11 @@ class Instrument:
     @property
     def has_derivatives(self) -> bool:
         return self.category == "linear"
+
+    @property
+    def is_gold_index(self) -> bool:
+        """Vrai pour le perpetuel or, dont l'index suit l'or reel."""
+        return self.symbol == GOLD_INDEX_SYMBOL and self.category == "linear"
 
 
 class BybitClient:
@@ -303,6 +315,33 @@ class BybitClient:
                 continue
         values.sort()
         return [v for _, v in values]
+
+    def index_price(self, instrument: Optional[Instrument] = None) -> Optional[float]:
+        """Prix d'INDEX du perpetuel or : la reference de calage.
+
+        L'index est la valeur que Bybit calcule a partir du marche or sous-jacent,
+        pas le dernier prix traite sur le contrat. C'est donc lui qui colle au
+        XAUUSD du broker, a son markup pres. On retombe sur le mark puis sur le
+        dernier prix si l'index manque, en le signalant par la valeur choisie.
+        """
+        target = instrument
+        if target is None or not target.is_gold_index:
+            try:
+                target = self.resolve_instrument(GOLD_INDEX_SYMBOL, "linear")
+            except BybitError as exc:
+                LOG.debug("perpetuel or introuvable : %s", exc)
+                return None
+        ticker = self.ticker(target)
+        for field in ("indexPrice", "markPrice", "lastPrice"):
+            raw = ticker.get(field)
+            try:
+                value = float(raw)
+            except (TypeError, ValueError):
+                continue
+            if value > 0:
+                LOG.debug("index or via %s = %.2f", field, value)
+                return value
+        return None
 
     def server_time_ms(self) -> int:
         try:

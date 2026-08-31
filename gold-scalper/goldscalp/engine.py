@@ -17,7 +17,14 @@ from typing import Optional
 
 from goldscalp.config import Config
 from goldscalp.core.basis import Basis, best_common_timeframe, estimate_basis
-from goldscalp.core.calibration import Calibration, add_anchor, health as calibration_health
+from goldscalp.core.calibration import (
+    AnchorRefused,
+    Calibration,
+    add_anchor,
+    capture_allowed,
+    health as calibration_health,
+    validate_anchor,
+)
 from goldscalp.core.fundamental import FundamentalView, analyse_fundamentals
 from goldscalp.core.indicators import compute_indicators
 from goldscalp.core.microstructure import MicroView, analyse_derivatives, build_micro
@@ -27,7 +34,7 @@ from goldscalp.core.scalp import ScalpView, analyse_scalp
 from goldscalp.core.scoring import Confluence, TimeframeView, build_timeframe_view, fuse
 from goldscalp.core.series import Series, resample
 from goldscalp.core.structure import build_structure
-from goldscalp.data.bybit import BybitClient, BybitError, Instrument
+from goldscalp.data.bybit import GOLD_INDEX_SYMBOL, BybitClient, BybitError, Instrument
 from goldscalp.data.calendar import EconomicCalendar, NewsRisk
 from goldscalp.data.macro import MacroFeed, MacroSeries
 from goldscalp.data.mt5 import Mt5Bridge
@@ -85,6 +92,18 @@ def _conversion(bundle: "DataBundle", calibration: Calibration):
         )
 
     calibration_error = calibration.residual_std + calibration.half_spread
+
+    # Cas nominal : la série de prix EST le perpétuel or, dont l'index suit
+    # l'or réel, et l'ancre a été prise contre ce même index. Il n'y a donc
+    # rien à convertir avant d'appliquer le markup du broker — insérer une
+    # base ici ajouterait une correction pour un écart qui n'existe pas.
+    if calibration.reference == "index" and source in ("BYBIT", "YAHOO"):
+        symbol = bundle.instrument.symbol if bundle.instrument else source
+        return (
+            calibration.apply,
+            f"{symbol} {calibration.alpha:+.2f} $ (markup broker, ancre permanente)",
+            round(calibration_error, 2),
+        )
 
     # Étape 1 : ramener la source à l'or spot.
     if source == "YAHOO":
@@ -599,6 +618,7 @@ class CalibrationProbe:
     basis: Basis = field(default_factory=Basis)
     symbol: str = ""
     problem: str = ""
+    reference_kind: str = "bybit"
 
     @property
     def ok(self) -> bool:
@@ -606,38 +626,33 @@ class CalibrationProbe:
 
     @property
     def reference(self) -> str:
-        return "spot" if self.spot is not None else "bybit"
+        return self.reference_kind
 
 
 def probe_reference_price(config: Config) -> CalibrationProbe:
     """Relève le prix de référence courant, par ordre de préférence.
 
-    1. Bybit + base mesurée : on obtient le prix temps réel ET son équivalent
-       spot, donc un ancrage qui mesure le seul markup du broker.
-    2. Or spot Yahoo seul : suffisant, puisque c'est déjà le bon référentiel.
-       Indispensable là où Bybit est filtré par pays.
+    1. INDEX du perpétuel or Bybit (XAUUSDT). C'est le mode nominal : cet
+       index suit l'or réel, donc l'écart au XAUUSD du broker se réduit à son
+       markup, qui ne dérive pas. L'ancre obtenue est permanente.
+    2. Or spot Yahoo. Même nature de référence, reconstruite autrement ;
+       indispensable là où Bybit est filtré par pays.
+    3. Prix Bybit brut corrigé de la base mesurée (hérité).
     """
     problems: list[str] = []
 
     client = BybitClient()
     try:
-        instrument = client.resolve_instrument(config.market.bybit_symbol,
-                                               config.market.bybit_category)
-        ticker = client.ticker(instrument)
-        price = float(ticker.get("lastPrice") or ticker.get("markPrice") or 0.0)
-        if price:
-            probe = CalibrationProbe(bybit=price, symbol=instrument.symbol)
-            probe.basis = measure_basis(config)
-            if probe.basis.ok:
-                probe.spot = round(probe.basis.to_spot(price), 4)
-            else:
-                probe.problem = probe.basis.note
-            return probe
-        problems.append("Bybit n'a renvoyé aucun prix")
+        index = client.index_price()
+        if index:
+            return CalibrationProbe(
+                bybit=index, spot=round(index, 4), symbol=GOLD_INDEX_SYMBOL,
+                reference_kind="index",
+            )
+        problems.append("index du perpétuel or indisponible")
     except BybitError as exc:
         problems.append(f"Bybit : {exc}")
 
-    # Repli : l'or spot suffit, c'est déjà le référentiel visé.
     yahoo = YahooGoldClient()
     try:
         reference = yahoo.resolve_instrument(config.market.yahoo_symbol)
@@ -645,7 +660,7 @@ def probe_reference_price(config: Config) -> CalibrationProbe:
         if spot:
             return CalibrationProbe(
                 bybit=spot, spot=round(spot, 4), symbol=reference.symbol,
-                problem="; ".join(problems),
+                reference_kind="spot", problem="; ".join(problems),
             )
         problems.append("Yahoo n'a renvoyé aucun prix")
     except YahooError as exc:
@@ -672,8 +687,21 @@ def calibrate_from_mt5(config: Config, calibration: Calibration, mt5_bid: float,
     else:
         bid, ask = min(mt5_bid, mt5_ask), max(mt5_bid, mt5_ask)
 
+    allowed, why = capture_allowed()
+    if not allowed:
+        probe.problem = why
+        return calibration, probe
+
+    try:
+        validate_anchor(probe.bybit, bid, ask)
+    except AnchorRefused as exc:
+        probe.problem = str(exc)
+        probe.bybit = None          # signale un échec, sans écraser la calibration
+        return calibration, probe
+
     updated = add_anchor(calibration, probe.bybit, bid, ask,
                          source="prix_mt5", spot=probe.spot)
+    updated.reference = probe.reference_kind
     return updated, probe
 
 

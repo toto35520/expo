@@ -118,7 +118,7 @@ def build_calibration(params: dict[str, list[str]]) -> tuple[Calibration, list[s
     # (durable), un alpha de +7.35 est un écart brut à Bybit (périssable).
     # Les confondre décalerait tous les prix de la prime XAUT entière.
     reference = (_first(params, "ref") or os.environ.get("GOLDSCALP_REF") or "bybit").lower()
-    if reference not in ("spot", "bybit"):
+    if reference not in ("index", "spot", "bybit"):
         reference = "bybit"
 
     calibration = Calibration(
@@ -139,7 +139,7 @@ def build_calibration(params: dict[str, list[str]]) -> tuple[Calibration, list[s
     calibration.anchors = [
         Anchor(now_ms(), pivot, mid - calibration.spread / 2,
                mid + calibration.spread / 2, source="declare",
-               spot=pivot if reference == "spot" else None)
+               spot=pivot if reference in ("index", "spot") else None)
     ]
     notes.append(
         "Calibration déclarative (alpha/beta fournis) : elle n'a pas été "
@@ -267,10 +267,19 @@ def run_calibration(params: dict[str, list[str]]) -> dict:
     l'utilisateur. La réponse contient l'alpha à conserver côté navigateur,
     puisqu'une fonction serverless ne garde rien entre deux appels.
     """
-    mt5_price = _as_float(params, "mt5")
-    if mt5_price is None or mt5_price <= 0:
-        raise ValueError("paramètre 'mt5' requis : le prix affiché par ton terminal")
+    # BID et ASK, comme les affiche le terminal. Un seul prix reste accepté et
+    # sera traité comme le milieu du marché.
+    bid = _as_float(params, "bid")
     ask = _as_float(params, "ask")
+    mt5_price = _as_float(params, "mt5")
+    if bid is not None and ask is not None:
+        mt5_price = bid
+    elif mt5_price is None:
+        raise ValueError(
+            "Renseigne le BID et l'ASK affichés par ton MT5 (ou au minimum un prix)."
+        )
+    if mt5_price is None or mt5_price <= 0:
+        raise ValueError("Prix MT5 invalide.")
 
     config = build_config(params)
     calibration, probe = engine.calibrate_from_mt5(config, Calibration(), mt5_price, ask)
@@ -283,6 +292,7 @@ def run_calibration(params: dict[str, list[str]]) -> dict:
     return {
         "ok": True,
         "alpha": round(calibration.alpha, 4),
+        "permanent": calibration.reference == "index",
         "reference": calibration.reference,
         "spread": round(calibration.spread, 4),
         "quality": calibration.quality(),
@@ -296,12 +306,15 @@ def run_calibration(params: dict[str, list[str]]) -> dict:
             "dispersion": probe.basis.dispersion,
             "samples": probe.basis.samples,
         },
-        "durable": calibration.reference == "spot",
+        "durable": calibration.reference in ("index", "spot"),
         "message": (
-            f"Markup de ton broker : {calibration.alpha:+.2f} $. Valable plusieurs jours."
+            f"Aligné sur ton broker : {calibration.alpha:+.2f} $. "
+            "L'ancre reste active jusqu'à ce que tu la remplaces."
+            if calibration.reference == "index"
+            else f"Markup de ton broker : {calibration.alpha:+.2f} $. Valable plusieurs jours."
             if calibration.reference == "spot"
             else f"Écart au prix Bybit brut : {calibration.alpha:+.2f} $. "
-                 "À refaire dans 2 à 4 heures (base spot non mesurable)."
+                 "À refaire dans 2 à 4 heures (référence index indisponible)."
         ),
         "note": probe.problem or "",
     }

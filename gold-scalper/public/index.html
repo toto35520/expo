@@ -136,12 +136,14 @@
     grid-template-columns:repeat(auto-fit,minmax(140px,1fr))}
   .form label{font-size:11px;color:var(--dim);display:block;margin-bottom:4px;
     text-transform:uppercase;letter-spacing:.05em}
-  .calibbar{display:flex;align-items:center;gap:8px;background:#0e1420;
+  .calibbar{display:flex;align-items:flex-end;gap:8px;background:#0e1420;
     border:1px solid #2c3a55;border-radius:10px;padding:10px 12px;flex-wrap:wrap}
-  .calibbar label{flex:none;font-size:11px;color:var(--dim);text-transform:uppercase;
-    letter-spacing:.06em}
-  .calibbar input{flex:1;min-width:120px;font-size:18px;font-weight:700;font-family:var(--mono)}
-  .calibbar button{flex:none;white-space:nowrap}
+  .calibbar label{flex:1;min-width:104px;font-size:10px;color:var(--dim);
+    text-transform:uppercase;letter-spacing:.06em;display:block}
+  .calibbar input{width:100%;margin-top:4px;font-size:17px;font-weight:700;
+    font-family:var(--mono)}
+  .calibbar button{flex:none;white-space:nowrap;align-self:flex-end}
+  @media(max-width:430px){.calibbar button{flex:1 0 100%}}
   .hint{margin:6px 2px 12px;font-size:12px;color:var(--faint);line-height:1.5}
   .hint.ok{color:var(--buy)} .hint.warn{color:var(--warn)} .hint.err{color:var(--sell)}
   details.advanced{grid-column:1/-1}
@@ -180,11 +182,13 @@
   <!-- La seule chose que l'outil ne peut pas deviner : le prix du broker.
        Tout le reste a un défaut raisonnable et vit dans le tiroir « Réglages ». -->
   <div class="calibbar">
-    <label for="mt5price">Prix MT5</label>
-    <input type="number" id="mt5price" step="0.01" inputmode="decimal" placeholder="4444.30">
+    <label for="mt5bid">BID / SELL<input type="number" id="mt5bid" step="0.01"
+      inputmode="decimal" placeholder="4437.10"></label>
+    <label for="mt5ask">ASK / BUY<input type="number" id="mt5ask" step="0.01"
+      inputmode="decimal" placeholder="4437.31"></label>
     <button id="calibrate" class="primary">Calibrer</button>
   </div>
-  <p class="hint" id="calibState">Recopie ici le prix affiché par ton MT5. C'est tout.</p>
+  <p class="hint" id="calibState">Recopie le BID et l'ASK affichés par ton MT5. Une seule fois.</p>
 
   <details class="settings" id="settings">
     <summary>Réglages</summary>
@@ -314,7 +318,8 @@
 (function(){
   "use strict";
   const $ = id => document.getElementById(id);
-  const FIELDS = ["alpha","beta","spread","balance","risk","minconf","interval","symbol","mt5price"];
+  const FIELDS = ["alpha","beta","spread","balance","risk","minconf","interval","symbol",
+                  "mt5bid","mt5ask"];
   const FLAGS  = ["macro","calendar","micro","counter_trend","demo"];
   const KEY = "goldscalp.settings.v1";
   let timer = null, tick = null, busy = false;
@@ -354,7 +359,7 @@
       refresh();
     });
   });
-  FIELDS.filter(f => f !== "mt5price").forEach(field => {
+  FIELDS.filter(f => f !== "mt5bid" && f !== "mt5ask").forEach(field => {
     $(field).addEventListener("change", () => { save(); refresh(); });
   });
 
@@ -369,14 +374,16 @@
   }
 
   async function calibrate(){
-    const price = parseFloat($("mt5price").value);
-    if(!(price > 0)){ calibState("Saisis le prix affiché par ton terminal MT5.", "warn"); return; }
+    const bid = parseFloat($("mt5bid").value);
+    const ask = parseFloat($("mt5ask").value);
+    if(!(bid > 0)){ calibState("Saisis le BID affiché par ton terminal MT5.", "warn"); return; }
+    if(!(ask > 0)){ calibState("Saisis l'ASK affiché par ton terminal MT5.", "warn"); return; }
+    if(ask < bid){ calibState("L'ASK doit être supérieur au BID.", "err"); return; }
     $("calibrate").disabled = true;
-    calibState("Relevé du prix de référence et mesure de la base…");
+    calibState("Relevé de l'index or et alignement sur ton broker…");
     try{
-      const params = new URLSearchParams({ mt5: String(price) });
+      const params = new URLSearchParams({ bid: String(bid), ask: String(ask) });
       const s = collect();
-      if(s.spread) params.set("spread", s.spread);
       if(s.symbol) params.set("symbol", s.symbol);
       const res = await fetch("/api/calibrate?" + params, { cache:"no-store" });
       const data = await res.json();
@@ -398,7 +405,9 @@
     }
   }
   $("calibrate").addEventListener("click", calibrate);
-  $("mt5price").addEventListener("keydown", e => { if(e.key === "Enter") calibrate(); });
+  ["mt5bid", "mt5ask"].forEach(id => {
+    $(id).addEventListener("keydown", e => { if(e.key === "Enter") calibrate(); });
+  });
 
   /* ---------- requête ---------- */
   function query(){
@@ -630,6 +639,10 @@
       const res = d.conversion ? d.conversion.residual_error : null;
       if(!d.calibration || !d.calibration.anchors){
         calibState("Pas encore calibré — les prix affichés ne sont pas ceux de ton broker.", "warn");
+      }else if(d.calibration.reference === "index"){
+        calibState(`Aligné sur ton broker · α ${fmt(d.calibration.alpha)} $`
+          + (res !== null && res < 100 ? ` · écart ${fmt(res)} $` : "")
+          + " · ancre permanente", "ok");
       }else if(d.calibration.reference === "spot"){
         calibState(`Calibré · écart au prix de ton broker ${res !== null && res < 100 ? fmt(res) + " $" : "inconnu"}`, "ok");
       }else{

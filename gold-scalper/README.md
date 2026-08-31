@@ -69,14 +69,35 @@ Quand le repli s'active, l'outil le dit : la source affichée passe à `YAHOO`, 
 l'absence de volume est signalée explicitement — les indicateurs de participation
 se rabattent alors sur une pondération temporelle.
 
-### Le modèle appliqué : deux étapes, pas une
+### La bonne référence : l'index du perpétuel or
 
-La correction se fait en deux temps, et cette séparation est ce qui rend
-l'écart final négligeable :
+Bybit cote **deux** instruments or, et le choix entre les deux décide de tout :
+
+| Symbole | Ce que c'est | Écart au XAUUSD du broker |
+|---|---|---|
+| `XAUTUSDT` | or **tokenisé** (Tether Gold) | plusieurs dollars, **qui dérivent** |
+| **`XAUUSDT`** | **perpétuel or**, son `indexPrice` suit l'or réel | le seul **markup** du courtier |
+
+L'outil prend `XAUUSDT` comme référence de prix. Le XAUT ne sert plus qu'à la
+microstructure (carnet, flux, funding, open interest), là où sa prime n'a aucune
+importance.
+
+Cela change la nature du calage : l'écart mesuré n'est plus une prime qui bouge,
+c'est la marge de ton courtier. Elle ne dérive pas — donc **l'ancre ne se périme
+pas**. Elle reste active jusqu'à ce que tu la remplaces volontairement.
 
 ```
-1.  Bybit  →  or spot     base mesurée automatiquement, à chaque analyse
-2.  or spot →  MT5        markup du broker, un ancrage manuel qui dure
+prix_MT5 = index_or + markup_broker
+```
+
+### Le modèle appliqué quand l'index n'est pas disponible
+
+Là où Bybit est filtré par pays, l'outil retombe sur l'or spot Yahoo, puis en
+dernier recours sur le XAUT corrigé d'une base mesurée en continu :
+
+```
+1.  Bybit XAUT  →  or spot     base mesurée automatiquement, à chaque analyse
+2.  or spot     →  MT5         markup du broker
 ```
 
 **Étape 1 — la base, mesurée toute seule.** L'outil récupère déjà l'or spot
@@ -181,18 +202,19 @@ Sans calibration, les niveaux affichés sont des **prix Bybit bruts**, décalés
 plusieurs dollars par rapport à ton broker. L'outil refuse de le passer sous
 silence : il affiche `CRITIQUE` tant que rien n'est calé.
 
-### La seule chose à saisir : le prix de ton MT5
+### Une seule fois : le BID et l'ASK de ton MT5
 
-Ouvre MT5 sur XAUUSD, lis le prix, recopie-le. C'est tout.
+Ouvre MT5 sur XAUUSD, recopie le BID et l'ASK. Une seule fois.
 
 ```bash
-python3 -m goldscalp calibrate --mt5 2412.45
+python3 -m goldscalp calibrate --mt5 4437.10 4437.31
 ```
 
 ```
-  prix XAUTUSDT relevé : 2405.10
-  base Bybit->spot : -7.35 $ (± 0.08 sur 240 bougies) -> or spot 2397.75
-Calibré. Markup de ton broker : +0.15 $. Valable plusieurs jours.
+  XAUUSDT relevé : 4437.00
+  référence : index du perpétuel or Bybit (suit l'or réel)
+Aligné sur ton broker : +0.21 $. L'ancre reste active jusqu'à ce que tu la
+remplaces (`goldscalp calibrate --reset` pour l'effacer).
 ```
 
 L'outil relève lui-même le prix de référence et mesure la base : la seule
@@ -205,8 +227,9 @@ pratiquement pas, contrairement aux `+7.35 $` d'écart brut à Bybit.
 visible en haut de page :
 
 ```
-PRIX MT5  [ 4444.30 ]  [ Calibrer ]
-Calibré · écart au prix de ton broker 0.15 $
+BID / SELL [ 4437.10 ]   ASK / BUY [ 4437.31 ]
+[ Calibrer ]
+Aligné sur ton broker · α 0.21 $ · ancre permanente
 ```
 
 Capital, risque, seuil, sources : tout le reste a un défaut raisonnable et vit
@@ -254,16 +277,32 @@ CALIBRATION
   etat : OK
 ```
 
-**À quelle fréquence recalibrer ?** Cela dépend du référentiel de ton ancrage,
-et le `--show` te le dit (`MT5 = spot + …` ou `MT5 = Bybit + …`) :
+**À quelle fréquence recalibrer ?** Cela dépend du référentiel, et `--show` te
+le dit (`MT5 = index or + …`, `MT5 = spot + …` ou `MT5 = Bybit + …`) :
 
 | Référentiel | Ce que mesure alpha | Durée de vie |
 |---|---|---|
-| **spot** (base mesurée) | markup du broker | **plusieurs jours** |
-| bybit (base indisponible) | markup + prime XAUT | 2 à 4 heures |
+| **index or** (nominal) | markup du broker | **permanente** |
+| spot (base mesurée) | markup du broker | plusieurs jours |
+| bybit (référence indisponible) | markup + prime XAUT | 2 à 4 heures |
 
-Un ancrage adossé au spot ne passe en `attention` qu'au bout de plusieurs
-jours. Un ancrage brut passe en `attention` à 45 min et en `critique` à 6 h.
+Recalibre seulement si ton courtier change ses conditions, ou après avoir changé
+de compte.
+
+#### Garde-fous à la saisie
+
+Un ancrage faux ne lève aucune erreur plus tard : il déplace simplement tous tes
+niveaux de son erreur. Il est donc refusé à la saisie s'il est invraisemblable :
+
+- ASK inférieur au BID, ou spread nul (le même nombre saisi deux fois) ;
+- spread hors de [0,02 ; 5,00] $ — marché fermé ou rollover en cours ;
+- écart au prix de référence supérieur à 25 $ — ce ne sont pas deux cotations
+  du même métal ;
+- capture pendant le **rollover quotidien** (autour de 21 h–22 h UTC) ou le
+  week-end : le spread y est transitoirement large, et le figer dans une ancre
+  permanente enregistrerait une anomalie.
+
+Un refus ne dégrade jamais l'ancrage déjà en place.
 
 Pour identifier la pente en plus du décalage, ajoute des ancrages à des moments
 où le prix a bougé de plus de 8 $ : l'outil bascule automatiquement sur une
@@ -899,13 +938,13 @@ vercel.json             region, duree maximale, reecritures
 python3 -m unittest discover -s tests
 ```
 
-150 tests couvrant les bornes des indicateurs, la causalité, l'identifiabilité
+171 tests couvrant les bornes des indicateurs, la causalité, l'identifiabilité
 de la pente de calibration, la **précision du recalage mesurée contre une vérité
 terrain**, la géométrie des plans, la non-inversion des signaux, l'honnêteté du
 backtest, la bascule de source quand Bybit est géo-bloqué, les onze contrôles
 d'exécution scalp, la porte turbo testée par construction (et non par
-échantillonnage), le calibrage au seul prix MT5 vérifié contre une vérité
-terrain, et le CLI.
+échantillonnage), le calibrage sur l'index or vérifié contre une vérité
+terrain, la permanence de l'ancre, les garde-fous de saisie, et le CLI.
 
 ---
 

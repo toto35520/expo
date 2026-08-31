@@ -41,6 +41,84 @@ ANCHOR_MAX_AGE_MS = 6 * 3600 * 1000       # 6 h
 ANCHOR_WARN_AGE_MS = 45 * 60 * 1000       # 45 min
 MIN_RANGE_FOR_SLOPE = 8.0                 # $ d'amplitude minimale entre ancrages
 
+# --------------------------------------------------------------------------- #
+# Ancrage sur l'index or : le mode nominal
+# --------------------------------------------------------------------------- #
+# Quand la référence est l'INDEX du perpétuel or (XAUUSDT), l'écart au XAUUSD du
+# broker n'est plus qu'un markup : il ne dérive pas, donc l'ancre n'a aucune
+# raison d'expirer. Elle reste active jusqu'à ce que l'utilisateur la remplace
+# ou l'efface volontairement.
+#
+# Faire expirer une ancre stable était le défaut central de la version
+# précédente : l'outil se déclarait « critique » et refusait de travailler
+# alors que le calage était toujours juste.
+INDEX_ANCHOR_PERMANENT = True
+
+# Bornes de vraisemblance, reprises de la référence de terrain.
+MIN_SPREAD_USD = 0.02        # en dessous : la saisie n'est pas un vrai bid/ask
+MAX_SPREAD_USD = 5.00        # au-dessus : marché fermé ou rollover en cours
+MAX_ABS_OFFSET_USD = 25.0    # au-dessus : ce n'est pas le même instrument
+
+
+class AnchorRefused(ValueError):
+    """Ancrage rejeté : la raison est destinée à être affichée telle quelle."""
+
+
+def validate_anchor(reference_price: float, mt5_bid: float, mt5_ask: float) -> None:
+    """Refuse un ancrage invraisemblable AVANT qu'il ne décale tous les prix.
+
+    Un ancrage faux ne lève aucune exception plus tard : il déplace simplement
+    tous les niveaux de son erreur. C'est donc ici qu'il faut le rejeter.
+    """
+    if not (reference_price > 0):
+        raise AnchorRefused("Prix de référence invalide.")
+    if not (mt5_bid > 0 and mt5_ask > 0):
+        raise AnchorRefused("Prix MT5 invalide.")
+    if mt5_ask < mt5_bid:
+        raise AnchorRefused("L'ASK doit être supérieur au BID.")
+
+    # Un spread nul signifie que le même nombre a été saisi deux fois : ce
+    # n'est pas un bid/ask, et le refuser évite un calage silencieusement faux.
+    spread = mt5_ask - mt5_bid
+    if not (MIN_SPREAD_USD <= spread <= MAX_SPREAD_USD):
+        raise AnchorRefused(
+            f"Spread MT5 incohérent ({spread:.2f} $) : attendu entre "
+            f"{MIN_SPREAD_USD:.2f} et {MAX_SPREAD_USD:.2f} $. "
+            "Marché fermé ou rollover en cours ?"
+        )
+
+    offset = (mt5_bid + mt5_ask) / 2.0 - reference_price
+    if abs(offset) > MAX_ABS_OFFSET_USD:
+        raise AnchorRefused(
+            f"Décalage broker trop important ({offset:+.2f} $). "
+            "Vérifie que tu compares bien deux cotations de l'or au même instant."
+        )
+
+
+def capture_allowed(ts_ms: Optional[int] = None, buffer_minutes: int = 5) -> tuple[bool, str]:
+    """Refuse de figer une ancre pendant le vide de liquidité du rollover.
+
+    Autour de la clôture et de la réouverture quotidiennes, le spread du broker
+    explose pendant quelques minutes. Capturer là fige un spread transitoire
+    dans une référence censée durer.
+    """
+    stamp = ts_ms if ts_ms is not None else now_ms()
+    minutes = int((stamp // 60_000) % 1440)          # minutes depuis minuit UTC
+    weekday = int(((stamp // 86_400_000) + 4) % 7)   # 0 = lundi (epoch = jeudi)
+
+    if weekday >= 5:
+        return False, "Marché fermé (week-end) : le spread affiché n'est pas exploitable."
+
+    margin = max(0, min(15, int(buffer_minutes)))
+    # Le forex or ferme vers 21h UTC et rouvre vers 22h UTC (23h/00h heure broker).
+    close_start, close_end = 20 * 60 + 55, 22 * 60 + 5
+    if close_start - margin <= minutes <= close_end + margin:
+        return False, (
+            "Rollover quotidien en cours : le spread est transitoirement large. "
+            "Recalibre dans quelques minutes."
+        )
+    return True, ""
+
 
 @dataclass
 class Anchor:
@@ -94,7 +172,9 @@ class Calibration:
     residual_std: float = 0.0
     slope_fitted: bool = False
     note: str = "non calibré"
-    reference: str = "bybit"     # "spot" quand alpha mesure le markup broker
+    # "index" = index du perpétuel or (nominal), "spot" = or spot reconstruit,
+    # "bybit" = prix brut du métal tokenisé (hérité, périssable).
+    reference: str = "bybit"
 
     # -- conversions ------------------------------------------------------- #
     def to_mt5(self, bybit_price: float) -> float:
@@ -125,12 +205,17 @@ class Calibration:
 
     @property
     def stale_after_ms(self) -> int:
-        """Durée de vie utile de la calibration selon son référentiel.
+        """Durée de vie utile de la calibration, selon son référentiel.
 
-        Un ancrage adossé au spot mesure le markup du broker : il tient des
-        jours. Un ancrage adossé au prix Bybit brut inclut la prime XAUT, qui
-        dérive en quelques heures.
+        - index : l'écart mesuré est le seul markup du broker, il ne dérive
+          pas. L'ancre est PERMANENTE, jusqu'à effacement volontaire.
+        - spot  : même nature, mais la référence est reconstruite ; on garde
+          une péremption lointaine par prudence.
+        - bybit : l'écart contient la prime du métal tokenisé, qui dérive en
+          quelques heures.
         """
+        if self.reference == "index" and INDEX_ANCHOR_PERMANENT:
+            return 10 ** 15
         return ANCHOR_MAX_AGE_MS * (28 if self.reference == "spot" else 1)
 
     @property
@@ -156,9 +241,11 @@ class Calibration:
             score -= clamp(self.residual_std * 8.0, 0.0, 25.0)
         if any(a.source.startswith("mt5") for a in self.anchors):
             score += 7.0
-        if self.reference == "spot":
+        if self.reference in ("index", "spot"):
             # Un markup broker vieillit infiniment mieux qu'une prime XAUT.
             score += 12.0
+        if self.reference == "index":
+            score += 8.0
         return round(clamp(score, 0.0, 100.0), 1)
 
     def describe(self) -> str:
@@ -166,7 +253,7 @@ class Calibration:
             return "AUCUNE calibration - les prix affichés sont des prix bruts, non recalés"
         sign = "+" if self.alpha >= 0 else "-"
         beta_txt = f" x{self.beta:.6f}" if self.slope_fitted else ""
-        left = "spot" if self.reference == "spot" else "Bybit"
+        left = {"index": "index or", "spot": "spot"}.get(self.reference, "Bybit")
         return (
             f"MT5 = {left} {sign} {abs(self.alpha):.2f}{beta_txt} | "
             f"spread {self.spread:.2f}$ | {len(self.anchors)} ancrage(s) | "
@@ -231,8 +318,11 @@ def fit(anchors: list[Anchor], max_anchors: int = 24) -> Calibration:
     beaucoup plus longtemps que les ancrages bruts.
     """
     spot_anchors = [a for a in anchors if a.is_spot_based]
-    # Les ancrages spot survivent 5 fois plus longtemps que les ancrages bruts.
-    horizon = ANCHOR_MAX_AGE_MS * (20 if spot_anchors else 4)
+    # Un ancrage adossé à une référence or (index ou spot) mesure le markup du
+    # broker : il ne se périme pas, donc `fit` ne doit pas l'écarter. Le jeter
+    # ici annulerait la permanence avant même qu'elle puisse s'appliquer, et
+    # l'outil redemanderait une calibration parfaitement valide.
+    horizon = 10 ** 15 if spot_anchors else ANCHOR_MAX_AGE_MS * 4
     fresh = [a for a in anchors if now_ms() - a.ts <= horizon]
     fresh.sort(key=lambda a: a.ts)
     fresh = fresh[-max_anchors:]
@@ -378,7 +468,10 @@ def health(calib: Calibration) -> tuple[str, list[str]]:
         ]
 
     age = calib.age_ms
-    if calib.reference == "spot":
+    if calib.reference == "index":
+        # Permanente par construction : rien à signaler sur l'âge.
+        pass
+    elif calib.reference == "spot":
         # L'ancrage mesure le markup du broker, pas la prime du métal tokenisé :
         # il reste valable des jours. Le seul risque est un changement de
         # conditions chez le courtier.
