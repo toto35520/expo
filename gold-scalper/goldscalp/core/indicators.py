@@ -1,7 +1,7 @@
 """Indicateurs techniques en Python pur.
 
-Convention : chaque fonction renvoie une `Line` (liste alignee sur l'entree)
-ou les valeurs non definies valent `None`. Pas de NaN : les comparaisons
+Convention : chaque fonction renvoie une `Line` (liste alignee sur l'entrée)
+ou les valeurs non définies valent `None`. Pas de NaN : les comparaisons
 silencieusement fausses sur NaN sont une source classique de bugs de trading.
 """
 
@@ -22,7 +22,7 @@ Line = list[Optional[float]]
 # --------------------------------------------------------------------------- #
 
 def last(line: Line, offset: int = 0) -> Optional[float]:
-    """Derniere valeur definie a `offset` barres du bord droit."""
+    """Derniere valeur définie a `offset` barres du bord droit."""
     idx = len(line) - 1 - offset
     if idx < 0 or idx >= len(line):
         return None
@@ -37,7 +37,7 @@ def last_valid(line: Line) -> Optional[float]:
 
 
 def valid_tail(line: Line, n: int) -> list[float]:
-    """Les `n` dernieres valeurs definies (ordre chronologique)."""
+    """Les `n` dernières valeurs définies (ordre chronologique)."""
     out: list[float] = []
     for value in reversed(line):
         if value is None:
@@ -49,7 +49,7 @@ def valid_tail(line: Line, n: int) -> list[float]:
 
 
 def slope_of(line: Line, lookback: int = 5) -> Optional[float]:
-    """Variation moyenne par barre sur les `lookback` dernieres valeurs."""
+    """Variation moyenne par barre sur les `lookback` dernières valeurs."""
     tail = valid_tail(line, lookback + 1)
     if len(tail) < 2:
         return None
@@ -87,7 +87,7 @@ def ema(values: Sequence[float], period: int) -> Line:
 
 
 def rma(values: Sequence[float], period: int) -> Line:
-    """Moyenne lissee de Wilder (utilisee par RSI / ATR / ADX)."""
+    """Moyenne lissee de Wilder (utilisée par RSI / ATR / ADX)."""
     out: Line = [None] * len(values)
     if period <= 0 or len(values) < period:
         return out
@@ -112,7 +112,7 @@ def wma(values: Sequence[float], period: int) -> Line:
 
 
 def hma(values: Sequence[float], period: int) -> Line:
-    """Hull MA : tres reactive, utile pour le declencheur M1."""
+    """Hull MA : très reactive, utile pour le déclencheur M1."""
     if period < 2 or len(values) < period:
         return [None] * len(values)
     half = wma(values, max(1, period // 2))
@@ -134,7 +134,7 @@ def hma(values: Sequence[float], period: int) -> Line:
 
 
 # --------------------------------------------------------------------------- #
-# Volatilite
+# Volatilité
 # --------------------------------------------------------------------------- #
 
 def true_range(candles: Sequence[Candle]) -> list[float]:
@@ -199,7 +199,7 @@ def keltner(candles: Sequence[Candle], period: int = 20, mult: float = 1.5) -> t
 
 
 def squeeze(candles: Sequence[Candle], period: int = 20) -> list[bool]:
-    """TTM squeeze : bandes de Bollinger a l'interieur des canaux de Keltner."""
+    """TTM squeeze : bandes de Bollinger a l'intérieur des canaux de Keltner."""
     closes = [c.close for c in candles]
     bu, _, bl = bollinger(closes, period, 2.0)
     ku, _, kl = keltner(candles, period, 1.5)
@@ -426,7 +426,7 @@ def supertrend(candles: Sequence[Candle], period: int = 10, mult: float = 3.0) -
 
 
 def efficiency_ratio(values: Sequence[float], period: int = 20) -> Line:
-    """Kaufman ER : 1 = tendance parfaite, 0 = bruit pur. Cle pour le regime."""
+    """Kaufman ER : 1 = tendance parfaite, 0 = bruit pur. Cle pour le régime."""
     out: Line = [None] * len(values)
     for i in range(period, len(values)):
         direction = abs(values[i] - values[i - period])
@@ -467,7 +467,7 @@ def obv(candles: Sequence[Candle]) -> Line:
 
 
 def vwap_session(candles: Sequence[Candle], session_ms: int = 86_400_000) -> tuple[Line, Line, Line]:
-    """VWAP ancre par session (journee UTC par defaut) + bandes a 1 ecart-type."""
+    """VWAP ancre par session (journee UTC par défaut) + bandes à 1 écart-type."""
     n = len(candles)
     vwap: Line = [None] * n
     upper: Line = [None] * n
@@ -516,7 +516,7 @@ class VolumeProfile:
     bins: list[tuple[float, float]]  # (prix milieu, volume)
 
     def nearest_hvn(self, price: float) -> float:
-        """Noeud de volume eleve le plus proche : aimant a prix."""
+        """Noeud de volume élevé le plus proche : aimant a prix."""
         if not self.bins:
             return price
         ranked = sorted(self.bins, key=lambda b: b[1], reverse=True)
@@ -525,7 +525,7 @@ class VolumeProfile:
 
 
 def volume_profile(candles: Sequence[Candle], bins: int = 48) -> Optional[VolumeProfile]:
-    """Profil de volume approxime : le volume d'une bougie est reparti
+    """Profil de volume approximé : le volume d'une bougie est réparti
     uniformement sur son range. Suffisamment precis pour trouver POC/VA."""
     if len(candles) < 10:
         return None
@@ -582,9 +582,9 @@ class Divergence:
 
 def find_divergence(candles: Sequence[Candle], oscillator: Line, lookback: int = 60,
                     pivot_span: int = 3) -> Optional[Divergence]:
-    """Divergence regulière/cachee entre le prix et un oscillateur.
+    """Divergence regulière/cachée entre le prix et un oscillateur.
 
-    On compare les deux derniers pivots de meme sens dans la fenetre.
+    On compare les deux derniers pivots de même sens dans la fenêtre.
     """
     n = len(candles)
     if n < lookback + pivot_span * 2 + 2:
@@ -650,7 +650,7 @@ def find_divergence(candles: Sequence[Candle], oscillator: Line, lookback: int =
 # --------------------------------------------------------------------------- #
 
 def candle_patterns(candles: Sequence[Candle], atr_value: Optional[float]) -> list[str]:
-    """Patterns detectes sur les 3 dernieres bougies cloturees."""
+    """Patterns détectés sur les 3 dernières bougies clôturées."""
     if len(candles) < 3:
         return []
     c0, c1, c2 = candles[-1], candles[-2], candles[-3]
@@ -751,7 +751,7 @@ class IndicatorSet:
 
 
 def compute_indicators(series: Series, profile_bars: int = 240) -> IndicatorSet:
-    """Calcule le jeu complet d'indicateurs sur une serie CLOTUREE."""
+    """Calcule le jeu complet d'indicateurs sur une série CLOTUREE."""
     candles = series.candles
     closes = [c.close for c in candles]
 

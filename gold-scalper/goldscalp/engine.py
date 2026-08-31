@@ -1,12 +1,12 @@
 """Pipeline d'analyse : de la donnee brute au plan de trade.
 
 Enchainement :
-    donnees (Bybit / MT5 / simulation)
-      -> recalibrage vers le referentiel MT5
-      -> indicateurs + structure + regime, par timeframe
+    données (Bybit / MT5 / simulation)
+      -> recalibrage vers le référentiel MT5
+      -> indicateurs + structure + régime, par timeframe
       -> macro + calendrier + microstructure
       -> fusion multi-timeframe
-      -> plan de trade (entree, SL, TP1, TP2, taille)
+      -> plan de trade (entrée, SL, TP1, TP2, taille)
 """
 
 from __future__ import annotations
@@ -32,15 +32,15 @@ from goldscalp.data.mt5 import Mt5Bridge
 from goldscalp.util import LOG, now_ms
 
 TF_ROLES = {
-    "M15": "contexte - definit le biais",
-    "M5": "configuration - qualite du repli et structure",
-    "M1": "declencheur - decide l'instant d'entree",
+    "M15": "contexte - définit le biais",
+    "M5": "configuration - qualité du repli et structure",
+    "M1": "déclencheur - décide l'instant d'entrée",
 }
 
 
 @dataclass
 class DataBundle:
-    """Tout ce qui a ete recupere, avec la tracabilite de chaque source."""
+    """Tout ce qui a été recupere, avec la tracabilite de chaque source."""
 
     series: dict[str, Series] = field(default_factory=dict)
     daily: Optional[Series] = None
@@ -94,9 +94,9 @@ def collect(config: Config, *, demo: bool = False, seed: Optional[int] = None,
         from goldscalp.data import synthetic
 
         base_seed = seed if seed is not None else int(time.time()) // 900
-        # Les timeframes superieurs sont reechantillonnes depuis le M1 : il en
+        # Les timeframes supérieurs sont reechantillonnes depuis le M1 : il en
         # faut assez pour que le M15 dispose de plus de 200 bougies, sinon
-        # l'EMA200 du contexte reste indefinie et le biais est ampute.
+        # l'EMA200 du contexte reste indéfinie et le biais est ampute.
         needed = max(config.engine.bars.get("M1", 2000), 6000)
         m1 = synthetic.generate_series("M1", needed, 2400.0, seed=base_seed,
                                        end_ms=demo_end_ms)
@@ -106,7 +106,7 @@ def collect(config: Config, *, demo: bool = False, seed: Optional[int] = None,
                 bundle.series[timeframe] = resample(m1, timeframe)
         bundle.daily = resample(m1, "D1")
         price = m1.last.close
-        # Le flux doit suivre le prix : dans un vrai marche, un mouvement
+        # Le flux doit suivre le prix : dans un vrai marché, un mouvement
         # haussier s'accompagne d'un carnet et d'agressions acheteuses. Un
         # biais fixe, decorrele de l'action des prix, rend la simulation
         # inutilisable pour tester les regles qui croisent prix et flux.
@@ -128,7 +128,7 @@ def collect(config: Config, *, demo: bool = False, seed: Optional[int] = None,
         bundle.fetch_seconds = round(time.time() - started, 3)
         return bundle
 
-    # -- MT5 en priorite : c'est le prix ou tu vas reellement executer ------ #
+    # -- MT5 en priorité : c'est le prix ou tu vas reellement exécuter ------ #
     mt5_series: dict[str, Series] = {}
     if prefer_mt5:
         bridge = Mt5Bridge(config.market.mt5_symbol)
@@ -149,7 +149,7 @@ def collect(config: Config, *, demo: bool = False, seed: Optional[int] = None,
     try:
         instrument = client.resolve_instrument(config.market.bybit_symbol, config.market.bybit_category)
         bundle.instrument = instrument
-        LOG.info("marche Bybit retenu : %s (%s)", instrument.symbol, instrument.category)
+        LOG.info("marché Bybit retenu : %s (%s)", instrument.symbol, instrument.category)
     except BybitError as exc:
         bundle.problems.append(f"Bybit inaccessible : {exc}")
         LOG.warning("Bybit inaccessible : %s", exc)
@@ -188,12 +188,12 @@ def collect(config: Config, *, demo: bool = False, seed: Optional[int] = None,
         bundle.fetch_seconds = round(time.time() - started, 3)
         return bundle
 
-    # Complete les timeframes manquants par reechantillonnage du plus fin.
+    # Complete les timeframes manquants par rééchantillonnage du plus fin.
     if "M1" in bundle.series:
         for timeframe in timeframes:
             if timeframe not in bundle.series:
                 bundle.series[timeframe] = resample(bundle.series["M1"], timeframe)
-                bundle.sources[timeframe] = "reechantillonne depuis M1"
+                bundle.sources[timeframe] = "rééchantillonné depuis M1"
 
     # -- microstructure ---------------------------------------------------- #
     if use_micro and instrument is not None and config.engine.use_microstructure:
@@ -222,9 +222,9 @@ def collect(config: Config, *, demo: bool = False, seed: Optional[int] = None,
             bundle.macro = MacroFeed().fetch()
             if bundle.macro:
                 first = next(iter(bundle.macro.values()))
-                bundle.sources["macro"] = f"{len(bundle.macro)} series ({first.source})"
+                bundle.sources["macro"] = f"{len(bundle.macro)} séries ({first.source})"
             else:
-                bundle.problems.append("aucune serie macro disponible")
+                bundle.problems.append("aucune série macro disponible")
         except Exception as exc:
             bundle.problems.append(f"macro indisponible : {exc}")
     else:
@@ -242,7 +242,7 @@ def collect(config: Config, *, demo: bool = False, seed: Optional[int] = None,
                 config.engine.news_caution_min,
             )
             bundle.sources["calendrier"] = (
-                f"{len(events)} evenements ({'repli embarque' if calendar.is_estimated else 'ForexFactory'})"
+                f"{len(events)} événements ({'repli embarque' if calendar.is_estimated else 'ForexFactory'})"
             )
         except Exception as exc:
             bundle.problems.append(f"calendrier indisponible : {exc}")
@@ -261,12 +261,12 @@ def analyse(bundle: DataBundle, config: Config, calibration: Calibration,
             spread_override: Optional[float] = None) -> Analysis:
     if not bundle.series:
         raise RuntimeError(
-            "Aucune serie de prix : "
+            "Aucune série de prix : "
             + ("; ".join(bundle.problems) if bundle.problems else "sources injoignables")
         )
 
-    # Recalibrage : uniquement si le prix vient de Bybit. Une serie MT5 est
-    # deja dans le bon referentiel, la recaler serait une double correction.
+    # Recalibrage : uniquement si le prix vient de Bybit. Une série MT5 est
+    # déjà dans le bon référentiel, la recaler serait une double correction.
     needs_shift = bundle.price_source == "BYBIT"
     price_bybit: Optional[float] = None
 
@@ -303,7 +303,7 @@ def analyse(bundle: DataBundle, config: Config, calibration: Calibration,
     reference = views.get("M1") or next(iter(views.values()))
     price = reference.indicators.price
     # En simulation, la session doit suivre l'horodatage des bougies, sinon on
-    # analyse un marche de 14h avec les regles de la session de 22h.
+    # analyse un marché de 14h avec les regles de la session de 22h.
     session = current_session(reference.indicators.series.last.ts if bundle.simulated else now_ms())
 
     fundamental = analyse_fundamentals(bundle.macro, bundle.news)

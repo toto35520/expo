@@ -1,24 +1,24 @@
 """Backtest walk-forward du coeur technique.
 
-Ce que ce module mesure, et ce qu'il NE mesure PAS - la distinction est
+Ce que ce module mesuré, et ce qu'il NE mesuré PAS - la distinction est
 essentielle pour ne pas se raconter d'histoires :
 
   MESURE     : la partie technique du moteur (tendance, momentum, structure,
-               participation, retour a la moyenne) fusionnee M15 + M5, avec
-               les memes regles de stop et de cibles que le mode live.
+               participation, retour à la moyenne) fusionnee M15 + M5, avec
+               les mêmes regles de stop et de cibles que le mode live.
   NE MESURE PAS : la microstructure (carnet et flux ne sont pas historises
                par l'API publique), la macro intraday et le filtre news.
 
 Les taux de reussite qui en sortent sont donc un PLANCHER prudent de ce que
 fait le moteur complet, pas une promesse de performance.
 
-Conventions honnetes appliquees :
-  - toute decision a la bougie i n'utilise que les donnees jusqu'a i ;
-  - l'entree se fait a l'ouverture de la bougie i+1, jamais au cours de
-    cloture qui a servi a decider ;
-  - si le stop et la cible sont tous deux dans la meme bougie, on compte le
+Conventions honnêtes appliquees :
+  - toute décision a la bougie i n'utilise que les données jusqu'à i ;
+  - l'entrée se fait à l'ouverture de la bougie i+1, jamais au cours de
+    clôture qui a servi a décider ;
+  - si le stop et la cible sont tous deux dans la même bougie, on compte le
     STOP (hypothese defavorable) ;
-  - le spread est preleve a l'entree et a la sortie.
+  - le spread est prélevé a l'entrée et a la sortie.
 """
 
 from __future__ import annotations
@@ -114,19 +114,19 @@ class BacktestResult:
         return sum(1 for t in self.trades if t.side > 0)
 
     def win_rates(self) -> tuple[float, float]:
-        """(probabilite TP1, probabilite TP2) pour alimenter l'esperance live."""
+        """(probabilité TP1, probabilité TP2) pour alimenter l'espérance live."""
         if self.count < 12:
             return (0.0, 0.0)
         return (round(self.tp1_rate, 3), round(self.tp2_rate, 3))
 
     def summary(self) -> list[str]:
         if not self.trades:
-            return ["Aucun trade genere sur la periode : le moteur est reste selectif."]
+            return ["Aucun trade généré sur la période : le moteur est reste sélectif."]
         return [
             f"{self.count} trades sur {self.bars_tested} bougies {self.timeframe} "
             f"({self.longs} achats / {self.count - self.longs} ventes)",
             f"TP1 touche {self.tp1_rate:.1%} | TP2 touche {self.tp2_rate:.1%} | stop {self.stop_rate:.1%}",
-            f"Esperance {self.expectancy_r:+.3f} R par trade | cumul {self.total_r:+.1f} R",
+            f"Espérance {self.expectancy_r:+.3f} R par trade | cumul {self.total_r:+.1f} R",
             f"Facteur de profit {self.profit_factor} | drawdown max {self.max_drawdown_r} R",
             f"Duree moyenne {self.avg_bars} bougies",
         ]
@@ -135,7 +135,7 @@ class BacktestResult:
 def _slice_indicators(full: IndicatorSet, series: Series, index: int) -> IndicatorSet:
     """Vue des indicateurs telle qu'elle existait a la bougie `index`.
 
-    Tous les indicateurs sont causals (la valeur en i ne depend que des
+    Tous les indicateurs sont causals (la valeur en i ne dépend que des
     bougies 0..i) : tronquer les lignes reproduit donc exactement ce que le
     moteur aurait vu en direct. On ne garde que la queue, seule consultee.
     """
@@ -173,7 +173,7 @@ def run_backtest(series_m5: Series, series_m15: Optional[Series], risk: RiskConf
                  spread: float = 0.30, threshold: float = 0.35,
                  max_bars_held: int = 24, structure_every: int = 5,
                  max_trades: int = 400) -> BacktestResult:
-    """Walk-forward sur la serie M5, contexte M15 aligne temporellement."""
+    """Walk-forward sur la série M5, contexte M15 aligne temporellement."""
     closed = series_m5.closed_only
     result = BacktestResult(timeframe=series_m5.timeframe)
     result.warnings.append(
@@ -202,8 +202,8 @@ def run_backtest(series_m5: Series, series_m15: Optional[Series], risk: RiskConf
             bar = candles[i]
             open_trade.bars_held += 1
             side = open_trade.side
-            # Distance d'origine : le R de reference ne change pas quand le
-            # stop remonte a l'equilibre.
+            # Distance d'origine : le R de référence ne change pas quand le
+            # stop remonte a l'équilibre.
             risk_unit = open_trade.risk_unit
 
             hit_stop = bar.low <= open_trade.stop if side > 0 else bar.high >= open_trade.stop
@@ -212,17 +212,17 @@ def run_backtest(series_m5: Series, series_m15: Optional[Series], risk: RiskConf
 
             if hit_tp1 and not open_trade.hit_tp1 and not hit_stop:
                 open_trade.hit_tp1 = True
-                # On applique la meme regle qu'en live : des TP1 touche, le
-                # stop remonte a l'entree. Sans ce deplacement, crediter la
-                # sortie partielle en ignorant la perte du reliquat gonfle
-                # artificiellement les resultats.
+                # On applique la même regle qu'en live : des TP1 touche, le
+                # stop remonte a l'entrée. Sans ce deplacement, créditer la
+                # sortie partielle en ignorant la perte du reliquat gonflé
+                # artificiellement les résultats.
                 open_trade.stop = open_trade.entry
             if hit_stop:
                 # Hypothese defavorable : le stop passe avant la cible dans la
-                # meme bougie. Toute autre convention flatte le resultat.
+                # même bougie. Toute autre convention flatte le résultat.
                 if open_trade.hit_tp1:
                     # Partiel pris a TP1, reliquat sorti au stop remonte a
-                    # l'entree : sa contribution est donc nulle, pas negative.
+                    # l'entrée : sa contribution est donc nulle, pas negative.
                     open_trade.r_result = risk.tp1_share * abs(open_trade.tp1 - open_trade.entry) / risk_unit
                     open_trade.exit_reason = "stop_apres_tp1"
                 else:
@@ -259,7 +259,7 @@ def run_backtest(series_m5: Series, series_m15: Optional[Series], risk: RiskConf
         if len(result.trades) >= max_trades:
             break
 
-        # -- evaluation du signal ------------------------------------------- #
+        # -- évaluation du signal ------------------------------------------- #
         tested += 1
         ind = _slice_indicators(full, closed, i)
         regime = detect_regime(ind)
@@ -270,7 +270,7 @@ def run_backtest(series_m5: Series, series_m15: Optional[Series], risk: RiskConf
         view = build_timeframe_view("M5", ind, structure_cache, regime, "test")
         score = view.score
 
-        # Contexte M15 : la bougie M15 close la plus recente a l'instant i.
+        # Contexte M15 : la bougie M15 close la plus recente à l'instant i.
         if full_context is not None:
             ts = candles[i].ts
             ctx_index = _last_index_before(context, ts)
@@ -305,12 +305,12 @@ def run_backtest(series_m5: Series, series_m15: Optional[Series], risk: RiskConf
         )
 
     result.bars_tested = tested
-    LOG.debug("backtest: %d trades sur %d bougies evaluees", len(result.trades), tested)
+    LOG.debug("backtest: %d trades sur %d bougies évaluées", len(result.trades), tested)
     return result
 
 
 def _last_index_before(series: Series, ts: int) -> Optional[int]:
-    """Index de la derniere bougie de `series` dont l'ouverture precede `ts`."""
+    """Index de la dernière bougie de `séries` dont l'ouverture précède `ts`."""
     low, high = 0, len(series) - 1
     found: Optional[int] = None
     while low <= high:

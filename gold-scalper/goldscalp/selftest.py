@@ -1,8 +1,8 @@
 """Auto-verification du moteur.
 
-Chaque controle porte sur une propriete qui, si elle casse, produit un
+Chaque contrôle porte sur une propriété qui, si elle casse, produit un
 mauvais trade sans jamais lever d'exception. C'est exactement ce type de bug
-qu'un outil de trading doit detecter tout seul.
+qu'un outil de trading doit détecter tout seul.
 """
 
 from __future__ import annotations
@@ -35,8 +35,8 @@ def _require(condition: bool, message: str) -> None:
 def check_indicator_bounds() -> str:
     rising = [float(i) for i in range(1, 60)]
     falling = list(reversed(rising))
-    _require(ind.last_valid(ind.rsi(rising, 14)) == 100.0, "RSI d'une serie croissante doit valoir 100")
-    _require(ind.last_valid(ind.rsi(falling, 14)) == 0.0, "RSI d'une serie decroissante doit valoir 0")
+    _require(ind.last_valid(ind.rsi(rising, 14)) == 100.0, "RSI d'une série croissante doit valoir 100")
+    _require(ind.last_valid(ind.rsi(falling, 14)) == 0.0, "RSI d'une série decroissante doit valoir 0")
 
     flat = [7.5] * 80
     _require(abs(ind.last_valid(ind.ema(flat, 21)) - 7.5) < 1e-9, "EMA d'une constante doit rendre la constante")
@@ -54,15 +54,15 @@ def check_indicator_bounds() -> str:
     _require(iset.atr_value > 0, "ATR doit etre strictement positif")
     profile = iset.profile
     _require(profile is not None and profile.val <= profile.poc <= profile.vah,
-             "profil de volume incoherent : VAL <= POC <= VAH attendu")
-    return "indicateurs dans leurs bornes"
+             "profil de volume incohérent : VAL <= POC <= VAH attendu")
+    return "indicateurs dans leurs bornés"
 
 
 def check_causality() -> str:
-    """Un indicateur ne doit jamais dependre du futur.
+    """Un indicateur ne doit jamais dépendre du futur.
 
-    On calcule sur la serie complete, puis sur la serie tronquee, et on
-    verifie que les valeurs communes sont identiques. Une divergence signale
+    On calcule sur la série complète, puis sur la série tronquee, et on
+    vérifie que les valeurs communes sont identiques. Une divergence signale
     une fuite temporelle - le bug le plus toxique d'un backtest.
     """
     series = generate_series("M5", 500, 2400.0, seed=9).closed_only
@@ -76,50 +76,50 @@ def check_causality() -> str:
         a, b = line_full[cut - 1], line_cut[-1]
         if a is None and b is None:
             continue
-        _require(a is not None and b is not None, f"{name} : definition incoherente apres troncature")
+        _require(a is not None and b is not None, f"{name} : définition incohérente après troncature")
         _require(abs(a - b) < max(abs(a) * 1e-6, 1e-6),
-                 f"{name} depend du futur : {a} sur serie complete contre {b} sur serie tronquee")
+                 f"{name} dépend du futur : {a} sur série complète contre {b} sur série tronquee")
     return "indicateurs causals (aucune fuite du futur)"
 
 
 def check_resample() -> str:
     m1 = generate_series("M1", 1200, 2400.0, seed=3)
     m5 = resample(m1, "M5")
-    _require(len(m5) >= 200, "reechantillonnage M1 -> M5 trop court")
+    _require(len(m5) >= 200, "rééchantillonnage M1 -> M5 trop court")
     bucket = [c for c in m1 if m5[10].ts <= c.ts < m5[10].ts + 5 * 60000]
-    _require(abs(m5[10].high - max(c.high for c in bucket)) < 1e-9, "le haut agrege ne correspond pas")
-    _require(abs(m5[10].low - min(c.low for c in bucket)) < 1e-9, "le bas agrege ne correspond pas")
-    _require(abs(m5[10].open - bucket[0].open) < 1e-9, "l'ouverture agregee ne correspond pas")
-    _require(abs(m5[10].close - bucket[-1].close) < 1e-9, "la cloture agregee ne correspond pas")
-    return "reechantillonnage exact (OHLC preserve)"
+    _require(abs(m5[10].high - max(c.high for c in bucket)) < 1e-9, "le haut agrégé ne correspond pas")
+    _require(abs(m5[10].low - min(c.low for c in bucket)) < 1e-9, "le bas agrégé ne correspond pas")
+    _require(abs(m5[10].open - bucket[0].open) < 1e-9, "l'ouverture agrégée ne correspond pas")
+    _require(abs(m5[10].close - bucket[-1].close) < 1e-9, "la clôture agrégée ne correspond pas")
+    return "rééchantillonnage exact (OHLC préservé)"
 
 
 def check_calibration() -> str:
     calibration = add_anchor(Calibration(), 2400.0, 2407.00, 2407.30)
-    _require(abs(calibration.to_mt5(2400.0) - 2407.15) < 0.01, "le decalage simple est mal applique")
+    _require(abs(calibration.to_mt5(2400.0) - 2407.15) < 0.01, "le décalage simple est mal applique")
     _require(abs(calibration.to_bybit(calibration.to_mt5(2412.34)) - 2412.34) < 1e-6,
              "aller-retour de conversion non reversible")
     _require(calibration.ask(2400.0) > calibration.bid(2400.0), "ask doit etre au-dessus du bid")
 
-    # Ancrages colles : la pente n'est pas identifiable, beta doit rester a 1.
+    # Ancrages colles : la pente n'est pas identifiable, beta doit rester à 1.
     clustered = Calibration()
     for price in (2400.0, 2400.3, 2400.1, 2399.9):
         clustered = add_anchor(clustered, price, price + 7.0, price + 7.3)
     _require(not clustered.slope_fitted and clustered.beta == 1.0,
-             "une pente a ete ajustee sur des ancrages trop proches : resultat non identifiable")
+             "une pente a été ajustée sur des ancrages trop proches : résultat non identifiable")
 
-    # Ancrages ecartes : la pente doit etre retrouvee.
+    # Ancrages écartés : la pente doit etre retrouvee.
     spread_out = Calibration()
     for price in (2350.0, 2400.0, 2450.0, 2500.0):
         target = 5.0 + 1.002 * price
         spread_out = add_anchor(spread_out, price, target - 0.15, target + 0.15)
-    _require(spread_out.slope_fitted, "la pente aurait du etre identifiee sur des ancrages ecartes")
-    _require(abs(spread_out.beta - 1.002) < 1e-4, f"pente mal estimee : {spread_out.beta}")
-    return "calibration : conversions, identifiabilite de la pente et garde-fous"
+    _require(spread_out.slope_fitted, "la pente aurait du etre identifiée sur des ancrages écartés")
+    _require(abs(spread_out.beta - 1.002) < 1e-4, f"pente mal estimée : {spread_out.beta}")
+    return "calibration : conversions, identifiabilité de la pente et garde-fous"
 
 
 def check_no_signal_flip() -> str:
-    """Une penalite ne doit jamais inverser le sens du signal."""
+    """Une pénalité ne doit jamais inverser le sens du signal."""
     from goldscalp import engine
 
     config = Config()
@@ -140,14 +140,14 @@ def check_no_signal_flip() -> str:
                 _require(
                     abs(additive) > abs(confluence.raw_score),
                     "le signal a change de sens sans qu'un modificateur additif "
-                    "le justifie : une attenuation a inverse le verdict",
+                    "le justifie : une atténuation a inverse le verdict",
                 )
-    _require(checked > 10, "echantillon de controle trop faible")
-    return f"aucune inversion de signal illegitime ({checked} cas verifies)"
+    _require(checked > 10, "echantillon de contrôle trop faible")
+    return f"aucune inversion de signal illegitime ({checked} cas vérifiés)"
 
 
 def check_plan_invariants() -> str:
-    """Le plan doit etre coherent : stop du bon cote, cibles ordonnees, R:R tenu."""
+    """Le plan doit etre cohérent : stop du bon cote, cibles ordonnées, R:R tenu."""
     from goldscalp import engine
 
     config = Config()
@@ -163,7 +163,7 @@ def check_plan_invariants() -> str:
         plans += 1
         direction = 1 if plan.side == "ACHAT" else -1
         _require((plan.stop - plan.entry) * direction < 0,
-                 f"stop du mauvais cote (seed {seed}) : {plan.side} entree {plan.entry} stop {plan.stop}")
+                 f"stop du mauvais cote (seed {seed}) : {plan.side} entrée {plan.entry} stop {plan.stop}")
         for target in plan.targets:
             _require((target.price - plan.entry) * direction > 0,
                      f"cible {target.label} du mauvais cote (seed {seed})")
@@ -173,20 +173,20 @@ def check_plan_invariants() -> str:
         _require(plan.rr1 >= config.risk.min_rr_tp1 - 1e-6,
                  f"R:R de TP1 sous le minimum (seed {seed}) : {plan.rr1}")
         _require(plan.rr2 > plan.rr1, f"TP2 doit offrir plus que TP1 (seed {seed})")
-        _require(plan.lots >= 0.01, f"taille invalide (seed {seed}) : {plan.lots}")
+        _require(plan.lots >= 0.01, f"taille invalidé (seed {seed}) : {plan.lots}")
         _require(abs(plan.stop_distance - abs(plan.entry - plan.stop)) < 0.02,
-                 f"distance de stop incoherente (seed {seed})")
+                 f"distance de stop incohérente (seed {seed})")
         expected = plan.lots * plan.stop_distance * config.market.contract_size
         _require(abs(plan.risk_amount - expected) < max(expected * 0.02, 0.5),
-                 f"le risque annonce ne correspond pas a la taille (seed {seed})")
-    _require(plans >= 3, f"trop peu de plans generes pour valider ({plans})")
-    return f"invariants du plan respectes ({plans} plans verifies)"
+                 f"le risque annoncé ne correspond pas à la taille (seed {seed})")
+    _require(plans >= 3, f"trop peu de plans générés pour valider ({plans})")
+    return f"invariants du plan respectes ({plans} plans vérifiés)"
 
 
 def check_backtest_has_no_edge_on_noise() -> str:
-    """Sur une marche aleatoire, l'esperance doit tourner autour de zero.
+    """Sur une marché aléatoire, l'espérance doit tourner autour de zero.
 
-    Une esperance nettement positive sur du bruit pur ne signifie pas que le
+    Une espérance nettement positive sur du bruit pur ne signifie pas que le
     moteur est bon : elle signifie qu'il triche (fuite du futur ou comptage
     favorable des sorties).
     """
@@ -209,8 +209,8 @@ def check_backtest_has_no_edge_on_noise() -> str:
     _require(result.count >= 20, f"echantillon trop faible ({result.count} trades)")
     _require(
         result.expectancy_r < 0.12,
-        f"esperance de {result.expectancy_r:+.3f} R sur du bruit pur : "
-        "le backtest surestime les resultats (fuite du futur ou comptage favorable)",
+        f"espérance de {result.expectancy_r:+.3f} R sur du bruit pur : "
+        "le backtest surestimé les résultats (fuite du futur ou comptage favorable)",
     )
     return f"backtest sans edge artificiel sur du bruit ({result.count} trades, {result.expectancy_r:+.3f} R)"
 
@@ -223,25 +223,25 @@ def check_micro_bounds() -> str:
         book = generate_orderbook(2400.0, seed=1, bias=bias)
         trades = generate_trades(2400.0, 400, seed=2, buy_ratio=0.5 + bias * 0.3)
         micro = build_micro(book, trades, generate_derivatives(seed=3, bias=bias), 2401.0, 2400.0)
-        _require(-1.0 <= micro.score <= 1.0, f"score microstructure hors bornes : {micro.score}")
-        _require(-1.0 <= micro.imbalance <= 1.0, f"desequilibre hors bornes : {micro.imbalance}")
-    # Un carnet fortement acheteur doit produire un desequilibre positif.
+        _require(-1.0 <= micro.score <= 1.0, f"score microstructure hors bornés : {micro.score}")
+        _require(-1.0 <= micro.imbalance <= 1.0, f"déséquilibre hors bornés : {micro.imbalance}")
+    # Un carnet fortement acheteur doit produire un déséquilibre positif.
     strong = build_micro(generate_orderbook(2400.0, seed=5, bias=0.6),
                          generate_trades(2400.0, 400, seed=6, buy_ratio=0.85),
                          generate_derivatives(seed=7, bias=0.5), 2402.0, 2400.0)
-    _require(strong.score > 0.2, f"flux nettement acheteur mal interprete : {strong.score}")
-    return "microstructure : bornes et sens respectes"
+    _require(strong.score > 0.2, f"flux nettement acheteur mal interprété : {strong.score}")
+    return "microstructure : bornés et sens respectes"
 
 
 CHECKS: list[tuple[str, Callable[[], str]]] = [
-    ("bornes des indicateurs", check_indicator_bounds),
+    ("bornés des indicateurs", check_indicator_bounds),
     ("causalite (pas de fuite du futur)", check_causality),
     ("reechantillonnage", check_resample),
     ("calibration Bybit -> MT5", check_calibration),
     ("microstructure", check_micro_bounds),
     ("non-inversion du signal", check_no_signal_flip),
     ("invariants du plan de trade", check_plan_invariants),
-    ("honnetete du backtest", check_backtest_has_no_edge_on_noise),
+    ("honnêteté du backtest", check_backtest_has_no_edge_on_noise),
 ]
 
 
@@ -249,7 +249,7 @@ def run_selftest(palette: Optional[object] = None) -> int:
     from goldscalp.ui.console import make_palette
 
     p = palette or make_palette()
-    print(p.bold("\nAUTO-VERIFICATION DU MOTEUR"))  # type: ignore[attr-defined]
+    print(p.bold("\nAUTO-VÉRIFICATION DU MOTEUR"))  # type: ignore[attr-defined]
     print("-" * 70)
     failures = 0
     for label, check in CHECKS:
@@ -267,7 +267,7 @@ def run_selftest(palette: Optional[object] = None) -> int:
             print(f"         {p.grey(detail)}")             # type: ignore[attr-defined]
     print("-" * 70)
     if failures:
-        print(p.red(f"  {failures} controle(s) en echec sur {len(CHECKS)}"))  # type: ignore[attr-defined]
+        print(p.red(f"  {failures} contrôle(s) en échec sur {len(CHECKS)}"))  # type: ignore[attr-defined]
         return 1
-    print(p.green(f"  {len(CHECKS)} controles passes"))     # type: ignore[attr-defined]
+    print(p.green(f"  {len(CHECKS)} contrôles passés"))     # type: ignore[attr-defined]
     return 0

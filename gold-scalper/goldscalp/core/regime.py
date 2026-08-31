@@ -1,9 +1,9 @@
-"""Regime de marche et sessions.
+"""Régime de marché et sessions.
 
-Le meme signal technique n'a pas la meme valeur selon le contexte : un
-croisement d'EMA vaut de l'or en expansion de volatilite et coute cher en
-range compresse. Le regime module donc les poids du moteur de score et le
-choix du style (suivi de tendance vs retour a la moyenne).
+Le même signal technique n'a pas la même valeur selon le contexte : un
+croisement d'EMA vaut de l'or en expansion de volatilité et coûte cher en
+range compressé. Le régime module donc les poids du moteur de score et le
+choix du style (suivi de tendance vs retour à la moyenne).
 """
 
 from __future__ import annotations
@@ -16,11 +16,11 @@ from goldscalp.util import clamp, percentile, rank_pct
 
 # Sessions en heures UTC. L'or vit surtout sur Londres et New York.
 SESSIONS = [
-    ("Asie", 0, 7, 0.55, "range, faible amplitude - privilegier le fade des extremes"),
-    ("Londres", 7, 12, 1.15, "expansion, premieres vraies impulsions"),
-    ("Londres+NY", 12, 16, 1.55, "meilleure fenetre de scalp - volume et suivi maximaux"),
+    ("Asie", 0, 7, 0.55, "range, faible amplitude - privilégier le fade des extrêmes"),
+    ("Londres", 7, 12, 1.15, "expansion, premières vraies impulsions"),
+    ("Londres+NY", 12, 16, 1.55, "meilleure fenêtre de scalp - volume et suivi maximaux"),
     ("New York", 16, 20, 1.00, "tendances qui s'essoufflent, attention aux retournements"),
-    ("Cloture", 20, 24, 0.60, "liquidite faible, spreads larges - eviter"),
+    ("Cloture", 20, 24, 0.60, "liquidité faible, spreads larges - éviter"),
 ]
 
 
@@ -61,7 +61,7 @@ class Regime:
     atr_percentile: float
     bb_percentile: float
     squeeze: bool
-    volatility_state: str  # basse | normale | haute | extreme
+    volatility_state: str  # basse | normale | haute | extrême
     description: str = ""
 
     @property
@@ -74,12 +74,12 @@ class Regime:
 
     @property
     def is_tradable(self) -> bool:
-        """Le chaos et la compression extreme ne sont pas scalpables."""
+        """Le chaos et la compression extrême ne sont pas scalpables."""
         return self.label != "chaos" and self.volatility_state != "basse"
 
     @property
     def stop_multiplier(self) -> float:
-        """Elargit le stop quand le marche est nerveux, le resserre en range."""
+        """Elargit le stop quand le marché est nerveux, le resserré en range."""
         base = {"basse": 0.85, "normale": 1.0, "haute": 1.25, "extreme": 1.55}[self.volatility_state]
         if self.label == "chaos":
             base *= 1.2
@@ -139,11 +139,11 @@ def detect_regime(indicators: IndicatorSet, history: int = 200) -> Regime:
     adx_v = adx_value or 0.0
     er_v = er_value or 0.0
 
-    # Classement du regime, du plus structurant au plus degrade.
+    # Classement du régime, du plus structurant au plus dégrade.
     if squeeze_on and bb_pct < 30:
         label = "compression"
         strength = clamp(1.0 - bb_pct / 30.0, 0.2, 1.0)
-        desc = "volatilite comprimee - une expansion se prepare, ne pas anticiper le sens"
+        desc = "volatilité comprimee - une expansion se prépare, ne pas anticiper le sens"
     elif adx_v >= 32 and er_v >= 0.35:
         label = "tendance_forte"
         strength = clamp(adx_v / 55.0 * 0.6 + er_v * 0.4, 0.3, 1.0)
@@ -155,7 +155,7 @@ def detect_regime(indicators: IndicatorSet, history: int = 200) -> Regime:
     elif bb_pct > 80 and adx_v < 22:
         label = "expansion"
         strength = clamp(bb_pct / 100.0, 0.3, 1.0)
-        desc = "expansion de volatilite sans direction - mouvements larges et brutaux"
+        desc = "expansion de volatilité sans direction - mouvements larges et brutaux"
     elif adx_v < 18 and er_v < 0.18:
         if atr_pct > 75:
             label = "chaos"
@@ -164,7 +164,7 @@ def detect_regime(indicators: IndicatorSet, history: int = 200) -> Regime:
         else:
             label = "range"
             strength = clamp(1.0 - er_v * 3, 0.2, 1.0)
-            desc = "range - jouer les extremes vers la moyenne, cibles courtes"
+            desc = "range - jouer les extrêmes vers la moyenne, cibles courtes"
     else:
         label = "range"
         strength = 0.4

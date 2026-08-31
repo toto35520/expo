@@ -1,6 +1,6 @@
-"""Utilitaires transverses : HTTP, cache disque, logs, maths de base.
+"""Utilitaires transverses : HTTP, caché disque, logs, maths de base.
 
-Aucune dependance externe : urllib + json + math suffisent.
+Aucune dépendance externe : urllib + json + math suffisent.
 """
 
 from __future__ import annotations
@@ -70,20 +70,20 @@ class HttpConfig:
 
 
 class Http:
-    """Client HTTP minimaliste avec retry exponentiel et cache memoire court."""
+    """Client HTTP minimaliste avec retry exponentiel et caché mémoire court."""
 
     def __init__(self, config: HttpConfig | None = None) -> None:
         self.config = config or HttpConfig()
         self._ctx = ssl.create_default_context()
-        if not self.config.verify_tls:  # jamais par defaut, uniquement debug explicite
+        if not self.config.verify_tls:  # jamais par défaut, uniquement debug explicite
             self._ctx.check_hostname = False
             self._ctx.verify_mode = ssl.CERT_NONE
         ca_bundle = os.environ.get("REQUESTS_CA_BUNDLE") or os.environ.get("SSL_CERT_FILE")
         if ca_bundle and os.path.exists(ca_bundle) and self.config.verify_tls:
             try:
                 self._ctx.load_verify_locations(ca_bundle)
-            except OSError:  # pragma: no cover - depend de l'environnement
-                LOG.debug("CA bundle %s illisible, on garde le store systeme", ca_bundle)
+            except OSError:  # pragma: no cover - dépend de l'environnement
+                LOG.debug("CA bundle %s illisible, on garde le store système", ca_bundle)
         self._opener = urllib.request.build_opener(
             urllib.request.HTTPSHandler(context=self._ctx),
             urllib.request.ProxyHandler(),  # respecte HTTP(S)_PROXY
@@ -117,7 +117,7 @@ class Http:
             except (urllib.error.URLError, TimeoutError, ssl.SSLError, OSError) as exc:
                 last = exc
             sleep_for = self.config.backoff * (2 ** attempt)
-            LOG.debug("GET %s echoue (%s), retry dans %.1fs", url, last, sleep_for)
+            LOG.debug("GET %s échoué (%s), retry dans %.1fs", url, last, sleep_for)
             time.sleep(sleep_for)
         assert last is not None
         raise last
@@ -135,7 +135,7 @@ class Http:
 # --------------------------------------------------------------------------- #
 
 def state_dir() -> str:
-    """Repertoire persistant (calibration, cache) surchargable par GOLDSCALP_HOME."""
+    """Repertoire persistant (calibration, caché) surchargable par GOLDSCALP_HOME."""
     base = os.environ.get("GOLDSCALP_HOME")
     if not base:
         base = os.path.join(os.path.expanduser("~"), ".goldscalp")
@@ -173,7 +173,7 @@ def cache_write(name: str, payload: Any) -> None:
             json.dump(payload, fh)
         os.replace(tmp, path)
     except OSError as exc:  # pragma: no cover - disque plein / readonly
-        LOG.debug("cache non ecrit (%s): %s", name, exc)
+        LOG.debug("caché non ecrit (%s): %s", name, exc)
 
 
 def json_dump_atomic(path: str, payload: Any) -> None:

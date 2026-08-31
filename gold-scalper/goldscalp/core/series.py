@@ -1,8 +1,8 @@
-"""Bougies OHLCV et series temporelles.
+"""Bougies OHLCV et séries temporelles.
 
-Convention : une `Series` est triee du plus ancien au plus recent, et la
-derniere bougie peut etre en cours de formation (`closed=False`). Tous les
-indicateurs travaillent sur les bougies CLOTUREES pour eviter le repaint,
+Convention : une `Séries` est triee du plus ancien au plus recent, et la
+dernière bougie peut etre en cours de formation (`closed=False`). Tous les
+indicateurs travaillent sur les bougies CLOTUREES pour éviter le repaint,
 sauf mention explicite.
 """
 
@@ -24,7 +24,7 @@ TF_MINUTES: dict[str, int] = {
     "D1": 1440,
 }
 
-# Correspondance avec le parametre `interval` de l'API Bybit v5.
+# Correspondance avec le paramètre `interval` de l'API Bybit v5.
 TF_BYBIT: dict[str, str] = {
     "M1": "1",
     "M3": "3",
@@ -179,14 +179,14 @@ class Series:
         )
 
     def is_fresh(self, now_ms_value: int, tolerance_bars: float = 2.0) -> bool:
-        """Vrai si la derniere bougie n'a pas plus de `tolerance_bars` de retard."""
+        """Vrai si la dernière bougie n'a pas plus de `tolerance_bars` de retard."""
         if not self.candles:
             return False
         age = now_ms_value - self.candles[-1].ts
         return age <= tf_ms(self.timeframe) * (tolerance_bars + 1)
 
     def gaps(self) -> list[tuple[int, int]]:
-        """Trous detectes dans la serie -> liste de (ts_avant, ts_apres)."""
+        """Trous détectés dans la série -> liste de (ts_avant, ts_apres)."""
         step = tf_ms(self.timeframe)
         out: list[tuple[int, int]] = []
         for prev, cur in zip(self.candles, self.candles[1:]):
@@ -196,15 +196,15 @@ class Series:
 
     def __repr__(self) -> str:  # pragma: no cover
         if not self.candles:
-            return f"Series({self.timeframe}, vide)"
+            return f"Séries({self.timeframe}, vide)"
         return (
-            f"Series({self.timeframe}, {len(self.candles)} bougies, "
+            f"Séries({self.timeframe}, {len(self.candles)} bougies, "
             f"{ms_to_iso(self.candles[0].ts)} -> {ms_to_iso(self.candles[-1].ts)})"
         )
 
 
 def resample(series: Series, target_tf: str) -> Series:
-    """Aggrege une serie vers un timeframe superieur (ex: M1 -> M5).
+    """Aggrege une série vers un timeframe supérieur (ex: M1 -> M5).
 
     Les buckets sont alignes sur l'epoch UTC, comme le font Bybit et MT5.
     """

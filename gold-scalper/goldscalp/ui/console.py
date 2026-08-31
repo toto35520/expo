@@ -63,6 +63,21 @@ def make_palette(force: Optional[bool] = None) -> Palette:
 
 WIDTH = 78
 
+# Les libelles internes (regime, structure, volatilite) servent aussi de cles
+# de comparaison dans le moteur : ils restent sans accent dans le code et sont
+# accentues au moment de l'affichage seulement.
+_LIBELLES = {
+    "tendance_forte": "tendance forte", "compression": "compression",
+    "expansion": "expansion", "range": "range", "chaos": "chaos",
+    "tendance": "tendance", "basse": "basse", "normale": "normale",
+    "haute": "haute", "extreme": "extr\u00eame", "haussier": "haussier",
+    "baissier": "baissier", "neutre": "neutre", "indetermine": "ind\u00e9termin\u00e9",
+}
+
+
+def _fr(label: str) -> str:
+    return _LIBELLES.get(label, label)
+
 
 def _rule(char: str = "-") -> str:
     return char * WIDTH
@@ -97,17 +112,17 @@ def render(analysis: Analysis, palette: Optional[Palette] = None,
     plan = analysis.plan
     data = analysis.data
 
-    # -- en-tete ----------------------------------------------------------- #
+    # -- en-tête ----------------------------------------------------------- #
     out.append(_title(f"GOLDSCALP  -  {analysis.config.market.mt5_symbol}  scalp M1/M5/M15", p))
     if data.simulated:
         out.append(p.invert(p.yellow(
-            " DONNEES SIMULEES - aucun prix reel, ne jamais trader ce signal ".center(WIDTH)
+            " DONNÉES SIMULÉES - aucun prix réel, ne jamais trader ce signal ".center(WIDTH)
         )))
 
     source_note = {
         "MT5": "prix broker direct",
         "BYBIT": "prix Bybit recalibre vers MT5",
-        "SIMULATION": "generateur interne",
+        "SIMULATION": "générateur interne",
     }.get(data.price_source, "")
     out.append(
         f"{p.bold(f'{analysis.price:.2f} $')}   "
@@ -118,13 +133,13 @@ def render(analysis: Analysis, palette: Optional[Palette] = None,
         delta = analysis.price - analysis.price_bybit
         out.append(p.grey(
             f"  Bybit brut {analysis.price_bybit:.2f} $  ->  MT5 {analysis.price:.2f} $  "
-            f"(ecart {delta:+.2f} $)"
+            f"(écart {delta:+.2f} $)"
         ))
     session = analysis.session
     session_color = p.green if session.is_prime else (p.red if session.is_poor else p.yellow)
     out.append(
         f"  Session {session_color(session.name)} "
-        f"(x{session.volatility_factor:.2f} volatilite, change dans {session.minutes_to_next} min) "
+        f"(x{session.volatility_factor:.2f} volatilité, change dans {session.minutes_to_next} min) "
         f"- {session.advice}"
     )
 
@@ -151,8 +166,8 @@ def render(analysis: Analysis, palette: Optional[Palette] = None,
     )
     if c.turbo:
         out.append(p.magenta(
-            "  TURBO : 3 timeframes alignes, session optimale, volatilite haute "
-            "et flux confirmant. Entree au marche."
+            "  TURBO : 3 timeframes alignes, session optimale, volatilité haute "
+            "et flux confirmant. Entrée au marché."
         ))
 
     for veto in c.vetoes:
@@ -187,8 +202,8 @@ def render(analysis: Analysis, palette: Optional[Palette] = None,
         expectancy_color = p.green if plan.expectancy_r > 0 else p.red
         out.append(
             f"  {'Esperance':<12} {expectancy_color(f'{plan.expectancy_r:>+10.3f} R')} par trade"
-            + (p.grey("   (taux mesures par le backtest)") if backtest and backtest.count >= 12
-               else p.grey("   (estimation prudente, lance `backtest` pour des taux mesures)"))
+            + (p.grey("   (taux mesurés par le backtest)") if backtest and backtest.count >= 12
+               else p.grey("   (estimation prudente, lance `backtest` pour des taux mesurés)"))
         )
         out.append("")
         for line in plan.management:
@@ -199,18 +214,18 @@ def render(analysis: Analysis, palette: Optional[Palette] = None,
 
     # -- timeframes -------------------------------------------------------- #
     out.append(_section("LECTURE PAR TIMEFRAME", p))
-    out.append(p.grey(f"  {'TF':<5}{'score':>7}  {'jauge':<24}{'regime':<16}{'volatilite':<11}role"))
+    out.append(p.grey(f"  {'TF':<5}{'score':>7}  {'jauge':<24}{'régime':<17}{'volatilité':<12}rôle"))
     for timeframe in ("M15", "M5", "M1"):
         view = c.views.get(timeframe)
         if view is None:
             continue
         color = p.green if view.score > 0.15 else (p.red if view.score < -0.15 else p.grey)
         # On met en forme le texte BRUT puis on colore : appliquer une largeur
-        # de champ a une chaine deja pourvue de codes ANSI decale tout.
+        # de champ à une chaine déjà pourvue de codes ANSI décalé tout.
         out.append(
             f"  {p.bold(f'{timeframe:<5}')}{color(f'{view.score:+.3f}'.rjust(7))}  "
             f"{p.grey(_bar(view.score))}  "
-            f"{view.regime.label:<16}{view.regime.volatility_state:<11}{view.role}"
+            f"{_fr(view.regime.label):<17}{_fr(view.regime.volatility_state):<12}{view.role}"
         )
         if verbose:
             for name, component in view.components.items():
@@ -243,7 +258,7 @@ def render(analysis: Analysis, palette: Optional[Palette] = None,
     micro = data.micro
     lines = micro.summary()
     if lines:
-        out.append(_section("MICROSTRUCTURE (carnet, flux, derives)", p))
+        out.append(_section("MICROSTRUCTURE (carnet, flux, dérivés)", p))
         out.append(f"  Score de flux {micro.score:+.2f}")
         for line in lines:
             out.append(p.grey(f"    {line}"))
@@ -259,14 +274,14 @@ def render(analysis: Analysis, palette: Optional[Palette] = None,
             out.append(f"  - {reason}")
 
     if c.modifiers:
-        out.append(_section("AJUSTEMENTS APPLIQUES", p))
+        out.append(_section("AJUSTEMENTS APPLIQUÉS", p))
         out.append(p.grey(
-            "  Un ajustement additif deplace le score ; une attenuation ne fait "
-            "que reduire la conviction."
+            "  Un ajustement additif déplace le score ; une atténuation ne fait "
+            "que réduire la conviction."
         ))
         for modifier in c.modifiers:
             if modifier.kind == "attenuation":
-                effect = p.yellow("attenue ")
+                effect = p.yellow("atténue ")
             elif (modifier.value > 0) == (c.final_score >= 0):
                 effect = p.green("renforce")
             else:
@@ -289,7 +304,7 @@ def render(analysis: Analysis, palette: Optional[Palette] = None,
             out.append(p.grey(f"  {warning}"))
 
     # -- provenance -------------------------------------------------------- #
-    out.append(_section("DONNEES UTILISEES", p))
+    out.append(_section("DONNÉES UTILISÉES", p))
     for timeframe in analysis.config.engine.timeframes:
         series = data.series.get(timeframe)
         if series:
@@ -307,7 +322,7 @@ def render(analysis: Analysis, palette: Optional[Palette] = None,
 
     out.append("")
     out.append(p.grey(
-        "  Cet outil produit une analyse, pas un ordre. Le marche peut invalider "
+        "  Cet outil produit une analyse, pas un ordre. Le marché peut invalider "
         "n'importe quelle configuration."
     ))
     return "\n".join(out)
@@ -327,7 +342,7 @@ def render_compact(analysis: Analysis, palette: Optional[Palette] = None) -> str
     side = p.green("ACHAT") if c.direction > 0 else p.red("VENTE")
     turbo = p.magenta("*") if c.turbo else " "
     if not plan.valid:
-        return f"{stamp}  {analysis.price:9.2f}  {side}{turbo} conf {c.confidence:3.0f}  " \
+        return f"{stamp}  {analysis.price:9.2f}  {side}{turbo} conf {c.confidence:3.0f}  "\
                f"{p.yellow('plan refuse: ' + plan.rejection[:34])}"
     return (
         f"{stamp}  {analysis.price:9.2f}  {side}{turbo} conf {c.confidence:3.0f}  "

@@ -1,7 +1,7 @@
 """Recalibrage Bybit -> MetaTrader 5.
 
 Le prix Bybit (XAUT/USDT, or tokenise) et le prix MT5 XAUUSD de ton broker
-ne sont PAS le meme nombre. Trois ecarts se superposent :
+ne sont PAS le même nombre. Trois écarts se superposent :
 
   1. la prime/decote du XAUT sur l'or spot (quelques dollars, lente derive) ;
   2. le taux USDT/USD (peg imparfait, +/- 0.1 %) ;
@@ -12,9 +12,9 @@ Modele retenu : affine, `mt5 = alpha + beta * bybit`.
   - alpha absorbe la prime XAUT et le markup broker,
   - beta absorbe la derive proportionnelle (peg USDT, markup en %).
 
-Sans plusieurs ancrages a des prix ECARTES, beta n'est pas identifiable : on
-le contraint alors a 1.0 (decalage pur). C'est la difference entre une
-calibration honnete et une regression qui hallucine une pente.
+Sans plusieurs ancrages à des prix ECARTES, beta n'est pas identifiable : on
+le contraint alors à 1.0 (décalage pur). C'est la différence entre une
+calibration honnête et une regression qui hallucine une pente.
 """
 
 from __future__ import annotations
@@ -36,7 +36,7 @@ from goldscalp.util import (
     theil_sen,
 )
 
-# Au-dela, on considere que l'ancrage ne decrit plus le marche courant.
+# Au-dela, on considere que l'ancrage ne décrit plus le marché courant.
 ANCHOR_MAX_AGE_MS = 6 * 3600 * 1000       # 6 h
 ANCHOR_WARN_AGE_MS = 45 * 60 * 1000       # 45 min
 MIN_RANGE_FOR_SLOPE = 8.0                 # $ d'amplitude minimale entre ancrages
@@ -44,7 +44,7 @@ MIN_RANGE_FOR_SLOPE = 8.0                 # $ d'amplitude minimale entre ancrage
 
 @dataclass
 class Anchor:
-    """Un point de calage : prix Bybit et prix MT5 observes SIMULTANEMENT."""
+    """Un point de calage : prix Bybit et prix MT5 observés SIMULTANEMENT."""
 
     ts: int
     bybit: float
@@ -59,7 +59,7 @@ class Anchor:
     @property
     def spread(self) -> float:
         # Arrondi : 2412.60 - 2412.30 donne 0.29999999999972715 en binaire, et
-        # ce bruit se propage jusque dans les prix affiches et le JSON.
+        # ce bruit se propage jusque dans les prix affichés et le JSON.
         return round(max(self.mt5_ask - self.mt5_bid, 0.0), 5)
 
     @property
@@ -98,7 +98,7 @@ class Calibration:
     def bid(self, mid: float) -> float:
         return mid - self.half_spread
 
-    # -- qualite ----------------------------------------------------------- #
+    # -- qualité ----------------------------------------------------------- #
     @property
     def age_ms(self) -> int:
         if not self.anchors:
@@ -114,7 +114,7 @@ class Calibration:
         if not self.anchors:
             return 0.0
         score = 30.0
-        score += min(len(self.anchors), 6) * 5.0          # jusqu'a +30
+        score += min(len(self.anchors), 6) * 5.0          # jusqu'à +30
         age = self.age_ms
         if age <= ANCHOR_WARN_AGE_MS:
             score += 25.0
@@ -130,13 +130,13 @@ class Calibration:
 
     def describe(self) -> str:
         if not self.anchors:
-            return "AUCUNE calibration - les prix affiches sont des prix Bybit bruts"
+            return "AUCUNE calibration - les prix affichés sont des prix Bybit bruts"
         sign = "+" if self.alpha >= 0 else "-"
         beta_txt = f" x{self.beta:.6f}" if self.slope_fitted else ""
         return (
             f"MT5 = Bybit {sign} {abs(self.alpha):.2f}{beta_txt} | "
             f"spread {self.spread:.2f}$ | {len(self.anchors)} ancrage(s) | "
-            f"qualite {self.quality():.0f}/100 | dernier {ms_to_iso(max(a.ts for a in self.anchors))}"
+            f"qualité {self.quality():.0f}/100 | dernier {ms_to_iso(max(a.ts for a in self.anchors))}"
         )
 
     # -- persistance ------------------------------------------------------- #
@@ -205,7 +205,7 @@ def fit(anchors: list[Anchor], max_anchors: int = 24) -> Calibration:
             fitted_at=now_ms(),
             residual_std=0.0,
             slope_fitted=False,
-            note="decalage simple (1 ancrage)",
+            note="décalage simple (1 ancrage)",
         )
 
     xs = [a.bybit for a in fresh]
@@ -215,9 +215,9 @@ def fit(anchors: list[Anchor], max_anchors: int = 24) -> Calibration:
     if len(fresh) >= 3 and coverage >= MIN_RANGE_FOR_SLOPE:
         alpha, beta = theil_sen(xs, ys)
         # Garde-fou : une pente hors [0.97, 1.03] est economiquement absurde
-        # pour deux cotations du meme metal. On retombe sur le decalage pur.
+        # pour deux cotations du même metal. On retombe sur le décalage pur.
         if not 0.97 <= beta <= 1.03:
-            LOG.warning("pente calibree aberrante (%.5f), retour au decalage pur", beta)
+            LOG.warning("pente calibrée aberrante (%.5f), retour au décalage pur", beta)
             beta = 1.0
             alpha = median([a.offset for a in fresh])
             slope_fitted = False
@@ -225,7 +225,7 @@ def fit(anchors: list[Anchor], max_anchors: int = 24) -> Calibration:
             slope_fitted = True
     else:
         beta = 1.0
-        # Mediane ponderee vers les ancrages recents : la prime XAUT derive.
+        # Mediane pondérée vers les ancrages recents : la prime XAUT derive.
         recent = fresh[-5:]
         alpha = median([a.offset for a in recent])
         slope_fitted = False
@@ -234,7 +234,7 @@ def fit(anchors: list[Anchor], max_anchors: int = 24) -> Calibration:
     note = (
         f"regression robuste sur {len(fresh)} ancrages (amplitude {coverage:.1f}$)"
         if slope_fitted
-        else f"decalage median sur {len(fresh)} ancrages"
+        else f"décalage median sur {len(fresh)} ancrages"
     )
     return Calibration(
         alpha=round(alpha, 6),
@@ -259,8 +259,8 @@ def add_anchor(calib: Calibration, bybit: float, mt5_bid: float, mt5_ask: float,
         drift = anchor.mt5_mid - calib.to_mt5(anchor.bybit)
         if abs(drift) > 3.0:
             LOG.warning(
-                "derive de %.2f$ vs la calibration precedente - "
-                "verifie que les deux prix ont bien ete releves au meme instant",
+                "derive de %.2f$ vs la calibration précédente - "
+                "vérifie que les deux prix ont bien été relevés au même instant",
                 drift,
             )
     return fit(calib.anchors + [anchor])
@@ -317,16 +317,16 @@ def health(calib: Calibration) -> tuple[str, list[str]]:
     if calib.residual_std > 1.0:
         level = "critique" if calib.residual_std > 2.5 else "attention"
         problems.append(
-            f"Dispersion des ancrages elevee (sigma {calib.residual_std:.2f}$) - "
-            "certains releves n'etaient pas simultanes."
+            f"Dispersion des ancrages élevée (sigma {calib.residual_std:.2f}$) - "
+            "certains relevés n'etaient pas simultanes."
         )
 
     if calib.spread > 0.60:
         level = "attention" if level == "ok" else level
-        problems.append(f"Spread broker large ({calib.spread:.2f}$) - le scalp M1 devient tres cher.")
+        problems.append(f"Spread broker large ({calib.spread:.2f}$) - le scalp M1 devient très cher.")
 
     if calib.quality() < 45:
         level = "critique" if level != "critique" else level
-        problems.append(f"Qualite de calibration faible ({calib.quality():.0f}/100).")
+        problems.append(f"Qualité de calibration faible ({calib.quality():.0f}/100).")
 
     return level, problems

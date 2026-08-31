@@ -1,6 +1,6 @@
 """Microstructure : carnet d'ordres, flux agressif (CVD), funding, open interest.
 
-Ces signaux ne viennent PAS des bougies. En scalp M1 ils font la difference
+Ces signaux ne viennent PAS des bougies. En scalp M1 ils font la différence
 entre une cassure qui tient et une meche qui pieges les retardataires.
 """
 
@@ -54,14 +54,14 @@ class OrderBook:
         return sum(l.size for l in levels if abs(l.price - mid) <= band)
 
     def imbalance(self, within_pct: float = 0.05) -> float:
-        """Desequilibre acheteur/vendeur dans [-1, +1]. Positif = acheteurs devant."""
+        """Déséquilibre acheteur/vendeur dans [-1, +1]. Positif = acheteurs devant."""
         bid = self.depth("bid", within_pct)
         ask = self.depth("ask", within_pct)
         total = bid + ask
         return safe_div(bid - ask, total, 0.0)
 
     def wall(self, side: str, factor: float = 3.0) -> Optional[float]:
-        """Prix d'un mur de liquidite (niveau >= `factor` x la taille mediane)."""
+        """Prix d'un mur de liquidité (niveau >= `factor` x la taille mediane)."""
         levels = self.bids if side == "bid" else self.asks
         if len(levels) < 5:
             return None
@@ -88,8 +88,8 @@ class FlowStats:
     """Statistiques du flux agressif recent."""
 
     cvd: float = 0.0              # delta cumule (achats - ventes)
-    cvd_slope: float = 0.0        # pente du CVD sur la fenetre
-    buy_ratio: float = 0.5        # part des volumes a l'achat
+    cvd_slope: float = 0.0        # pente du CVD sur la fenêtre
+    buy_ratio: float = 0.5        # part des volumes à l'achat
     trade_count: int = 0
     volume: float = 0.0
     avg_trade_size: float = 0.0
@@ -119,7 +119,7 @@ def analyse_flow(trades: Sequence[Trade], price_now: Optional[float] = None,
         running += trade.size if trade.side == "Buy" else -trade.size
         curve.append(running)
 
-    # Pente normalisee par le volume total : comparable d'une session a l'autre.
+    # Pente normalisée par le volume total : comparable d'une session a l'autre.
     slope = 0.0
     if len(curve) >= 4 and total > 0:
         slope = (curve[-1] - curve[len(curve) // 2]) / (total / 2.0)
@@ -158,12 +158,12 @@ class DerivativesStats:
     funding_avg: Optional[float] = None        # moyenne recente
     funding_zscore: Optional[float] = None
     open_interest: Optional[float] = None
-    oi_change_pct: Optional[float] = None      # variation sur la fenetre
+    oi_change_pct: Optional[float] = None      # variation sur la fenêtre
     price_change_pct: Optional[float] = None
 
     @property
     def positioning(self) -> str:
-        """Lecture croisee OI / prix -> qui pousse le marche."""
+        """Lecture croisee OI / prix -> qui pousse le marché."""
         if self.oi_change_pct is None or self.price_change_pct is None:
             return "inconnu"
         oi_up = self.oi_change_pct > 0.4
@@ -186,7 +186,7 @@ class DerivativesStats:
         total = 0.0
         weight = 0.0
         if self.funding_zscore is not None:
-            # Funding extreme = foule d'un cote = carburant pour le sens inverse.
+            # Funding extrême = foule d'un cote = carburant pour le sens inverse.
             total += clamp(-self.funding_zscore / 2.5, -1.0, 1.0) * 0.5
             weight += 0.5
         mapping = {
@@ -234,7 +234,7 @@ class MicroView:
 
     @property
     def score(self) -> float:
-        """Score microstructure dans [-1, +1] : 60 % flux, 25 % carnet, 15 % derives."""
+        """Score microstructure dans [-1, +1] : 60 % flux, 25 % carnet, 15 % dérivés."""
         return round(
             clamp(
                 self.flow.score * 0.60 + clamp(self.imbalance, -1, 1) * 0.25 + self.derivatives.score * 0.15,
@@ -255,7 +255,7 @@ class MicroView:
         if self.derivatives.positioning != "inconnu":
             out.append(f"positionnement {self.derivatives.positioning}")
         if self.derivatives.funding_zscore is not None and abs(self.derivatives.funding_zscore) > 1.5:
-            out.append(f"funding extreme (z {self.derivatives.funding_zscore:+.1f})")
+            out.append(f"funding extrême (z {self.derivatives.funding_zscore:+.1f})")
         return out
 
 

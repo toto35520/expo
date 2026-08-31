@@ -1,15 +1,15 @@
-"""Donnees macro qui pilotent l'or : dollar, taux, risque.
+"""Données macro qui pilotent l'or : dollar, taux, risque.
 
 L'or n'est pas un actif isole. Sur une seance, l'essentiel de sa direction
 s'explique par trois forces :
 
-  DXY  (dollar)      : correlation NEGATIVE forte
-  US10Y (taux reels) : correlation NEGATIVE (cout d'opportunite de detention)
-  VIX  (risque)      : correlation POSITIVE (valeur refuge)
+  DXY  (dollar)      : corrélation NEGATIVE forte
+  US10Y (taux réels) : corrélation NEGATIVE (coût d'opportunité de detention)
+  VIX  (risque)      : corrélation POSITIVE (valeur refuge)
 
 Sources gratuites sans cle : Yahoo Finance (intraday) puis Stooq (journalier).
 Toute source indisponible est simplement ignoree, avec sa contribution retiree
-du score - jamais remplacee par une valeur inventee.
+du score - jamais remplacée par une valeur inventee.
 """
 
 from __future__ import annotations
@@ -34,7 +34,7 @@ from goldscalp.util import (
 YAHOO_CHART = "https://query1.finance.yahoo.com/v8/finance/chart/{symbol}"
 STOOQ_CSV = "https://stooq.com/q/d/l/"
 
-# (cle interne, symbole Yahoo, symbole Stooq, correlation attendue avec l'or)
+# (cle interne, symbole Yahoo, symbole Stooq, corrélation attendue avec l'or)
 MACRO_SYMBOLS: list[tuple[str, str, str, float]] = [
     ("dxy", "DX-Y.NYB", "dx.f", -1.0),
     ("us10y", "^TNX", "10usy.b", -1.0),
@@ -66,7 +66,7 @@ class MacroSeries:
         return (self.closes[-1] - base) / base * 100.0
 
     def momentum_z(self, window: int = 40) -> Optional[float]:
-        """Z-score de la variation recente : mesure d'impulsion normalisee."""
+        """Z-score de la variation recente : mesuré d'impulsion normalisée."""
         if len(self.closes) < window + 2:
             return None
         deltas = [
@@ -121,7 +121,7 @@ class MacroFeed:
         quotes = (results[0].get("indicators") or {}).get("quote") or [{}]
         closes = [c for c in (quotes[0].get("close") or []) if c is not None]
         if not closes:
-            raise ValueError(f"serie vide pour {symbol}")
+            raise ValueError(f"série vide pour {symbol}")
         cache_write(cache_key, closes)
         return [float(c) for c in closes]
 
@@ -172,12 +172,12 @@ class MacroFeed:
             if closes:
                 out[key] = MacroSeries(key=key, closes=closes, correlation=corr, source=source)
         if not out:
-            LOG.warning("aucune donnee macro accessible - analyse fondamentale desactivee")
+            LOG.warning("aucune donnee macro accessible - analyse fondamentale désactivée")
         return out
 
 
 def _is_transport_error(exc: BaseException) -> bool:
-    """Panne reseau (a generaliser) plutot que symbole inconnu (a ignorer).
+    """Panne réseau (a generaliser) plutot que symbole inconnu (a ignorer).
 
     Un 404 sur un symbole ne dit rien du fournisseur ; une connexion refusee,
     si.

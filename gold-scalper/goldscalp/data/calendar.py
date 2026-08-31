@@ -1,8 +1,8 @@
-"""Calendrier economique : l'ennemi numero un du scalpeur d'or.
+"""Calendrier économique : l'ennemi numéro un du scalpeur d'or.
 
 Un NFP ou un CPI deplace XAUUSD de 20 a 40 $ en quelques secondes, avec un
-spread qui passe de 0.20 $ a 5 $ et des stops sautes au marche. Aucune
-configuration technique ne survit a ca : la seule reponse correcte est de ne
+spread qui passe de 0.20 $ a 5 $ et des stops sautés au marché. Aucune
+configuration technique ne survit a ca : la seule réponse correcte est de ne
 pas etre en position.
 
 Source : le flux JSON public de ForexFactory (aucune cle). S'il est
@@ -23,20 +23,20 @@ from goldscalp.util import LOG, Http, HttpConfig, cache_read, cache_write, now_m
 
 FF_URL = "https://nfs.faireconomy.media/ff_calendar_thisweek.json"
 
-# Evenements a fort impact sur l'or, avec leur heure UTC habituelle.
+# Evenements à fort impact sur l'or, avec leur heure UTC habituelle.
 # Utilise UNIQUEMENT en repli quand le flux en ligne est inaccessible.
 BUILTIN_RULES = [
     ("NFP / Emploi US", "USD", "first_friday", 12, 30, 4),
     ("CPI US", "USD", "monthly_day", 12, 30, 13),
     ("PPI US", "USD", "monthly_day", 12, 30, 15),
-    ("Ventes au detail US", "USD", "monthly_day", 12, 30, 16),
-    ("FOMC (decision)", "USD", "fomc", 18, 0, 0),
+    ("Ventes au détail US", "USD", "monthly_day", 12, 30, 16),
+    ("FOMC (décision)", "USD", "fomc", 18, 0, 0),
     ("Inscriptions chomage US", "USD", "weekly", 12, 30, 3),   # jeudi
     ("PMI ISM manufacturier", "USD", "monthly_day", 14, 0, 1),
     ("PMI ISM services", "USD", "monthly_day", 14, 0, 3),
 ]
 
-# Semaines de reunion FOMC 2026 (mercredi de decision).
+# Semaines de reunion FOMC 2026 (mercredi de décision).
 FOMC_2026 = ["2026-01-28", "2026-03-18", "2026-04-29", "2026-06-17",
              "2026-07-29", "2026-09-16", "2026-11-04", "2026-12-16"]
 
@@ -68,7 +68,7 @@ class NewsRisk:
     reason: str = ""
     next_event: Optional[Event] = None
     minutes_until: Optional[float] = None
-    size_multiplier: float = 1.0     # facteur a appliquer a la taille de position
+    size_multiplier: float = 1.0     # facteur a appliquer à la taille de position
     estimated: bool = False
 
     @property
@@ -97,7 +97,7 @@ def builtin_events(days_ahead: int = 7) -> list[Event]:
 
     for title, currency, rule, hour, minute, param in BUILTIN_RULES:
         cursor = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
-        # Les regles hebdomadaires et FOMC balaient deja tout l'horizon :
+        # Les regles hebdomadaires et FOMC balaient déjà tout l'horizon :
         # les faire passer dans la boucle mensuelle les dupliquerait.
         months = 1 if rule in ("weekly", "fomc") else 3
         for month_offset in range(0, months):
@@ -110,7 +110,7 @@ def builtin_events(days_ahead: int = 7) -> list[Event]:
             elif rule == "monthly_day":
                 base = _nth_weekday_or_day(year, month, param)
                 if base is not None:
-                    # decale au jour ouvre suivant si week-end
+                    # décalé au jour ouvre suivant si week-end
                     while base.weekday() >= 5:
                         base += timedelta(days=1)
                     when = base.replace(hour=hour, minute=minute)
@@ -133,7 +133,7 @@ def builtin_events(days_ahead: int = 7) -> list[Event]:
             if when is not None and now <= when <= horizon:
                 out.append(Event(int(when.timestamp() * 1000), title, currency, "high", estimated=True))
 
-    # Deduplication : une meme regle peut retomber sur le meme creneau.
+    # Deduplication : une même regle peut retomber sur le même créneau.
     seen: set[tuple[int, str]] = set()
     unique: list[Event] = []
     for event in sorted(out, key=lambda e: e.ts):
@@ -197,17 +197,17 @@ class EconomicCalendar:
                after_minutes: int = 15, caution_minutes: int = 60) -> NewsRisk:
         """Verdict : peut-on scalper maintenant ?
 
-        - blocage  : evenement fort impact dans la fenetre chaude
-        - prudence : evenement fort impact approchant -> taille reduite
+        - blocage  : événement fort impact dans la fenêtre chaude
+        - prudence : événement fort impact approchant -> taille réduite
         - libre    : rien en vue
         """
         relevant = [e for e in events if e.impact == "high" and e.is_gold_relevant]
         if not relevant:
-            return NewsRisk("libre", "aucun evenement majeur sur l'or", estimated=self.is_estimated)
+            return NewsRisk("libre", "aucun événement majeur sur l'or", estimated=self.is_estimated)
 
         future = [e for e in relevant if e.minutes_until >= -after_minutes]
         if not future:
-            return NewsRisk("libre", "aucun evenement majeur a venir", estimated=self.is_estimated)
+            return NewsRisk("libre", "aucun événement majeur a venir", estimated=self.is_estimated)
 
         nearest = min(future, key=lambda e: abs(e.minutes_until))
         delta = nearest.minutes_until
@@ -216,20 +216,20 @@ class EconomicCalendar:
             when = f"dans {delta:.0f} min" if delta >= 0 else f"il y a {-delta:.0f} min"
             return NewsRisk(
                 "blocage",
-                f"{nearest.title} ({nearest.currency}) {when} - spread et slippage incontrolables",
+                f"{nearest.title} ({nearest.currency}) {when} - spread et slippage incontrôlables",
                 nearest, delta, 0.0, self.is_estimated,
             )
 
         if 0 <= delta <= caution_minutes:
             return NewsRisk(
                 "prudence",
-                f"{nearest.title} ({nearest.currency}) dans {delta:.0f} min - taille reduite de moitie",
+                f"{nearest.title} ({nearest.currency}) dans {delta:.0f} min - taille réduite de moitié",
                 nearest, delta, 0.5, self.is_estimated,
             )
 
         return NewsRisk(
             "libre",
-            f"prochain evenement majeur : {nearest.title} dans {delta / 60:.1f} h",
+            f"prochain événement majeur : {nearest.title} dans {delta / 60:.1f} h",
             nearest, delta, 1.0, self.is_estimated,
         )
 

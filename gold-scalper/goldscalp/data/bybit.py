@@ -1,7 +1,7 @@
 """Client Bybit v5 (endpoints publics uniquement, aucune cle API requise).
 
 L'or est disponible sur Bybit sous forme tokenisee : XAUT (Tether Gold) et
-PAXG (Paxos Gold). Interet decisif pour le scalp : ces marches cotent 24/7,
+PAXG (Paxos Gold). Interet décisif pour le scalp : ces marchés cotent 24/7,
 y compris quand le forex est ferme. Le prix est ensuite recale sur MT5.
 
 Doc : https://bybit-exchange.github.io/docs/v5/market/kline
@@ -45,15 +45,15 @@ class Instrument:
 class BybitClient:
     """Client Bybit avec coupe-circuit.
 
-    Sans coupe-circuit, une coupure reseau coute plusieurs minutes : chaque
+    Sans coupe-circuit, une coupure réseau coûte plusieurs minutes : chaque
     appel reessaie sur deux domaines, avec un delai exponentiel, et le moteur
     enchaine une dizaine d'appels. Un outil de scalp doit annoncer une panne
-    en quelques secondes, pas apres le mouvement.
+    en quelques secondes, pas après le mouvement.
     """
 
     def __init__(self, http: Optional[Http] = None, base_urls: Optional[Sequence[str]] = None) -> None:
         # Retries courts : en scalp, une donnee qui arrive en retard ne vaut
-        # deja plus rien. Mieux vaut echouer vite et le dire.
+        # déjà plus rien. Mieux vaut echouer vite et le dire.
         self.http = http or Http(HttpConfig(timeout=8.0, retries=2, backoff=0.5))
         self.base_urls = list(base_urls or BASE_URLS)
         self._active_base: Optional[str] = None
@@ -80,7 +80,7 @@ class BybitClient:
                 LOG.debug("bybit %s injoignable: %s", base, exc)
                 continue
             if not isinstance(payload, dict):
-                last_error = BybitError(f"reponse inattendue de {base}")
+                last_error = BybitError(f"réponse inattendue de {base}")
                 continue
             code = payload.get("retCode")
             if code not in (0, "0"):
@@ -88,8 +88,8 @@ class BybitClient:
             self._active_base = base
             return payload.get("result") or {}
         # Tous les domaines sont tombes sur une erreur de transport : le
-        # reseau est coupe ou filtre. On ouvre le coupe-circuit pour que les
-        # appels suivants echouent instantanement.
+        # réseau est coupe ou filtre. On ouvre le coupe-circuit pour que les
+        # appels suivants echouent instantanément.
         self._offline_reason = (
             f"Aucun endpoint Bybit joignable ({', '.join(self.base_urls)}). "
             f"Derniere erreur : {last_error}. "
@@ -100,7 +100,7 @@ class BybitClient:
     # -- instruments ------------------------------------------------------- #
     def resolve_instrument(self, symbol: Optional[str] = None,
                            category: Optional[str] = None) -> Instrument:
-        """Trouve un marche or exploitable, en privilegiant le perpetuel.
+        """Trouve un marché or exploitable, en privilegiant le perpetuel.
 
         Le perpetuel (`linear`) apporte funding + open interest, deux signaux
         que le spot n'a pas. On retombe sur le spot s'il n'existe pas.
@@ -136,7 +136,7 @@ class BybitClient:
         if self._offline_reason is not None:
             raise BybitError(self._offline_reason)
         raise BybitError(
-            "Aucun marche or trouve sur Bybit parmi "
+            "Aucun marché or trouve sur Bybit parmi "
             f"{symbols} / {categories}. Precise --bybit-symbol et --bybit-category."
         )
 
@@ -182,7 +182,7 @@ class BybitClient:
                     continue
                 collected[ts] = candle
                 oldest = min(oldest, ts)
-            if oldest >= end:      # plus rien de plus ancien : on arrete
+            if oldest >= end:      # plus rien de plus ancien : on arrêté
                 break
             end = oldest - 1
             if len(rows) < want // 2:
@@ -256,7 +256,7 @@ class BybitClient:
         items = result.get("list") or []
         return items[0] if items else {}
 
-    # -- derives ----------------------------------------------------------- #
+    # -- dérivés ----------------------------------------------------------- #
     def funding_history(self, instrument: Instrument, limit: int = 60) -> list[float]:
         if not instrument.has_derivatives:
             return []

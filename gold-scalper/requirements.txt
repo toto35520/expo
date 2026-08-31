@@ -1,0 +1,3 @@
+# goldscalp n'a AUCUNE dependance : le coeur tourne avec la bibliotheque
+# standard de Python. Ce fichier existe pour que Vercel identifie sans
+# ambiguite un projet Python utilisant le repertoire api/.

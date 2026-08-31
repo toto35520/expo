@@ -276,7 +276,7 @@ class TestCli(unittest.TestCase):
     def test_levels_runs(self):
         code, output = self._run(["levels", "--demo", "--seed", "11", "--no-color"])
         self.assertEqual(code, 0)
-        self.assertIn("NIVEAUX CLES", output)
+        self.assertIn("NIVEAUX CLÉS", output)
 
 
 if __name__ == "__main__":

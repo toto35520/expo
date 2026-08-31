@@ -1,4 +1,4 @@
-"""Configuration de l'outil : parametres de marche, de risque et de moteur."""
+"""Configuration de l'outil : paramètres de marché, de risque et de moteur."""
 
 from __future__ import annotations
 
@@ -15,7 +15,7 @@ class RiskConfig:
     account_balance: float = 10_000.0
     risk_pct: float = 0.5            # % du capital risque par trade
     max_risk_pct: float = 2.0        # plafond dur
-    min_rr_tp1: float = 1.0          # R:R minimal exige sur TP1
+    min_rr_tp1: float = 1.0          # R:R minimal exigé sur TP1
     target_rr_tp1: float = 1.4
     target_rr_tp2: float = 2.6
     tp1_share: float = 0.6           # part de la position sortie a TP1
@@ -33,7 +33,7 @@ class RiskConfig:
         if not 0 < self.risk_pct <= self.max_risk_pct:
             problems.append(f"risk_pct doit etre dans ]0, {self.max_risk_pct}]")
         if self.min_rr_tp1 < 0.5:
-            problems.append("un R:R inferieur a 0.5 sur TP1 ne survit pas aux frais")
+            problems.append("un R:R inférieur à 0.5 sur TP1 ne survit pas aux frais")
         if not 0 < self.tp1_share <= 1.0:
             problems.append("tp1_share doit etre dans ]0, 1]")
         return problems
@@ -58,7 +58,7 @@ class EngineConfig:
 @dataclass
 class MarketConfig:
     mt5_symbol: str = "XAUUSD"
-    bybit_symbol: Optional[str] = None      # None = detection auto
+    bybit_symbol: Optional[str] = None      # None = détection auto
     bybit_category: Optional[str] = None    # None = linear puis spot
     contract_size: float = 100.0            # 1 lot XAUUSD = 100 onces
     digits: int = 2
@@ -85,7 +85,7 @@ class Config:
             with open(target, "r", encoding="utf-8") as fh:
                 data = json.load(fh)
         except Exception as exc:
-            LOG.warning("config illisible (%s) - valeurs par defaut", exc)
+            LOG.warning("config illisible (%s) - valeurs par défaut", exc)
             return config
         return cls.from_dict(data)
 

@@ -1,17 +1,17 @@
 """Moteur de confluence multi-timeframe.
 
-Principe : chaque timeframe a un ROLE, pas un vote egal.
+Principe : chaque timeframe à un ROLE, pas un vote egal.
 
   M15 -> le contexte. Definit le biais. On ne scalpe pas contre lui sans
          raison structurelle explicite.
-  M5  -> la configuration. C'est la que se lit la qualite du repli, la
-         structure et la zone d'entree.
-  M1  -> le declencheur. Il ne cree pas un trade, il en decide l'instant.
+  M5  -> la configuration. C'est la que se lit la qualité du repli, la
+         structure et la zone d'entrée.
+  M1  -> le déclencheur. Il ne créé pas un trade, il en décide l'instant.
 
 Chaque timeframe produit cinq composantes notees dans [-1, +1], agregees
-avec des poids qui dependent du REGIME (en tendance on suit, en range on
+avec des poids qui dépendent du REGIME (en tendance on suit, en range on
 fade). Puis viennent les modificateurs transverses : fondamental,
-microstructure, session, news, qualite de calibration.
+microstructure, session, news, qualité de calibration.
 
 Toute la chaine est tracable : chaque point de score est justifie par une
 ligne lisible dans le rapport. Une boite noire qui dit "achete" ne vaut rien.
@@ -27,14 +27,14 @@ from goldscalp.core.regime import Regime, SessionInfo
 from goldscalp.core.structure import StructureView
 from goldscalp.util import clamp, safe_div
 
-# Poids des composantes selon le regime dominant.
+# Poids des composantes selon le régime dominant.
 COMPONENT_WEIGHTS = {
     "tendance": {"trend": 0.38, "momentum": 0.24, "structure": 0.24, "participation": 0.10, "meanrev": 0.04},
     "range": {"trend": 0.14, "momentum": 0.20, "structure": 0.28, "participation": 0.08, "meanrev": 0.30},
     "neutre": {"trend": 0.28, "momentum": 0.24, "structure": 0.26, "participation": 0.10, "meanrev": 0.12},
 }
 
-# Poids de base par timeframe, ajustes ensuite selon le regime M15.
+# Poids de base par timeframe, ajustés ensuite selon le régime M15.
 TF_BASE_WEIGHTS = {"M15": 0.42, "M5": 0.36, "M1": 0.22}
 
 
@@ -104,21 +104,21 @@ def _score_trend(ind: IndicatorSet) -> Component:
     if None not in (e9, e21, e50):
         if e9 > e21 > e50:
             parts.append((1.0, 0.30))
-            details.append("EMA 9>21>50 empilees a la hausse")
+            details.append("EMA 9>21>50 empilées à la hausse")
         elif e9 < e21 < e50:
             parts.append((-1.0, 0.30))
-            details.append("EMA 9<21<50 empilees a la baisse")
+            details.append("EMA 9<21<50 empilées à la baisse")
         else:
             partial = 0.5 if e9 > e21 else -0.5
             parts.append((partial, 0.15))
-            details.append("EMA entremelees - tendance courte non etablie")
+            details.append("EMA entremêlées - tendance courte non établie")
 
     if e200 is not None:
         above = price > e200
         parts.append((0.8 if above else -0.8, 0.18))
         details.append(f"prix {'au-dessus de' if above else 'sous'} l'EMA200 ({e200:.2f})")
 
-    # Pente de l'EMA21, normalisee par l'ATR : comparable entre timeframes.
+    # Pente de l'EMA21, normalisée par l'ATR : comparable entre timeframes.
     slope21 = slope_of(ind.ema21, 6)
     if slope21 is not None and ind.atr_value > 0:
         norm = clamp(slope21 / (ind.atr_value * 0.30), -1.0, 1.0)
@@ -222,7 +222,7 @@ def _score_structure(ind: IndicatorSet, structure: StructureView) -> Component:
     if vwap_v is not None and atr > 0:
         distance = clamp((price - vwap_v) / (atr * 2.0), -1.0, 1.0)
         parts.append((distance, 0.18))
-        details.append(f"prix a {(price - vwap_v):+.2f}$ du VWAP")
+        details.append(f"prix à {(price - vwap_v):+.2f}$ du VWAP")
 
     if ind.profile is not None:
         profile = ind.profile
@@ -235,9 +235,9 @@ def _score_structure(ind: IndicatorSet, structure: StructureView) -> Component:
         else:
             pos = safe_div(price - profile.val, profile.vah - profile.val, 0.5)
             parts.append((clamp((pos - 0.5) * 1.2, -1.0, 1.0), 0.10))
-            details.append(f"dans la Value Area (POC {profile.poc:.2f}) - equilibre")
+            details.append(f"dans la Value Area (POC {profile.poc:.2f}) - équilibre")
 
-    # Marge de manoeuvre : un prix colle sous une resistance a peu de place.
+    # Marge de manoeuvre : un prix colle sous une résistance a peu de place.
     above = structure.nearest_above(price)
     below = structure.nearest_below(price)
     if above is not None and below is not None:
@@ -246,9 +246,9 @@ def _score_structure(ind: IndicatorSet, structure: StructureView) -> Component:
         balance = clamp(safe_div(room_up - room_down, room_up + room_down, 0.0), -1.0, 1.0)
         parts.append((balance, 0.12))
         if room_up < atr * 0.6:
-            details.append(f"resistance immediate a {above.price:.2f} ({above.label})")
+            details.append(f"résistance immédiate a {above.price:.2f} ({above.label})")
         if room_down < atr * 0.6:
-            details.append(f"support immediat a {below.price:.2f} ({below.label})")
+            details.append(f"support immédiat a {below.price:.2f} ({below.label})")
 
     patterns = ind.patterns
     bullish_patterns = {"engulfing_haussier", "marteau", "marubozu_haussier", "trois_soldats_blancs"}
@@ -264,7 +264,7 @@ def _score_structure(ind: IndicatorSet, structure: StructureView) -> Component:
 
 
 def _score_participation(ind: IndicatorSet, regime: Regime) -> Component:
-    """Le volume et la volatilite ne donnent pas de direction : ils disent si
+    """Le volume et la volatilité ne donnent pas de direction : ils disent si
     le mouvement en cours merite qu'on le suive."""
     details: list[str] = []
     parts: list[tuple[float, float]] = []
@@ -276,9 +276,9 @@ def _score_participation(ind: IndicatorSet, regime: Regime) -> Component:
         conviction = clamp(vol_z / 2.0, -0.5, 1.0)
         parts.append((direction * max(conviction, 0.0), 0.40))
         if vol_z > 1.2:
-            details.append(f"volume {vol_z:+.1f} ecart-types - participation reelle")
+            details.append(f"volume {vol_z:+.1f} écart-types - participation réelle")
         elif vol_z < -0.8:
-            details.append(f"volume faible ({vol_z:+.1f} sigma) - mouvement peu credible")
+            details.append(f"volume faible ({vol_z:+.1f} sigma) - mouvement peu crédible")
 
     obv_slope = slope_of(ind.obv, 10)
     if obv_slope is not None:
@@ -293,10 +293,10 @@ def _score_participation(ind: IndicatorSet, regime: Regime) -> Component:
         if just_released:
             direction = 1.0 if last_candle.bullish else -1.0
             parts.append((direction, 0.30))
-            details.append("sortie de compression (squeeze relache) - expansion en cours")
+            details.append("sortie de compression (squeeze relâché) - expansion en cours")
 
     if regime.volatility_state == "basse":
-        details.append("volatilite au plancher - les cibles de scalp sont hors de portee")
+        details.append("volatilité au plancher - les cibles de scalp sont hors de portee")
 
     total_weight = sum(w for _, w in parts) or 1.0
     value = clamp(sum(v * w for v, w in parts) / total_weight, -1.0, 1.0)
@@ -312,10 +312,10 @@ def _score_meanrev(ind: IndicatorSet) -> Component:
     if pct_b is not None:
         if pct_b > 1.0:
             parts.append((-clamp((pct_b - 1.0) * 3, 0.3, 1.0), 0.34))
-            details.append(f"prix hors bande superieure (%B {pct_b:.2f}) - extension a corriger")
+            details.append(f"prix hors bande supérieure (%B {pct_b:.2f}) - extension a corriger")
         elif pct_b < 0.0:
             parts.append((clamp(-pct_b * 3, 0.3, 1.0), 0.34))
-            details.append(f"prix hors bande inferieure (%B {pct_b:.2f}) - extension a corriger")
+            details.append(f"prix hors bande inférieure (%B {pct_b:.2f}) - extension a corriger")
         else:
             parts.append((clamp((0.5 - pct_b) * 1.2, -1.0, 1.0), 0.18))
 
@@ -379,16 +379,16 @@ class Modifier:
 
       "additif"     : deplace le score (fondamental, flux). Peut legitimement
                       changer le sens si la contradiction est forte.
-      "attenuation" : facteur multiplicatif dans ]0, 1]. Reduit la CONVICTION
+      "atténuation" : facteur multiplicatif dans ]0, 1]. Reduit la CONVICTION
                       sans jamais pouvoir inverser le sens.
 
-    Melanger les deux est un bug classique : une penalite additive signee
-    appliquee a un score faible le fait basculer de l'autre cote, et l'outil
-    recommande alors exactement l'inverse de ce qu'il a mesure.
+    Melanger les deux est un bug classique : une pénalité additive signee
+    appliquee à un score faible le fait basculer de l'autre cote, et l'outil
+    recommandé alors exactement l'inverse de ce qu'il a mesuré.
     """
 
     name: str
-    kind: str             # "additif" | "attenuation"
+    kind: str             # "additif" | "atténuation"
     value: float          # delta signe, ou facteur multiplicatif
     detail: str
 
@@ -401,7 +401,7 @@ class Modifier:
 class Confluence:
     direction: int                 # +1 long, -1 short, 0 pas de trade
     raw_score: float               # fusion des timeframes, [-1, +1]
-    final_score: float             # apres modificateurs, [-1, +1]
+    final_score: float             # après modificateurs, [-1, +1]
     confidence: float              # 0..100
     views: dict[str, TimeframeView]
     modifiers: list[Modifier] = field(default_factory=list)
@@ -433,7 +433,7 @@ def fuse(views: dict[str, TimeframeView], fundamental: FundamentalView, micro: M
     weights = dict(TF_BASE_WEIGHTS)
 
     # En tendance nette sur M15, le contexte prend le pas ; en range, le
-    # timing M1 devient l'element decisif.
+    # timing M1 devient l'élément décisif.
     if context is not None:
         if context.regime.favors_trend:
             weights = {"M15": 0.48, "M5": 0.34, "M1": 0.18}
@@ -444,7 +444,7 @@ def fuse(views: dict[str, TimeframeView], fundamental: FundamentalView, micro: M
     total_weight = sum(usable.values()) or 1.0
     raw = sum(present[tf].score * w for tf, w in usable.items()) / total_weight
 
-    # Alignement : les timeframes racontent-ils la meme histoire ?
+    # Alignement : les timeframes racontent-ils la même histoire ?
     signs = [present[tf].direction for tf in usable if present[tf].direction != 0]
     if signs:
         dominant = 1 if sum(signs) > 0 else -1
@@ -462,12 +462,12 @@ def fuse(views: dict[str, TimeframeView], fundamental: FundamentalView, micro: M
     # -- alignement -------------------------------------------------------- #
     if alignment >= 0.99 and len(usable) >= 3:
         modifiers.append(Modifier("alignement", "additif", 0.12 * direction_hint,
-                                  "les 3 timeframes pointent dans le meme sens"))
+                                  "les 3 timeframes pointent dans le même sens"))
     elif context is not None and "M1" in present:
         if context.direction != 0 and present["M1"].direction != 0 and context.direction != present["M1"].direction:
             modifiers.append(Modifier("conflit M15/M1", "attenuation", 0.80,
-                                      "le declencheur M1 contredit le contexte M15"))
-            warnings.append("M1 et M15 divergent : signal de contre-tendance, taille reduite conseillee")
+                                      "le déclencheur M1 contredit le contexte M15"))
+            warnings.append("M1 et M15 divergent : signal de contre-tendance, taille réduite conseillée")
 
     # -- contre-tendance --------------------------------------------------- #
     if context is not None and context.regime.label == "tendance_forte":
@@ -495,7 +495,7 @@ def fuse(views: dict[str, TimeframeView], fundamental: FundamentalView, micro: M
         for driver in top:
             reasons.append(f"Macro : {driver.explain()}")
     else:
-        warnings.append("Donnees macro insuffisantes : le signal est purement technique")
+        warnings.append("Données macro insuffisantes : le signal est purement technique")
 
     # -- microstructure ---------------------------------------------------- #
     micro_score = micro.score
@@ -505,25 +505,25 @@ def fuse(views: dict[str, TimeframeView], fundamental: FundamentalView, micro: M
         for line in micro.summary()[:2]:
             reasons.append(f"Flux : {line}")
     if micro.flow.absorption > 0.5:
-        warnings.append("Absorption detectee : gros volumes sans progression du prix, cassure suspecte")
+        warnings.append("Absorption détectée : gros volumes sans progression du prix, cassure suspecte")
 
     # -- session ----------------------------------------------------------- #
     if session.is_prime:
         modifiers.append(Modifier("session", "additif", 0.06 * direction_hint,
-                                  f"session {session.name} - liquidite optimale"))
+                                  f"session {session.name} - liquidité optimale"))
     elif session.is_poor:
         modifiers.append(Modifier("session", "attenuation", 0.78,
                                   f"session {session.name} - {session.advice}"))
         warnings.append(f"Session {session.name} : {session.advice}")
 
-    # -- volatilite exploitable -------------------------------------------- #
+    # -- volatilité exploitable -------------------------------------------- #
     driver_tf = present.get("M5") or present.get("M1")
     if driver_tf is not None and driver_tf.regime.volatility_state == "basse":
-        modifiers.append(Modifier("volatilite", "attenuation", 0.70,
-                                  "volatilite au plancher, le mouvement ne paiera pas le spread"))
-        warnings.append("Volatilite basse : le ratio gain/spread se degrade fortement")
+        modifiers.append(Modifier("volatilité", "attenuation", 0.70,
+                                  "volatilité au plancher, le mouvement ne paiera pas le spread"))
+        warnings.append("Volatilité basse : le ratio gain/spread se dégrade fortement")
     if driver_tf is not None and driver_tf.regime.label == "chaos":
-        vetoes.append("Regime chaotique : beaucoup de mouvement, aucune direction exploitable")
+        vetoes.append("Régime chaotique : beaucoup de mouvement, aucune direction exploitable")
 
     # -- news -------------------------------------------------------------- #
     if fundamental.news is not None and fundamental.news.blocks_trading:
@@ -535,11 +535,11 @@ def fuse(views: dict[str, TimeframeView], fundamental: FundamentalView, micro: M
     if calibration_quality < 40:
         warnings.append(
             f"Calibration MT5 faible ({calibration_quality:.0f}/100) : "
-            "les niveaux peuvent etre decales de plusieurs dollars"
+            "les niveaux peuvent etre décalés de plusieurs dollars"
         )
 
-    # Les deltas additifs deplacent le score ; les attenuations n'en reduisent
-    # que l'amplitude. Une penalite ne peut donc jamais retourner le signal.
+    # Les deltas additifs deplacent le score ; les atténuations n'en reduisent
+    # que l'amplitude. Une pénalité ne peut donc jamais retourner le signal.
     additive = sum(m.value for m in modifiers if m.kind == "additif")
     attenuation = 1.0
     for modifier in modifiers:
@@ -548,7 +548,7 @@ def fuse(views: dict[str, TimeframeView], fundamental: FundamentalView, micro: M
     final = clamp((raw + additive) * attenuation, -1.0, 1.0)
 
     # -- confiance --------------------------------------------------------- #
-    # Echelle : un score fusionne de 0.50 correspond a une configuration
+    # Échelle : un score fusionne de 0.50 correspond à une configuration
     # serieuse et doit sortir autour de 60/100 une fois alignee. Un facteur
     # 100 laissait tous les vrais signaux sous le seuil.
     confidence = clamp(abs(final) * 125.0, 0.0, 100.0)
@@ -580,8 +580,8 @@ def fuse(views: dict[str, TimeframeView], fundamental: FundamentalView, micro: M
         and (micro_score > 0) == (direction > 0)
     )
 
-    # Insertion en tete dans l'ordre inverse : le lecteur voit d'abord le
-    # contexte M15, puis la configuration M5, puis le declencheur M1.
+    # Insertion en tête dans l'ordre inverse : le lecteur voit d'abord le
+    # contexte M15, puis la configuration M5, puis le déclencheur M1.
     for tf in ("M1", "M5", "M15"):
         if tf in present:
             reasons = present[tf].top_reasons(2) + reasons

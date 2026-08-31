@@ -1,7 +1,7 @@
 """Pont MetaTrader 5 (optionnel).
 
 Si le paquet `MetaTrader5` est installe et qu'un terminal tourne, on peut :
-  - lire les bougies XAUUSD directement chez TON broker (verite terrain) ;
+  - lire les bougies XAUUSD directement chez TON broker (vérité terrain) ;
   - relever bid/ask pour ancrer automatiquement la calibration ;
   - lire la taille de contrat et le solde pour dimensionner les lots.
 
@@ -31,12 +31,12 @@ TF_MAP_NAMES = {
 
 @dataclass
 class SymbolSpec:
-    """Specification du symbole telle que definie par le broker."""
+    """Specification du symbole telle que définie par le broker."""
 
     name: str = "XAUUSD"
     digits: int = 2
     point: float = 0.01
-    contract_size: float = 100.0      # 1 lot XAUUSD = 100 onces chez la majorite
+    contract_size: float = 100.0      # 1 lot XAUUSD = 100 onces chez la majorité
     volume_min: float = 0.01
     volume_max: float = 100.0
     volume_step: float = 0.01
@@ -70,7 +70,7 @@ class AccountInfo:
 
 
 class Mt5Bridge:
-    """Enveloppe tolerante autour du paquet MetaTrader5."""
+    """Enveloppe tolérante autour du paquet MetaTrader5."""
 
     def __init__(self, symbol: str = "XAUUSD", path: Optional[str] = None) -> None:
         self.symbol = symbol
@@ -166,7 +166,7 @@ class Mt5Bridge:
         )
 
     def candles(self, timeframe: str, bars: int = 1000) -> Optional[Series]:
-        """Bougies directement issues du broker : reference absolue."""
+        """Bougies directement issues du broker : référence absolue."""
         if not self._ready:
             return None
         attr = TF_MAP_NAMES.get(timeframe)

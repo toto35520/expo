@@ -26,7 +26,8 @@ facultatif (Windows) qui améliore la précision quand il est présent.
 8. [Le mode TURBO](#8-le-mode-turbo)
 9. [Backtest : ce qu'il mesure vraiment](#9-backtest--ce-quil-mesure-vraiment)
 10. [Configuration](#10-configuration)
-11. [Limites connues](#11-limites-connues)
+11. [Tableau de bord web et déploiement Vercel](#11-tableau-de-bord-web-et-déploiement-vercel)
+12. [Limites connues](#12-limites-connues)
 
 ---
 
@@ -533,7 +534,102 @@ Fichiers dans `~/.goldscalp/` (surchargeable par `GOLDSCALP_HOME`) :
 
 ---
 
-## 11. Limites connues
+## 11. Tableau de bord web et déploiement Vercel
+
+En plus de la ligne de commande, le dépôt contient une **interface web**
+déployable sur Vercel : une fonction Python serverless qui expose le moteur en
+JSON, et un tableau de bord statique qui l'interroge.
+
+```
+api/index.py       fonction serverless (/api/analyse, /api/health)
+public/index.html  tableau de bord (aucune dépendance, aucun CDN)
+vercel.json        région, durée maximale, réécritures
+dev_server.py      serveur local reproduisant le routage Vercel
+```
+
+### Essayer en local d'abord
+
+```bash
+python3 dev_server.py      # puis http://127.0.0.1:8000
+```
+
+### Déployer
+
+1. Pousse ce dossier sur GitHub, puis **Add New Project** sur Vercel.
+2. **Root Directory : `gold-scalper`** — c'est le réglage le plus important.
+   Sans lui, Vercel tente de construire la racine du dépôt.
+3. **Framework Preset : Other.** Pas de commande de build, pas d'installation.
+4. Déploie, puis **vérifie d'abord en mode démo** :
+   `https://<ton-projet>.vercel.app/?` puis active *Démo* dans les réglages,
+   ou appelle directement `https://<ton-projet>.vercel.app/api/analyse?demo=1`.
+
+Ou en une commande, depuis ce dossier :
+
+```bash
+npx vercel --prod
+```
+
+### Le point qui casse tout : la région
+
+**Bybit filtre les adresses IP américaines.** Une fonction déployée dans une
+région américaine reçoit une erreur, pas des bougies. `vercel.json` épingle donc
+la région sur **`fra1` (Francfort)**. Alternatives selon ta zone : `sin1`
+(Singapour), `hnd1` (Tokyo), `dub1` (Dublin). Ne repasse pas sur `iad1` ou
+`sfo1`.
+
+Si l'API répond `502` avec `kind: "source_indisponible"`, c'est ce problème :
+la réponse indique la région d'exécution pour te le confirmer.
+
+### La calibration en serverless
+
+Une fonction serverless **ne garde rien entre deux appels** : le fichier
+`~/.goldscalp/calibration.json` de la ligne de commande n'existe pas. La
+calibration doit donc être fournie à chaque requête, par ordre de priorité :
+
+1. **un ancrage complet** dans l'URL : `?bybit=2405.10&bid=2412.30&ask=2412.60` ;
+2. **alpha / beta / spread** dans l'URL : `?alpha=7.35&spread=0.30` ;
+3. **les variables d'environnement du projet Vercel** :
+   `GOLDSCALP_ALPHA`, `GOLDSCALP_BETA`, `GOLDSCALP_SPREAD`.
+
+Le tableau de bord retient tes réglages dans le stockage local du navigateur et
+les renvoie à chaque appel — ils ne quittent jamais ton poste autrement que dans
+l'URL de ta propre requête. **Sans alpha, la page affiche des prix Bybit bruts**
+et le signale en rouge.
+
+### Paramètres de l'API
+
+`GET /api/analyse` accepte : `alpha`, `beta`, `spread`, `bybit`, `bid`, `ask`,
+`balance`, `risk`, `min_confidence`, `symbol`, `bybit_symbol`, `macro`,
+`calendar`, `micro`, `counter_trend`, `demo`, `seed`.
+`GET /api/health` renvoie la version, la région et la version de Python.
+
+### Ce que la version web ne fait pas
+
+- **Pas de pont MT5.** Aucun terminal MetaTrader ne tourne sur un serveur
+  Vercel : les prix viennent forcément de Bybit, recalibrés.
+- **Pas de mode `watch`.** Le serverless ne maintient pas de boucle. Le tableau
+  de bord fait du rafraîchissement côté navigateur, avec un bouton *Auto* qui se
+  suspend quand l'onglet passe en arrière-plan pour ne pas consommer
+  d'invocations inutilement.
+- **Volumes réduits.** 500 bougies M1, 400 M5, 300 M15 au lieu des volumes de la
+  ligne de commande, pour tenir dans le budget de temps d'exécution.
+- **Pas de backtest.** Trop long pour une invocation ; reste en ligne de commande.
+
+### Coût et exposition
+
+Chaque chargement déclenche une invocation. En rafraîchissement automatique
+toutes les 60 s, cela fait environ 1 440 invocations par jour et par onglet
+ouvert — largement dans les limites du plan Hobby, mais à surveiller si tu
+laisses la page ouverte en permanence sur plusieurs appareils.
+
+**L'URL est publique par défaut.** N'importe qui la connaissant peut appeler
+l'API et consommer tes invocations. Si tu veux la garder privée, active
+*Deployment Protection* (Vercel Password Protection) dans les réglages du
+projet.
+
+---
+
+## 12. Limites connues
 
 À lire avant de mettre le moindre euro en jeu.
 
@@ -587,6 +683,11 @@ goldscalp/
 │   ├── calendar.py         ForexFactory + calendrier de repli
 │   └── synthetic.py        simulateur de marché
 └── ui/console.py       rapport terminal
+
+api/index.py            fonction serverless Vercel
+public/index.html       tableau de bord web
+dev_server.py           serveur local (routage identique a Vercel)
+vercel.json             region, duree maximale, reecritures
 ```
 
 ### Tests

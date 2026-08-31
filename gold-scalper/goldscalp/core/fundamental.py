@@ -2,11 +2,11 @@
 
 Sur un horizon de quelques minutes, le "fondamental" n'est pas le deficit
 budgetaire americain : c'est ce que font MAINTENANT le dollar, les taux et
-l'appetit pour le risque. On mesure donc l'impulsion intraday de chaque
-moteur, on la signe par sa correlation connue avec l'or, et on agrege.
+l'appetit pour le risque. On mesuré donc l'impulsion intraday de chaque
+moteur, on la signe par sa corrélation connue avec l'or, et on agrégé.
 
 Regle de conception : une source absente est retiree du calcul et de sa
-ponderation. Jamais de valeur par defaut inventee - une macro muette doit
+pondération. Jamais de valeur par défaut inventee - une macro muette doit
 produire un score de 0 avec une confiance basse, pas un faux signal.
 """
 
@@ -22,7 +22,7 @@ from goldscalp.util import clamp, safe_div
 # Poids relatifs des moteurs macro de l'or.
 DRIVER_WEIGHTS = {
     "dxy": 0.34,      # le dollar domine
-    "us10y": 0.26,    # cout d'opportunite
+    "us10y": 0.26,    # coût d'opportunité
     "us02y": 0.10,
     "vix": 0.14,      # refuge
     "spx": 0.06,
@@ -34,7 +34,7 @@ LABELS = {
     "dxy": "Dollar (DXY)",
     "us10y": "Taux 10 ans US",
     "us02y": "Taux 2 ans US",
-    "vix": "Volatilite (VIX)",
+    "vix": "Volatilité (VIX)",
     "spx": "Actions (S&P 500)",
     "silver": "Argent",
     "oil": "Petrole",
@@ -48,7 +48,7 @@ class DriverReading:
     change_pct: Optional[float]
     momentum_z: Optional[float]
     correlation: float
-    contribution: float        # score signe dans [-1, +1], deja oriente or
+    contribution: float        # score signe dans [-1, +1], déjà oriente or
     weight: float
     source: str
 
@@ -56,7 +56,7 @@ class DriverReading:
         if self.change_pct is None:
             return f"{self.label} : indisponible"
         sens = "soutient l'or" if self.contribution > 0.05 else (
-            "pese sur l'or" if self.contribution < -0.05 else "neutre"
+            "pèse sur l'or" if self.contribution < -0.05 else "neutre"
         )
         return (
             f"{self.label} {self.change_pct:+.2f}% "
@@ -87,7 +87,7 @@ class FundamentalView:
 
     @property
     def effective_score(self) -> float:
-        """Score pondere par la confiance : une macro muette ne pousse rien."""
+        """Score pondéré par la confiance : une macro muette ne pousse rien."""
         return round(self.score * self.confidence, 3)
 
     def top_drivers(self, n: int = 3) -> list[DriverReading]:
@@ -119,7 +119,7 @@ def analyse_fundamentals(macro: dict[str, MacroSeries], news: Optional[NewsRisk]
             continue
 
         # Normalisation : 0.5 % de variation = mouvement macro significatif.
-        # Le VIX bouge beaucoup plus, on lui donne une echelle propre.
+        # Le VIX bouge beaucoup plus, on lui donne une échelle propre.
         scale = 3.0 if key == "vix" else 0.5
         normalized = clamp(change / scale, -1.5, 1.5)
         if momentum is not None:
@@ -147,7 +147,7 @@ def analyse_fundamentals(macro: dict[str, MacroSeries], news: Optional[NewsRisk]
     notes: list[str] = []
     if confidence < 0.4:
         notes.append(
-            "Moins de la moitie des moteurs macro sont lisibles : "
+            "Moins de la moitié des moteurs macro sont lisibles : "
             "l'analyse fondamentale ne pese quasiment rien dans ce signal."
         )
     if news is not None:
@@ -158,19 +158,19 @@ def analyse_fundamentals(macro: dict[str, MacroSeries], news: Optional[NewsRisk]
         if news.estimated:
             notes.append(
                 "Calendrier issu du repli embarque (flux en ligne inaccessible) : "
-                "horaires approximatifs, verifie sur ton calendrier habituel."
+                "horaires approximatifs, vérifie sur ton calendrier habituel."
             )
 
     regime_label = "neutre"
     if confidence >= 0.25:
         if score > 0.45:
-            regime_label = "macro nettement favorable a l'or"
+            regime_label = "macro nettement favorable à l'or"
         elif score > 0.15:
-            regime_label = "macro legerement favorable a l'or"
+            regime_label = "macro légèrement favorable à l'or"
         elif score < -0.45:
-            regime_label = "macro nettement defavorable a l'or"
+            regime_label = "macro nettement défavorable à l'or"
         elif score < -0.15:
-            regime_label = "macro legerement defavorable a l'or"
+            regime_label = "macro légèrement défavorable à l'or"
 
     return FundamentalView(
         score=round(score, 3),

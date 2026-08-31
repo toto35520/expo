@@ -1,14 +1,14 @@
-"""Construction du plan de trade : entree, stop, TP1, TP2, taille, gestion.
+"""Construction du plan de trade : entrée, stop, TP1, TP2, taille, gestion.
 
 Regles non negociables appliquees ici :
 
-  1. Le stop est place ou la these est INVALIDEE (sous une structure), pas a
+  1. Le stop est place ou la thèse est INVALIDEE (sous une structure), pas a
      une distance ronde arbitraire.
-  2. Le spread est integre partout : on achete a l'ask, on vend au bid, et
+  2. Le spread est intégré partout : on achete a l'ask, on vend au bid, et
      un TP se juge sur le prix qui le declenche reellement.
   3. Un trade dont le TP1 n'atteint pas le R:R minimal est refuse. Un bon
      signal avec un mauvais R:R reste un mauvais trade.
-  4. La taille decoule du stop, jamais l'inverse.
+  4. La taille découle du stop, jamais l'inverse.
 """
 
 from __future__ import annotations
@@ -39,7 +39,7 @@ class Target:
 class TradePlan:
     side: str                       # ACHAT | VENTE
     entry: float
-    entry_type: str                 # marche | limite
+    entry_type: str                 # marché | limite
     entry_zone: tuple[float, float]
     stop: float
     stop_distance: float
@@ -69,9 +69,9 @@ class TradePlan:
 
 def _candidate_levels(structure: StructureView, ind: IndicatorSet, price: float,
                       direction: int) -> list[tuple[float, str, float]]:
-    """Tous les prix ou le marche a une raison de s'arreter, dans le sens du trade.
+    """Tous les prix ou le marché à une raison de s'arrêter, dans le sens du trade.
 
-    Renvoie (prix, justification, solidite). La solidite compte autant que la
+    Renvoie (prix, justification, solidité). La solidité compte autant que la
     distance : viser le premier chiffre rond venu place les TP sur des niveaux
     que rien ne defend, et le prix les traverse sans ralentir.
     """
@@ -81,11 +81,11 @@ def _candidate_levels(structure: StructureView, ind: IndicatorSet, price: float,
     for level in levels:
         out.append((level.price, f"niveau {level.label or level.kind} (force {level.strength:.2f})", level.strength))
 
-    # Les poches de liquidite sont les meilleures cibles : c'est la que sont
+    # Les poches de liquidité sont les meilleures cibles : c'est la que sont
     # les stops des autres, donc la que le prix est aspire.
     pools = structure.liquidity_above if direction > 0 else structure.liquidity_below
     for pool in pools:
-        out.append((pool, "poche de liquidite (stops accumules)", 0.88))
+        out.append((pool, "poche de liquidité (stops accumulés)", 0.88))
 
     if ind.profile is not None:
         for value, name, weight in ((ind.profile.poc, "POC", 0.80),
@@ -109,7 +109,7 @@ def _candidate_levels(structure: StructureView, ind: IndicatorSet, price: float,
     if bb is not None and ((direction > 0 and bb > price) or (direction < 0 and bb < price)):
         out.append((bb, "bande de Bollinger", 0.55))
 
-    # Tri par proximite, deduplication en gardant le plus solide du groupe.
+    # Tri par proximité, deduplication en gardant le plus solide du groupe.
     out.sort(key=lambda item: abs(item[0] - price))
     unique: list[tuple[float, str, float]] = []
     tolerance = max(ind.atr_value * 0.18, price * 0.00012)
@@ -117,7 +117,7 @@ def _candidate_levels(structure: StructureView, ind: IndicatorSet, price: float,
         for index, (kept, kept_label, kept_weight) in enumerate(unique):
             if abs(value - kept) <= tolerance:
                 if weight > kept_weight:
-                    # Confluence : deux raisons au meme prix renforcent la cible.
+                    # Confluence : deux raisons au même prix renforcent la cible.
                     unique[index] = (kept, f"{label} + {kept_label}"[:70], min(1.0, weight + 0.08))
                 else:
                     unique[index] = (kept, kept_label, min(1.0, kept_weight + 0.08))
@@ -129,7 +129,7 @@ def _candidate_levels(structure: StructureView, ind: IndicatorSet, price: float,
 
 def _structural_stop(structure: StructureView, ind: IndicatorSet, entry: float,
                      direction: int, buffer_value: float) -> tuple[Optional[float], str]:
-    """Stop sous la derniere structure qui porte la these."""
+    """Stop sous la dernière structure qui porte la thèse."""
     if direction > 0:
         anchors = [p for p in (structure.swing_low, structure.range_low) if p is not None and p < entry]
         supports = [l.price for l in structure.levels_below(entry, 3)]
@@ -144,16 +144,16 @@ def _structural_stop(structure: StructureView, ind: IndicatorSet, entry: float,
     if not anchors:
         return None, ""
     chosen = min(anchors)
-    return chosen + buffer_value, f"au-dessus de la resistance structurelle {chosen:.2f}"
+    return chosen + buffer_value, f"au-dessus de la résistance structurelle {chosen:.2f}"
 
 
 def _entry_zone(ind_m1: IndicatorSet, structure_m5: StructureView, price: float,
                 direction: int, atr_m5: float, style: str, turbo: bool) -> tuple[float, str, tuple[float, float]]:
-    """Determine le prix d'entree et son type.
+    """Determine le prix d'entrée et son type.
 
-    En turbo on prend le marche : attendre un repli fait rater le mouvement.
+    En turbo on prend le marché : attendre un repli fait rater le mouvement.
     Sinon on vise un repli sur EMA21 M1 ou un retracement de Fibonacci,
-    a condition qu'il reste a portee (moins de 0.8 ATR M5).
+    a condition qu'il reste à portée (moins de 0.8 ATR M5).
     """
     if turbo:
         return price, "marche", (price, price)
@@ -188,7 +188,7 @@ def build_plan(confluence: Confluence, calibration: Calibration, risk: RiskConfi
                market: MarketConfig, session: SessionInfo,
                news_multiplier: float = 1.0, spread_override: Optional[float] = None,
                win_rates: Optional[tuple[float, float]] = None) -> TradePlan:
-    """Assemble le plan complet. Les prix sont deja en referentiel MT5."""
+    """Assemble le plan complet. Les prix sont déjà en référentiel MT5."""
     direction = confluence.direction
     side = "ACHAT" if direction > 0 else "VENTE"
 
@@ -206,11 +206,11 @@ def build_plan(confluence: Confluence, calibration: Calibration, risk: RiskConfi
 
     if spread > risk.max_spread:
         return rejected_plan(
-            f"spread de {spread:.2f}$ superieur au plafond de {risk.max_spread:.2f}$ - "
-            "le cout d'entree mange la cible"
+            f"spread de {spread:.2f}$ supérieur au plafond de {risk.max_spread:.2f}$ - "
+            "le coût d'entrée mange la cible"
         )
 
-    # -- entree ------------------------------------------------------------- #
+    # -- entrée ------------------------------------------------------------- #
     mid_entry, entry_type, zone = _entry_zone(
         ind_m1, structure_m5, price, direction, atr_m5, confluence.style, confluence.turbo
     )
@@ -240,8 +240,8 @@ def build_plan(confluence: Confluence, calibration: Calibration, risk: RiskConfi
     distance = clamp(raw_distance, min_distance, max_distance)
     if abs(distance - raw_distance) > 1e-9:
         stop_reason += (
-            f" (ajuste au plancher {min_distance:.2f}$)" if distance > raw_distance
-            else f" (ajuste au plafond {max_distance:.2f}$)"
+            f" (ajusté au plancher {min_distance:.2f}$)" if distance > raw_distance
+            else f" (ajusté au plafond {max_distance:.2f}$)"
         )
     stop_mid = mid_entry - distance if direction > 0 else mid_entry + distance
     # Le stop se declenche au bid en achat, a l'ask en vente : on l'ecarte du spread.
@@ -249,7 +249,7 @@ def build_plan(confluence: Confluence, calibration: Calibration, risk: RiskConfi
     stop_distance = abs(entry - stop)
 
     if stop_distance <= 0:
-        return rejected_plan("distance de stop nulle - donnees incoherentes")
+        return rejected_plan("distance de stop nulle - données incoherentes")
 
     # -- cibles -------------------------------------------------------------#
     candidates = _candidate_levels(structure_m5, ind_m5, mid_entry, direction)
@@ -261,7 +261,7 @@ def build_plan(confluence: Confluence, calibration: Calibration, risk: RiskConfi
     # TP1 : le premier obstacle serieux qui paie au moins le R:R minimal.
     tp1_price: Optional[float] = None
     tp1_reason = ""
-    # Deux passes : on exige d'abord un niveau solide, on assouplit ensuite.
+    # Deux passés : on exigé d'abord un niveau solide, on assouplit ensuite.
     # Un TP pose sur un niveau que rien ne defend n'est pas un TP, c'est un
     # nombre.
     for min_strength in (0.50, 0.32):
@@ -281,13 +281,13 @@ def build_plan(confluence: Confluence, calibration: Calibration, risk: RiskConfi
     if tp1_price is None:
         distance_tp1 = stop_distance * risk.target_rr_tp1 * regime.target_multiplier
         tp1_price = entry + distance_tp1 if direction > 0 else entry - distance_tp1
-        tp1_reason = f"projection {risk.target_rr_tp1:.1f}R ajustee au regime ({regime.label})"
+        tp1_reason = f"projection {risk.target_rr_tp1:.1f}R ajustée au régime ({regime.label})"
 
     rr1 = r_of(tp1_price)
     if rr1 < risk.min_rr_tp1:
         return rejected_plan(
             f"aucune cible n'offre le R:R minimal de {risk.min_rr_tp1:.1f} "
-            f"(meilleure trouvee : {rr1:.2f}R) - le prix est colle a un obstacle"
+            f"(meilleure trouvee : {rr1:.2f}R) - le prix est collé à un obstacle"
         )
 
     targets.append(
@@ -312,7 +312,7 @@ def build_plan(confluence: Confluence, calibration: Calibration, risk: RiskConfi
             break
 
     if tp2_price is None:
-        # Projection de la jambe d'impulsion (mouvement mesure), sinon R:R cible.
+        # Projection de la jambe d'impulsion (mouvement mesuré), sinon R:R cible.
         measured = None
         if structure_m5.leg_high is not None and structure_m5.leg_low is not None:
             leg = structure_m5.leg_high - structure_m5.leg_low
@@ -321,10 +321,10 @@ def build_plan(confluence: Confluence, calibration: Calibration, risk: RiskConfi
         projected = entry + fallback_distance if direction > 0 else entry - fallback_distance
         if measured is not None and r_of(measured) >= rr1 + 0.5:
             tp2_price = measured
-            tp2_reason = "mouvement mesure (projection de la jambe d'impulsion)"
+            tp2_reason = "mouvement mesuré (projection de la jambe d'impulsion)"
         else:
             tp2_price = projected
-            tp2_reason = f"projection {risk.target_rr_tp2:.1f}R ajustee au regime"
+            tp2_reason = f"projection {risk.target_rr_tp2:.1f}R ajustée au régime"
 
     rr2 = r_of(tp2_price)
     targets.append(
@@ -337,7 +337,7 @@ def build_plan(confluence: Confluence, calibration: Calibration, risk: RiskConfi
     risk_amount = risk.account_balance * risk_pct / 100.0
     risk_amount *= news_multiplier
 
-    # Modulation par la confiance : un signal a 60 % ne merite pas la meme
+    # Modulation par la confiance : un signal a 60 % ne merite pas la même
     # taille qu'un signal a 90 %.
     confidence_factor = clamp(0.55 + (confluence.confidence - 50.0) / 100.0, 0.55, 1.15)
     risk_amount *= confidence_factor
@@ -347,7 +347,7 @@ def build_plan(confluence: Confluence, calibration: Calibration, risk: RiskConfi
     lots = min(round(raw_lots, 2), risk.max_lots)
     if lots < 0.01:
         return rejected_plan(
-            f"taille calculee inferieure au lot minimum (0.01) : avec {risk_amount:.2f}$ de risque "
+            f"taille calculee inférieure au lot minimum (0.01) : avec {risk_amount:.2f}$ de risque "
             f"et un stop de {stop_distance:.2f}$, il faudrait {raw_lots:.4f} lot. "
             "Augmente le capital ou le pourcentage de risque."
         )
@@ -356,21 +356,21 @@ def build_plan(confluence: Confluence, calibration: Calibration, risk: RiskConfi
     reward_tp1 = lots * risk.tp1_share * targets[0].distance * value_per_unit
     reward_tp2 = lots * (1 - risk.tp1_share) * targets[1].distance * value_per_unit
 
-    # -- esperance ----------------------------------------------------------#
+    # -- espérance ----------------------------------------------------------#
     if win_rates is not None and win_rates[0] > 0:
         p1, p2 = win_rates
     else:
-        # Modele de reference : sur une marche aleatoire, la probabilite
+        # Modele de référence : sur une marché aléatoire, la probabilité
         # d'atteindre +kR avant -1R vaut 1/(1+k). L'edge du moteur deplace
-        # cette base, la confiance en fixe l'ampleur. Faire dependre la
-        # probabilite de la seule confiance produit des aberrations : un TP1
-        # a 2.8R annonce a 72 % de reussite est une promesse intenable.
+        # cette base, la confiance en fixe l'ampleur. Faire dépendre la
+        # probabilité de la seule confiance produit des aberrations : un TP1
+        # a 2.8R annoncé a 72 % de reussite est une promesse intenable.
         edge = clamp((confluence.confidence - 55.0) / 100.0 * 0.20, -0.10, 0.20)
         p1 = clamp(1.0 / (1.0 + rr1) + edge, 0.10, 0.80)
         p2 = clamp(1.0 / (1.0 + rr2) + edge * 0.7, 0.05, min(p1, 0.60))
     # Decomposition des issues :
     #   - TP2 atteint            -> part1 x rr1 + part2 x rr2
-    #   - TP1 seul puis stop a BE -> part1 x rr1 (le reliquat sort a zero)
+    #   - TP1 seul puis stop a BE -> part1 x rr1 (le reliquat sort à zéro)
     #   - stop direct            -> -1 R
     tp1_only = max(p1 - p2, 0.0)
     loss_probability = max(0.0, 1.0 - p1)
@@ -383,23 +383,23 @@ def build_plan(confluence: Confluence, calibration: Calibration, risk: RiskConfi
     # -- gestion ------------------------------------------------------------#
     management = [
         f"Sortir {risk.tp1_share:.0%} de la position a TP1 ({targets[0].price:.2f}).",
-        f"Des TP1 touche, remonter le stop a l'entree + spread "
+        f"Des TP1 touche, remonter le stop a l'entrée + spread "
         f"({calibration.ask(entry) if direction > 0 else calibration.bid(entry):.2f}) : le trade devient gratuit.",
         f"Suivre le reste sous l'EMA9 M1 ou a {regime.stop_multiplier:.2f} x ATR, "
-        f"en ne relachant jamais le stop.",
-        f"Stop temporel : si TP1 n'est pas touche en {_time_stop_bars(regime)} bougies M1, sortir au marche - "
-        "la these avait une duree de vie, elle est expiree.",
+        f"en ne relâchant jamais le stop.",
+        f"Stop temporel : si TP1 n'est pas touche en {_time_stop_bars(regime)} bougies M1, sortir au marché - "
+        "la thèse avait une durée de vie, elle est expirée.",
     ]
     if session.minutes_to_next < 25:
         management.append(
             f"Changement de session dans {session.minutes_to_next} min "
-            f"(vers {_next_session_name(session)}) : la volatilite va changer de regime."
+            f"(vers {_next_session_name(session)}) : la volatilité va changer de régime."
         )
     if confluence.turbo:
-        management.insert(0, "Mode TURBO : entree au marche, ne pas attendre de repli.")
+        management.insert(0, "Mode TURBO : entrée au marché, ne pas attendre de repli.")
 
     invalidation = (
-        f"These invalidee si le prix cloture {'sous' if direction > 0 else 'au-dessus de'} "
+        f"Thèse invalidée si le prix clôture {'sous' if direction > 0 else 'au-dessus de'} "
         f"{stop_mid:.2f} en M5, ou si la structure M15 passe "
         f"{'baissiere' if direction > 0 else 'haussiere'}."
     )
@@ -408,12 +408,12 @@ def build_plan(confluence: Confluence, calibration: Calibration, risk: RiskConfi
     if entry_type == "limite":
         notes.append(
             f"Ordre LIMITE a {entry:.2f} : si le prix part sans toi, laisse-le partir. "
-            "Courir apres un repli manque est la premiere source de pertes en scalp."
+            "Courir après un repli manque est la première source de pertes en scalp."
         )
     if news_multiplier < 1.0:
-        notes.append(f"Taille reduite a {news_multiplier:.0%} en raison du calendrier economique.")
+        notes.append(f"Taille réduite a {news_multiplier:.0%} en raison du calendrier économique.")
     if confidence_factor < 0.8:
-        notes.append(f"Taille reduite a {confidence_factor:.0%} : confiance du signal moderee.")
+        notes.append(f"Taille réduite a {confidence_factor:.0%} : confiance du signal moderee.")
 
     return TradePlan(
         side=side,

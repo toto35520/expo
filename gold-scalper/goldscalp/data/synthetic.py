@@ -1,13 +1,13 @@
-"""Simulateur de marche or, pour le mode `--demo` et les tests.
+"""Simulateur de marché or, pour le mode `--demo` et les tests.
 
-Ne sert JAMAIS a produire un signal reel : le CLI marque toute sortie issue
-d'ici comme simulee, en evidence. Le generateur reproduit les proprietes qui
+Ne sert JAMAIS a produire un signal réel : le CLI marque toute sortie issue
+d'ici comme simulée, en evidence. Le générateur reproduit les propriétés qui
 comptent pour valider le moteur :
 
-  - marche aleatoire avec derive changeante (regimes de tendance/range),
-  - clustering de volatilite facon GARCH,
-  - profil de volatilite par session (Asie calme, Londres/NY actives),
-  - volume correle a la volatilite,
+  - marché aléatoire avec derive changeante (régimes de tendance/range),
+  - clustering de volatilité façon GARCH,
+  - profil de volatilité par session (Asie calme, Londres/NY actives),
+  - volume corrélé a la volatilité,
   - meches asymetriques et chasses aux stops occasionnelles.
 """
 
@@ -23,7 +23,7 @@ from goldscalp.util import now_ms
 
 
 def _session_factor(ts: int) -> float:
-    """Multiplicateur de volatilite selon l'heure UTC."""
+    """Multiplicateur de volatilité selon l'heure UTC."""
     hour = (ts // 3_600_000) % 24
     if 0 <= hour < 6:        # Asie
         return 0.55
@@ -45,7 +45,7 @@ def generate_series(timeframe: str, bars: int, start_price: float = 2400.0,
     start_ts = end - step * bars
     start_ts -= start_ts % step
 
-    # Volatilite de base calibree sur l'or reel : ATR(M1) autour de 0.5-0.8 $
+    # Volatilité de base calibrée sur l'or réel : ATR(M1) autour de 0.5-0.8 $
     # en session calme, 1.0-1.5 $ sur le chevauchement Londres/NY.
     base_vol = start_price * 0.00018 * math.sqrt(step / 60000.0)
     vol = base_vol
@@ -57,13 +57,13 @@ def generate_series(timeframe: str, bars: int, start_price: float = 2400.0,
     for i in range(bars):
         ts = start_ts + i * step
 
-        # Changement de regime occasionnel : nouvelle derive.
-        # L'ecart-type reste petit devant la volatilite, sinon le prix derive
+        # Changement de régime occasionnel : nouvelle derive.
+        # L'écart-type reste petit devant la volatilité, sinon le prix derive
         # de plusieurs pourcents en une seance - ce que l'or ne fait pas.
         if rng.random() < 0.012:
             drift = rng.gauss(trend_bias * 0.15, 0.14) * base_vol
 
-        # Clustering de volatilite (GARCH(1,1) simplifie).
+        # Clustering de volatilité (GARCH(1,1) simplifie).
         shock = rng.gauss(0.0, 1.0)
         vol = math.sqrt(max(1e-9, 0.10 * base_vol ** 2 + 0.82 * vol ** 2 + 0.08 * (shock * vol) ** 2))
         vol = min(vol, base_vol * 6.0)
@@ -152,7 +152,7 @@ def generate_derivatives(seed: Optional[int] = None, bias: float = 0.0) -> Deriv
 
 
 def generate_macro(seed: Optional[int] = None, gold_bias: float = 0.0) -> dict:
-    """Series macro simulees, coherentes avec un biais or donne."""
+    """Séries macro simulées, coherentes avec un biais or donne."""
     from goldscalp.data.macro import MacroSeries, MACRO_SYMBOLS
 
     rng = random.Random(seed)
@@ -161,8 +161,8 @@ def generate_macro(seed: Optional[int] = None, gold_bias: float = 0.0) -> dict:
         base = {"dxy": 104.0, "us10y": 42.0, "us02y": 44.0, "vix": 15.0,
                 "spx": 5600.0, "silver": 29.0, "oil": 78.0}.get(key, 100.0)
         closes = [base]
-        # correlation attendue : si l'or monte, le DXY doit baisser
-        # corr = correlation attendue AVEC l'or : un biais or haussier doit
+        # corrélation attendue : si l'or monte, le DXY doit baisser
+        # corr = corrélation attendue AVEC l'or : un biais or haussier doit
         # faire BAISSER le DXY (corr -1) et monter l'argent (corr +0.7).
         drift = corr * gold_bias * 0.0004
         for _ in range(120):

@@ -1,8 +1,8 @@
-"""Structure de marche : swings, BOS/CHoCH, S/R, pivots, fibs, liquidite.
+"""Structure de marché : swings, BOS/CHoCH, S/R, pivots, fibs, liquidité.
 
 C'est ce qui donne les niveaux REELS pour poser SL / TP1 / TP2 : un TP
 place sur un ATR arbitraire se fait manger, un TP place sous une poche de
-liquidite se fait toucher.
+liquidité se fait toucher.
 """
 
 from __future__ import annotations
@@ -27,7 +27,7 @@ class Level:
     """Niveau horizontal significatif."""
 
     price: float
-    kind: str        # support | resistance | pivot | poc | vah | val | fib | round | pdh | pdl
+    kind: str        # support | résistance | pivot | poc | vah | val | fib | round | pdh | pdl
     strength: float  # 0..1
     touches: int = 1
     label: str = ""
@@ -88,7 +88,7 @@ def find_swings(candles: Sequence[Candle], span: int = 3) -> list[Swing]:
 
 
 def _dedupe_swings(swings: list[Swing], min_gap: int = 2) -> list[Swing]:
-    """Retire les swings colles de meme nature (garde le plus extreme)."""
+    """Retire les swings colles de même nature (garde le plus extrême)."""
     out: list[Swing] = []
     for swing in swings:
         if out and out[-1].kind == swing.kind and swing.index - out[-1].index <= min_gap:
@@ -101,12 +101,12 @@ def _dedupe_swings(swings: list[Swing], min_gap: int = 2) -> list[Swing]:
 
 
 def classify_trend(swings: list[Swing], candles: Sequence[Candle]) -> tuple[str, str, int]:
-    """Determine (tendance, dernier evenement, index de l'evenement).
+    """Determine (tendance, dernier événement, index de l'événement).
 
     - BOS   : cassure dans le sens de la tendance (continuation)
     - CHoCH : cassure contre la tendance (retournement potentiel)
 
-    On regarde a la fois la sequence de swings ET la cassure par le prix
+    On regarde à la fois la sequence de swings ET la cassure par le prix
     courant du dernier swing oppose : sans ca on rate le BOS tant que le
     pivot de confirmation n'est pas forme (soit `span` bougies de retard,
     inacceptable en scalp M1).
@@ -118,10 +118,10 @@ def classify_trend(swings: list[Swing], candles: Sequence[Candle]) -> tuple[str,
     lows = [s for s in swings if s.kind == "low"]
     if len(highs) < 2 or len(lows) < 2:
         # Un mouvement directionnel SANS repli ne forme aucun pivot fractal :
-        # chaque bougie depasse la precedente, donc aucune n'est un sommet
+        # chaque bougie dépasse la précédente, donc aucune n'est un sommet
         # local. Classer ce cas en "range" serait exactement l'inverse de la
-        # realite. On lit alors la pente brute : si le deplacement net couvre
-        # l'essentiel de l'amplitude parcourue, le marche est directionnel.
+        # réalité. On lit alors la pente brute : si le deplacement net couvre
+        # l'essentiel de l'amplitude parcourue, le marché est directionnel.
         closes = [c.close for c in candles]
         span = max(closes) - min(closes)
         if span > 0:
@@ -173,9 +173,9 @@ def impulse_leg(swings: list[Swing], candles: Sequence[Candle],
                 lookback_swings: int = 12) -> tuple[Optional[float], Optional[float], bool]:
     """Jambe d'impulsion courante -> (haut, bas, haussiere).
 
-    On prend les extremes des `lookback_swings` derniers pivots : c'est cette
+    On prend les extrêmes des `lookback_swings` derniers pivots : c'est cette
     amplitude-la qui porte les retracements exploitables en scalp, pas
-    l'ecart entre deux pivots consecutifs qui peut etre minuscule.
+    l'écart entre deux pivots consecutifs qui peut etre minuscule.
     """
     recent = swings[-lookback_swings:] if swings else []
     highs = [s for s in recent if s.kind == "high"]
@@ -196,7 +196,7 @@ def cluster_levels(points: Sequence[tuple[float, str, float]], tolerance: float)
     `points` = (prix, nature, recence) ou recence est dans [0, 1], 1 = touche
     la plus recente. La force est ABSOLUE (nombre de touches + recence), pas
     relative au plus gros amas : sinon un niveau touche une seule fois tombe
-    a 0.1 et se fait systematiquement doubler par un chiffre rond arbitraire,
+    à 0.1 et se fait systematiquement doubler par un chiffre rond arbitraire,
     ce qui deplace tous les TP sur des niveaux sans substance.
     """
     if not points:
@@ -231,7 +231,7 @@ def cluster_levels(points: Sequence[tuple[float, str, float]], tolerance: float)
 
 
 def daily_pivots(daily: Series) -> list[Level]:
-    """Pivots classiques calcules sur la derniere journee CLOTUREE."""
+    """Pivots classiques calcules sur la dernière journee CLOTUREE."""
     closed = daily.closed_only
     if len(closed) < 2:
         return []
@@ -293,7 +293,7 @@ def fib_levels(high: float, low: float, uptrend: bool) -> dict[str, float]:
 
 def liquidity_pools(candles: Sequence[Candle], swings: list[Swing], price: float,
                     tolerance: float) -> tuple[list[float], list[float]]:
-    """Poches de liquidite = amas d'egal-highs / equal-lows non balayes.
+    """Poches de liquidité = amas d'egal-highs / equal-lows non balayes.
 
     Ce sont les cibles naturelles du prix : c'est la que sont les stops.
     """
@@ -319,7 +319,7 @@ def liquidity_pools(candles: Sequence[Candle], swings: list[Swing], price: float
 
 def build_structure(series: Series, daily: Optional[Series] = None, atr_value: float = 1.0,
                     swing_span: int = 3, level_lookback: int = 300) -> StructureView:
-    """Assemble la vue structurelle complete d'un timeframe."""
+    """Assemble la vue structurelle complète d'un timeframe."""
     candles = series.candles[-level_lookback:]
     if len(candles) < swing_span * 2 + 4:
         return StructureView([], "range", "aucun", 0)
@@ -329,7 +329,7 @@ def build_structure(series: Series, daily: Optional[Series] = None, atr_value: f
     event_bars_ago = max(0, len(candles) - 1 - event_index)
 
     price = candles[-1].close
-    # Tolerance resserree : a 0.45 ATR, des dizaines de swings distincts
+    # Tolérance resserrée : à 0.45 ATR, des dizaines de swings distincts
     # fusionnent en un seul pseudo-niveau qui ne veut plus rien dire.
     tolerance = max(atr_value * 0.22, price * 0.00025)
 
@@ -350,15 +350,15 @@ def build_structure(series: Series, daily: Optional[Series] = None, atr_value: f
         levels.extend(daily_pivots(daily))
     levels.extend(round_numbers(price, step=5.0, count=5))
 
-    # Deduplication finale : deux niveaux a moins d'une tolerance fusionnent.
+    # Deduplication finale : deux niveaux a moins d'une tolérance fusionnent.
     levels.sort(key=lambda l: l.price)
     merged: list[Level] = []
     for level in levels:
         if merged and abs(level.price - merged[-1].price) <= tolerance * 0.6:
             previous = merged[-1]
             keep = previous if previous.strength >= level.strength else level
-            # Une confluence de natures differentes (swing + pivot + rond)
-            # renforce le niveau, sans jamais depasser 1.0.
+            # Une confluence de natures différentes (swing + pivot + rond)
+            # renforce le niveau, sans jamais dépasser 1.0.
             keep.strength = round(min(1.0, max(previous.strength, level.strength) + 0.10), 3)
             keep.touches = min(previous.touches + level.touches, 9)
             keep.label = f"{previous.label}+{level.label}".strip("+")[:26]
