@@ -193,11 +193,13 @@ def render(analysis: Analysis, palette: Optional[Palette] = None,
         out.append(p.yellow(f"  Aucun plan : {plan.rejection}"))
     else:
         side_color = p.green if plan.side == "ACHAT" else p.red
+        grade_color = {"A": p.green, "B": p.yellow}.get(plan.grade, p.red)
         out.append(
             f"  {side_color(p.bold(plan.side))}  ordre {p.bold(plan.entry_type)} "
             f"à {p.bold(f'{plan.entry:.2f}')}"
             + (f"  (zone {plan.entry_zone[0]:.2f} - {plan.entry_zone[1]:.2f})"
                if plan.entry_type == "limite" else "")
+            + f"   {grade_color(p.bold(f'[{plan.grade}]'))} {p.grey(plan.grade_label)}"
         )
         out.append(f"  {'Stop loss':<12} {p.red(f'{plan.stop:>10.2f}')}   "
                    f"{plan.stop_distance:>6.2f} $   {p.grey('risque ' + f'{plan.risk_amount:.2f} $')}")
@@ -223,6 +225,8 @@ def render(analysis: Analysis, palette: Optional[Palette] = None,
         for line in plan.management:
             out.append(f"  - {line}")
         out.append(p.grey(f"  {plan.invalidation}"))
+        for reason in plan.grade_reasons:
+            out.append(p.grey(f"  note {plan.grade} — {reason}"))
         for note in plan.notes:
             out.append(p.yellow(f"  ! {note}"))
 

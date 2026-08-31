@@ -41,6 +41,10 @@ from goldscalp.data.mt5 import Mt5Bridge
 from goldscalp.data.yahoo import YahooError, YahooGoldClient, has_usable_volume
 from goldscalp.util import LOG, now_ms
 
+# Base du contrat au-delà de laquelle le réalignement n'est plus crédible :
+# ce n'est alors pas une base de perpétuel mais une incohérence de données.
+MAX_INDEX_ALIGNMENT = 30.0
+
 TF_ROLES = {
     "M15": "contexte - définit le biais",
     "M5": "configuration - qualité du repli et structure",
@@ -59,6 +63,13 @@ class DataBundle:
     news: Optional[NewsRisk] = None
     instrument: Optional[Instrument] = None
     basis: Basis = field(default_factory=Basis)
+    # Les bougies d'un perpétuel portent le DERNIER PRIX TRAITÉ, pas l'index.
+    # Les deux diffèrent de la base du contrat, qui vaut couramment plusieurs
+    # dollars sur l'or et qui varie. Comme l'ancre broker est mesurée contre
+    # l'index, il faut réaligner la série sur l'index avant de l'appliquer,
+    # sinon on ajoute un décalage mesuré sur A à des prix venus de B.
+    index_price: Optional[float] = None
+    index_alignment: float = 0.0
     price_source: str = "?"
     simulated: bool = False
     fetch_seconds: float = 0.0
@@ -93,17 +104,32 @@ def _conversion(bundle: "DataBundle", calibration: Calibration):
 
     calibration_error = calibration.residual_std + calibration.half_spread
 
-    # Cas nominal : la série de prix EST le perpétuel or, dont l'index suit
-    # l'or réel, et l'ancre a été prise contre ce même index. Il n'y a donc
-    # rien à convertir avant d'appliquer le markup du broker — insérer une
-    # base ici ajouterait une correction pour un écart qui n'existe pas.
+    # Cas nominal : l'ancre a été mesurée contre l'INDEX du perpétuel or.
+    #
+    # Attention au piège : les bougies portent le dernier prix TRAITÉ, pas
+    # l'index. Appliquer directement un markup mesuré sur l'index à des prix
+    # de transaction ajoute la base du contrat à l'erreur — plusieurs dollars,
+    # variables. On réaligne donc d'abord la série sur l'index.
     if calibration.reference == "index" and source in ("BYBIT", "YAHOO"):
         symbol = bundle.instrument.symbol if bundle.instrument else source
-        return (
-            calibration.apply,
-            f"{symbol} {calibration.alpha:+.2f} $ (markup broker, ancre permanente)",
-            round(calibration_error, 2),
-        )
+        alignment = bundle.index_alignment if source == "BYBIT" else 0.0
+
+        def convert_index(series, shift=alignment, calib=calibration):
+            aligned = series.apply_calibration(shift, 1.0) if shift else series
+            return calib.apply(aligned)
+
+        chain = f"{symbol}"
+        if alignment:
+            chain += f" {alignment:+.2f} $ (base du contrat -> index)"
+        chain += f" {calibration.alpha:+.2f} $ (markup broker, ancre permanente)"
+
+        residual = calibration_error
+        if source == "BYBIT" and not bundle.index_price:
+            # Sans index courant, l'écart au broker inclut une base de contrat
+            # inconnue : le dire plutôt que d'annoncer une précision illusoire.
+            residual += 2.0
+            chain += " — index courant indisponible, base du contrat non corrigée"
+        return convert_index, chain, round(residual, 2)
 
     # Étape 1 : ramener la source à l'or spot.
     if source == "YAHOO":
@@ -352,6 +378,33 @@ def collect(config: Config, *, demo: bool = False, seed: Optional[int] = None,
         bundle.price_source = "BYBIT"
         symbol = instrument.symbol if instrument else "?"
         bundle.sources["prix"] = f"Bybit {symbol} recalibré vers MT5"
+
+        # Réalignement sur l'index, dans le même appel de ticker que le reste.
+        # Décaler toute la série d'une constante ne change aucune structure
+        # technique : ATR, moyennes et niveaux se déplacent ensemble. On
+        # corrige un niveau, pas une forme.
+        if instrument is not None and instrument.is_gold_index:
+            index = client.index_price(instrument)
+            reference = bundle.series.get("M1") or next(iter(bundle.series.values()), None)
+            if index and reference:
+                alignment = index - reference.closed_only.last.close
+                if abs(alignment) <= MAX_INDEX_ALIGNMENT:
+                    bundle.index_price = index
+                    bundle.index_alignment = round(alignment, 4)
+                    bundle.sources["index"] = (
+                        f"index {instrument.symbol} {index:.2f} "
+                        f"(base du contrat {alignment:+.2f} $)"
+                    )
+                else:
+                    bundle.problems.append(
+                        f"Base du contrat aberrante ({alignment:+.2f} $) : réalignement "
+                        "sur l'index ignoré."
+                    )
+            elif not index:
+                bundle.problems.append(
+                    "Index du perpétuel indisponible : les bougies portent le dernier "
+                    "prix traité, qui s'écarte de l'index de la base du contrat."
+                )
     elif yahoo_series:
         for timeframe in timeframes:
             if timeframe in yahoo_series:

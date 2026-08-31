@@ -57,6 +57,16 @@ class TradePlan:
     notes: list[str] = field(default_factory=list)
     valid: bool = True
     rejection: str = ""
+    grade: str = "-"                                # A, B ou C
+    grade_reasons: list[str] = field(default_factory=list)
+
+    @property
+    def grade_label(self) -> str:
+        return {
+            "A": "configuration de premier choix",
+            "B": "configuration correcte",
+            "C": "configuration limite - taille réduite",
+        }.get(self.grade, "non noté")
 
     @property
     def tp1(self) -> Optional[Target]:
@@ -386,6 +396,28 @@ def build_plan(confluence: Confluence, calibration: Calibration, risk: RiskConfi
         - loss_probability * 1.0
     )
 
+    # Un plan géométriquement valide mais d'espérance nulle n'est pas un
+    # trade : c'est une occasion de payer le spread. On le refuse ici plutôt
+    # que de le proposer et de laisser l'utilisateur faire le tri.
+    if expectancy < risk.min_expectancy_r:
+        return rejected_plan(
+            f"espérance de {expectancy:+.2f} R sous le plancher de "
+            f"{risk.min_expectancy_r:+.2f} R — le gain attendu ne paie pas le risque"
+        )
+
+    # -- note de qualité ------------------------------------------------------#
+    # Quatre critères objectifs, pour que la différence entre une très bonne
+    # configuration et une configuration limite se voie d'un coup d'œil.
+    criteria = {
+        "confiance directionnelle": confluence.confidence >= 70,
+        "accord des timeframes": confluence.alignment >= 0.99,
+        f"TP1 au-dessus de {risk.target_rr_tp1:.1f}R": rr1 >= risk.target_rr_tp1,
+        "espérance supérieure à 0.35 R": expectancy >= 0.35,
+    }
+    met = [name for name, ok in criteria.items() if ok]
+    missing = [name for name, ok in criteria.items() if not ok]
+    grade = "A" if len(met) >= 4 else "B" if len(met) >= 2 else "C"
+
     # -- gestion ------------------------------------------------------------#
     management = [
         f"Sortir {risk.tp1_share:.0%} de la position à TP1 ({targets[0].price:.2f}).",
@@ -413,7 +445,7 @@ def build_plan(confluence: Confluence, calibration: Calibration, risk: RiskConfi
     notes: list[str] = []
     if entry_type == "limite":
         notes.append(
-            f"Ordre LIMITE a {entry:.2f} : si le prix part sans toi, laisse-le partir. "
+            f"Ordre LIMITE à {entry:.2f} : si le prix part sans toi, laisse-le partir. "
             "Courir après un repli manque est la première source de pertes en scalp."
         )
     if news_multiplier < 1.0:
@@ -441,6 +473,10 @@ def build_plan(confluence: Confluence, calibration: Calibration, risk: RiskConfi
         invalidation=invalidation,
         notes=notes,
         valid=True,
+        grade=grade,
+        grade_reasons=(
+            [f"acquis : {', '.join(met)}"] if met else []
+        ) + ([f"manque : {', '.join(missing)}"] if missing else []),
     )
 
 

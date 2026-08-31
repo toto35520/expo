@@ -90,6 +90,32 @@ pas**. Elle reste active jusqu'à ce que tu la remplaces volontairement.
 prix_MT5 = index_or + markup_broker
 ```
 
+#### Le piège qu'il faut connaître
+
+Les **bougies** d'un perpétuel portent le **dernier prix traité**, pas son
+index. Les deux diffèrent de la *base du contrat* — couramment plusieurs
+dollars sur l'or, et variable.
+
+Appliquer un markup mesuré contre l'index à des prix de transaction ajoute donc
+cette base à l'erreur, et **réajuster l'ancre ne referme jamais l'écart** :
+l'ancre est juste, c'est la série à laquelle on l'applique qui n'est pas la
+bonne. L'outil réaligne donc la série sur l'index courant avant d'appliquer le
+markup :
+
+```
+bougies (dernier prix traité)
+  + (index courant − dernière clôture)     base du contrat, corrigée à chaque analyse
+  + markup broker                          ancre permanente
+  = prix MT5
+```
+
+Décaler toute la série d'une constante ne change aucune structure technique :
+ATR, moyennes et niveaux se déplacent ensemble. On corrige un niveau, pas une
+forme.
+
+Si l'index courant est indisponible, l'outil ne masque pas le problème : il
+ajoute 2 $ à l'écart résiduel annoncé et l'écrit dans la chaîne de conversion.
+
 ### Le modèle appliqué quand l'index n'est pas disponible
 
 Là où Bybit est filtré par pays, l'outil retombe sur l'or spot Yahoo, puis en
@@ -559,6 +585,36 @@ s'arrêter, chacun pondéré par sa **solidité** :
 
 Sortie par défaut : **60 % à TP1, 40 % à TP2**.
 
+### Deux planchers de qualité
+
+Avec 60 % de la position sortie à TP1, un TP1 à 1,0R ne survit pas : au taux de
+réussite réellement mesuré, il couvre à peine le spread et le temps passé devant
+l'écran. Deux filtres écartent donc les configurations marginales :
+
+- **TP1 ≥ 1,25R** — en dessous, le plan est refusé ;
+- **espérance ≥ +0,15R** — un plan géométriquement valide mais d'espérance nulle
+  n'est pas un trade, c'est une occasion de payer le spread.
+
+Sur données simulées, ces deux planchers écartent environ **40 % des signaux**
+et font passer le TP1 médian de 1,3R à 1,64R.
+
+### La note du setup
+
+Chaque plan émis porte une note **A / B / C**, fondée sur quatre critères
+objectifs :
+
+| Critère | Seuil |
+|---|---|
+| confiance directionnelle | ≥ 70/100 |
+| accord des timeframes | 100 % |
+| R:R de TP1 | ≥ 1,6R |
+| espérance | ≥ +0,35R |
+
+**A** = les quatre. **B** = deux ou trois. **C** = moins de deux — à ne prendre
+qu'en taille réduite, si tant est qu'on le prenne. Le rapport dit lesquels sont
+acquis et lesquels manquent, pour que la différence entre une très bonne
+configuration et une configuration limite se voie d'un coup d'œil.
+
 ### Taille de position
 
 ```
@@ -938,13 +994,14 @@ vercel.json             region, duree maximale, reecritures
 python3 -m unittest discover -s tests
 ```
 
-171 tests couvrant les bornes des indicateurs, la causalité, l'identifiabilité
+176 tests couvrant les bornes des indicateurs, la causalité, l'identifiabilité
 de la pente de calibration, la **précision du recalage mesurée contre une vérité
 terrain**, la géométrie des plans, la non-inversion des signaux, l'honnêteté du
 backtest, la bascule de source quand Bybit est géo-bloqué, les onze contrôles
 d'exécution scalp, la porte turbo testée par construction (et non par
 échantillonnage), le calibrage sur l'index or vérifié contre une vérité
-terrain, la permanence de l'ancre, les garde-fous de saisie, et le CLI.
+terrain, la permanence de l'ancre, le réalignement sur l'index, les garde-fous de
+saisie, et le CLI.
 
 ---
 

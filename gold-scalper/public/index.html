@@ -527,8 +527,13 @@
       const tail = dir > 0
         ? [rung("sl","STOP",plan.stop_loss,`${fmt(plan.stop_distance)} $ de risque`)]
         : [...tps].map(t => rung("tp", t.label, t.price, `${fmt(t.r_multiple)}R · ${Math.round(t.share*100)}% · ${esc(t.rationale)}`));
+      const gradeCol = plan.grade === "A" ? "var(--buy)" : plan.grade === "B" ? "var(--warn)" : "var(--sell)";
       $("plan").innerHTML =
-        `<div class="ladder">
+        `<p style="margin:0 0 8px">
+           <span style="font-weight:800;font-size:16px;color:${gradeCol}">${esc(plan.grade || "-")}</span>
+           <span class="mut"> · ${esc(plan.grade_label || "")}</span>
+         </p>
+         <div class="ladder">
            ${order.join("")}
            ${rung("entry","ENTRÉE " + plan.entry_type.toUpperCase(), plan.entry, esc(plan.side))}
            ${tail.join("")}
@@ -542,6 +547,7 @@
          </div>
          <ul class="list">${(plan.management||[]).map(m=>`<li>${esc(m)}</li>`).join("")}</ul>
          <p class="foot">${esc(plan.invalidation)}</p>
+         ${(plan.grade_reasons||[]).map(r=>`<p class="foot" style="margin:2px 0">${esc(r)}</p>`).join("")}
          ${(plan.notes||[]).map(n=>`<div class="alert">${esc(n)}</div>`).join("")}`;
     }
 

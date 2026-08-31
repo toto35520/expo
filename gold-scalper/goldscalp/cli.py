@@ -644,6 +644,8 @@ def to_payload(analysis: engine.Analysis, backtest: Optional[BacktestResult] = N
         "conversion": {
             "chain": analysis.conversion_chain,
             "residual_error": analysis.residual_error,
+            "index_price": analysis.data.index_price,
+            "index_alignment": analysis.data.index_alignment,
             "basis": {
                 "ok": analysis.data.basis.ok,
                 "value": analysis.data.basis.value,
@@ -684,6 +686,9 @@ def to_payload(analysis: engine.Analysis, backtest: Optional[BacktestResult] = N
                 "rr1": plan.rr1,
                 "rr2": plan.rr2,
                 "expectancy_r": plan.expectancy_r,
+                "grade": plan.grade,
+                "grade_label": plan.grade_label,
+                "grade_reasons": plan.grade_reasons,
                 "spread": plan.spread,
                 "management": plan.management,
                 "invalidation": plan.invalidation,

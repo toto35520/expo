@@ -15,9 +15,16 @@ class RiskConfig:
     account_balance: float = 10_000.0
     risk_pct: float = 0.5            # % du capital risque par trade
     max_risk_pct: float = 2.0        # plafond dur
-    min_rr_tp1: float = 1.0          # R:R minimal exigé sur TP1
-    target_rr_tp1: float = 1.4
-    target_rr_tp2: float = 2.6
+    # Avec 60 % de la position sortie à TP1, un TP1 à 1.0R ne survit pas :
+    # au taux de réussite réellement mesuré, il couvre à peine le spread et le
+    # temps passé devant l'écran. On exige donc nettement mieux.
+    min_rr_tp1: float = 1.25         # R:R minimal exigé sur TP1
+    target_rr_tp1: float = 1.6
+    target_rr_tp2: float = 2.8
+    # Espérance minimale sous laquelle le trade n'est pas émis. Un plan
+    # géométriquement valide mais d'espérance nulle n'est pas un trade,
+    # c'est une occasion de payer le spread.
+    min_expectancy_r: float = 0.15
     tp1_share: float = 0.6           # part de la position sortie a TP1
     max_stop_atr: float = 2.0        # stop plafonne a N x ATR(M5)
     min_stop_atr: float = 0.55

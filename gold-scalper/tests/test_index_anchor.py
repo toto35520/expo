@@ -175,6 +175,9 @@ class TestCalibrateOnIndex(unittest.TestCase):
         bundle.series = {"M1": Series("M1", candles)}
         bundle.price_source = "BYBIT"
         bundle.instrument = Instrument(GOLD_INDEX_SYMBOL, "linear")
+        # Bougies déjà au niveau de l'index : base du contrat nulle.
+        bundle.index_price = candles[-1].close
+        bundle.index_alignment = 0.0
         convert, chain, residual = engine._conversion(bundle, calibration)
         produced = convert(bundle.series["M1"]).last.close
         self.assertAlmostEqual(produced, INDEX + 0.205, places=3)
@@ -190,6 +193,8 @@ class TestCalibrateOnIndex(unittest.TestCase):
         bundle.series = {"M1": Series("M1", candles)}
         bundle.price_source = "BYBIT"
         bundle.instrument = Instrument(GOLD_INDEX_SYMBOL, "linear")
+        bundle.index_price = 4500.0
+        bundle.index_alignment = 0.0
         convert, _, residual = engine._conversion(bundle, calibration)
         self.assertAlmostEqual(convert(bundle.series["M1"]).last.close, 4500.205, places=3)
         self.assertLess(residual, 0.30)
@@ -203,6 +208,76 @@ class TestCalibrateOnIndex(unittest.TestCase):
             self.assertIn("Bybit", probe.problem)
         else:
             self.assertEqual(probe.reference_kind, "spot")
+
+
+class TestIndexAlignment(unittest.TestCase):
+    """Le piège qui rendait le calage inopérant en conditions réelles.
+
+    L'ancre est mesurée contre l'INDEX du perpétuel, mais les bougies portent
+    le dernier prix TRAITÉ. Les deux diffèrent de la base du contrat, qui vaut
+    couramment plusieurs dollars sur l'or. Appliquer le markup sans réaligner
+    revient à ajouter un décalage mesuré sur A à des prix venus de B — et
+    l'utilisateur a beau réajuster son ancre, l'écart ne se referme jamais.
+    """
+
+    LAST = 4434.00        # dernier prix traité du perpétuel
+    CONTRACT_BASIS = 3.0  # index - dernier prix
+
+    def _bundle(self, aligned: bool) -> engine.DataBundle:
+        candles = [Candle(i * 60_000, self.LAST, self.LAST + 0.4,
+                          self.LAST - 0.4, self.LAST, 10) for i in range(50)]
+        bundle = engine.DataBundle()
+        bundle.series = {"M1": Series("M1", candles)}
+        bundle.price_source = "BYBIT"
+        bundle.instrument = Instrument(GOLD_INDEX_SYMBOL, "linear")
+        if aligned:
+            bundle.index_price = INDEX
+            bundle.index_alignment = self.CONTRACT_BASIS
+        return bundle
+
+    def _calibration(self) -> cal.Calibration:
+        calibration = cal.fit([cal.Anchor(now_ms(), INDEX, BID, ASK, spot=INDEX)])
+        calibration.reference = "index"
+        return calibration
+
+    def test_aligned_series_lands_on_the_broker_price(self):
+        convert, chain, residual = engine._conversion(self._bundle(True), self._calibration())
+        produced = convert(self._bundle(True).series["M1"]).last.close
+        self.assertAlmostEqual(produced, (BID + ASK) / 2, places=2)
+        self.assertIn("base du contrat", chain)
+        self.assertLess(residual, 0.30)
+
+    def test_unaligned_series_is_off_by_the_contract_basis(self):
+        """Sans réalignement, l'erreur vaut exactement la base du contrat."""
+        convert, _, _ = engine._conversion(self._bundle(False), self._calibration())
+        produced = convert(self._bundle(False).series["M1"]).last.close
+        self.assertAlmostEqual(produced - (BID + ASK) / 2, -self.CONTRACT_BASIS, places=2)
+
+    def test_missing_index_inflates_the_declared_residual(self):
+        """Ne pas pouvoir corriger la base doit se voir dans le chiffre annoncé,
+        pas être passé sous silence."""
+        _, chain, residual = engine._conversion(self._bundle(False), self._calibration())
+        self.assertGreater(residual, 1.5)
+        self.assertIn("index courant indisponible", chain)
+
+    def test_alignment_shifts_without_deforming(self):
+        """Un décalage constant ne doit rien changer à la structure technique :
+        on corrige un niveau, pas une forme."""
+        from goldscalp.core.indicators import compute_indicators
+
+        base = self._bundle(False).series["M1"]
+        moved = base.apply_calibration(self.CONTRACT_BASIS, 1.0)
+        self.assertAlmostEqual(
+            compute_indicators(base).atr_value,
+            compute_indicators(moved).atr_value,
+            places=6,
+        )
+
+    def test_absurd_alignment_is_refused_by_the_bound(self):
+        from goldscalp.engine import MAX_INDEX_ALIGNMENT
+
+        self.assertLess(self.CONTRACT_BASIS, MAX_INDEX_ALIGNMENT)
+        self.assertGreater(MAX_INDEX_ALIGNMENT, 10.0)
 
 
 if __name__ == "__main__":
