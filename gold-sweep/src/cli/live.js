@@ -19,7 +19,8 @@
  * Aucun ordre n'est place sans --execute. Le mode par defaut est l'alerte.
  */
 
-import { writeFileSync } from 'node:fs';
+import { mkdirSync, writeFileSync } from 'node:fs';
+import { dirname } from 'node:path';
 import { buildConfig } from '../core/config.js';
 import { loadCalendar, loadRefSeries } from '../core/load.js';
 import { RefBundle } from '../core/refdata.js';
@@ -192,6 +193,7 @@ async function main() {
             `${new Date(b.time).toISOString()},${b.open},${b.high},${b.low},${b.close},${b.volume}`
           );
         }
+        mkdirSync(dirname(String(args.flags.out)), { recursive: true });
         writeFileSync(String(args.flags.out), lines.join('\n') + '\n');
         console.log(`  CSV ecrit : ${args.flags.out}`);
         console.log('  Ce fichier est directement exploitable par gs-backtest (--csv, --dxy, --us10y).');

@@ -4,7 +4,9 @@
   "private": true,
   "type": "module",
   "description": "XAUUSD NY Open Liquidity Sweep — moteur de strategie partage backtest + live cTrader Open API",
-  "engines": { "node": ">=18" },
+  "engines": {
+    "node": ">=18"
+  },
   "bin": {
     "gs-backtest": "./src/cli/backtest.js",
     "gs-optimize": "./src/cli/optimize.js",
@@ -14,7 +16,10 @@
     "backtest": "node src/cli/backtest.js",
     "optimize": "node src/cli/optimize.js",
     "live": "node src/cli/live.js",
-    "test": "node --test test/*.test.js"
+    "test": "node --test test/*.test.js",
+    "build:web": "node web/build.mjs",
+    "zip": "node web/build.mjs && node web/zip.mjs",
+    "zip:app": "node web/build.mjs && node web/zip-app.mjs"
   },
   "dependencies": {}
 }

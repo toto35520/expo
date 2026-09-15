@@ -13,7 +13,8 @@
  * historique fini revient a choisir le bruit le plus flatteur.
  */
 
-import { writeFileSync } from 'node:fs';
+import { mkdirSync, writeFileSync } from 'node:fs';
+import { dirname } from 'node:path';
 import { clone, deepMerge } from '../core/config.js';
 import { EvalPool, expandGrid, sampleGrid, sensitivitySweep, walkForward } from '../backtest/optimize.js';
 import { buildOverride, parseArgs } from './args.js';
@@ -249,6 +250,7 @@ async function main() {
   }
 
   if (args.flags.json) {
+    mkdirSync(dirname(String(args.flags.json)), { recursive: true });
     writeFileSync(String(args.flags.json), JSON.stringify(out, null, 2));
     console.log(`  JSON ecrit : ${args.flags.json}`);
   }

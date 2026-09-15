@@ -9,6 +9,8 @@
  *   node src/cli/backtest.js --csv d.csv --from 2025-01-01 --trades 20
  */
 
+import { mkdirSync } from 'node:fs';
+import { dirname } from 'node:path';
 import { buildConfig } from '../core/config.js';
 import { describeSeries } from '../core/csv.js';
 import { atr } from '../core/indicators.js';
@@ -115,11 +117,17 @@ async function main() {
     const lim = args.flags.trades === true ? 0 : Number(args.flags.trades);
     printTrades(res.trades, lim);
   }
+  // `out/` n'est pas livre dans l'archive : on cree le dossier au besoin
+  // plutot que d'echouer sur un ENOENT.
+  const ensureDir = (f) => mkdirSync(dirname(String(f)), { recursive: true });
+
   if (args.flags.html) {
+    ensureDir(args.flags.html);
     const p = writeHtml(String(args.flags.html), { res, m, cfg });
     console.log(`  rapport HTML ecrit : ${p}`);
   }
   if (args.flags.json) {
+    ensureDir(args.flags.json);
     writeJson(String(args.flags.json), {
       generatedAt: new Date().toISOString(),
       csv: String(csvPath),
