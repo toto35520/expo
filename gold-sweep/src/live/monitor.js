@@ -12,7 +12,8 @@
  */
 
 import { EventEmitter } from 'node:events';
-import { buildConfig, resolveDistance, roundPrice } from '../core/config.js';
+import { buildChecklist, sizePosition } from '../core/checklist.js';
+import { resolveDistance, roundPrice } from '../core/config.js';
 import { SweepStrategy, Phase } from '../core/strategy.js';
 import { formatHm, utcMinuteOfDay } from '../core/time.js';
 import { MarketFeed } from './feed.js';
@@ -143,97 +144,17 @@ export class LiveMonitor extends EventEmitter {
     }
   }
 
-  /** Dimensionnement de la position pour un setup. */
+  /**
+   * Dimensionnement de la position. Delegue au module partage : la carte
+   * affichee ici est ainsi identique a celle du tableau de bord web.
+   */
   sizeFor(setup) {
-    const cfg = this.cfg;
-    const inst = cfg.instrument;
-    const slDist = Math.abs(setup.sl - setup.entry);
-    if (!(slDist > 0)) return { lots: 0, reason: 'distance de stop nulle' };
-
-    const equity = this.equity ?? cfg.risk.initialEquity;
-    let riskCash;
-    let lots;
-    if (cfg.risk.model === 'fixedLots') {
-      lots = cfg.risk.lots;
-      riskCash = slDist * lots * inst.contractSize;
-    } else {
-      riskCash =
-        cfg.risk.model === 'fixedCash' ? cfg.risk.cashPerTrade : equity * (cfg.risk.pctPerTrade / 100);
-      lots = riskCash / (slDist * inst.contractSize);
-    }
-    const stepped = Math.floor(lots / inst.lotStep + 1e-9) * inst.lotStep;
-    const snapped = Math.min(inst.maxLots, Math.round(stepped / inst.lotStep) * inst.lotStep);
-    const finalLots = snapped < inst.minLots ? 0 : Number(snapped.toFixed(4));
-
-    return {
-      lots: finalLots,
-      apiVolume: Math.round(finalLots * inst.apiVolumePerLot),
-      riskCash: slDist * finalLots * inst.contractSize,
-      riskPctOfEquity: equity ? (slDist * finalLots * inst.contractSize / equity) * 100 : NaN,
-      slDistUsd: slDist,
-      slDistPips: slDist / inst.pipSize,
-      rewardCash: Math.abs(setup.tp - setup.entry) * finalLots * inst.contractSize,
-      equity,
-      reason: finalLots ? null : `volume < minLots (${inst.minLots}) — capital ou risque insuffisant`,
-    };
+    return sizePosition(this.cfg, setup, this.equity ?? this.cfg.risk.initialEquity);
   }
 
-  /**
-   * Checklist de validation avant entree — les 5 cases a cocher.
-   * Chaque ligne est calculee depuis les donnees du setup, pas declarative.
-   */
+  /** Checklist de validation avant entree — module partage avec le web. */
   checklist(setup) {
-    const cfg = this.cfg;
-    const mod = utcMinuteOfDay(setup.signalTs);
-    const sbStart = cfg.resolved.silverBulletStart;
-    const sbEnd = cfg.resolved.silverBulletEnd;
-    const newsT = cfg.resolved.newsTime;
-    const thr = cfg.filters.premiumThreshold;
-    const isSell = setup.dir === 'sell';
-
-    const penAtr = setup.atrAtSignal > 0 ? setup.sweepPenetrationUsd / setup.atrAtSignal : NaN;
-    const fib = Number.isFinite(setup.fibLeg) ? setup.fibLeg : setup.fibLondon;
-    const premiumOk = Number.isFinite(fib) ? (isSell ? fib >= thr : fib <= 1 - thr) : null;
-
-    return [
-      {
-        label: 'Haut/Bas de Londres balaye par une meche agressive',
-        ok: Number.isFinite(penAtr) && penAtr >= cfg.sweep.minPenetration,
-        detail: `penetration ${setup.sweepPenetrationUsd.toFixed(2)} $ = ${penAtr.toFixed(2)} ATR ` +
-          `(seuil ${cfg.sweep.minPenetration} ATR, plafond ${cfg.sweep.maxPenetration})`,
-      },
-      {
-        label: 'Cassure de structure (MSS) avec bougie de deplacement',
-        ok: setup.displacementBody > 0,
-        detail: `corps de jambe ${setup.displacementBody.toFixed(2)} $ = ` +
-          `${(setup.displacementBody / setup.atrAtSignal).toFixed(2)} ATR sur ${setup.displacementLen} barre(s), ` +
-          `structure cassee a ${setup.structureLevel.toFixed(2)} (${setup.structureSrc})`,
-      },
-      {
-        label: `Entree en zone ${isSell ? 'Premium' : 'Discount'} (> ${(thr * 100).toFixed(0)}% de la structure)`,
-        ok: premiumOk,
-        detail: Number.isFinite(fib)
-          ? `position dans la jambe de retournement : ${(fib * 100).toFixed(0)}%` +
-            (Number.isFinite(setup.fibLondon) ? ` | dans le range de Londres : ${(setup.fibLondon * 100).toFixed(0)}%` : '')
-          : 'non evalue (filters.premiumDiscount desactive)',
-      },
-      {
-        label: 'DXY confirme (correlation inverse respectee)',
-        ok: setup.dxy ? (setup.dxy.available ? setup.dxy.swept : null) : null,
-        detail: setup.dxy
-          ? setup.dxy.available
-            ? `DXY a balaye son ${setup.dxy.mirrorSide === 'low' ? 'Bas' : 'Haut'} de Londres de ` +
-              `${setup.dxy.penetration.toFixed(3)}${setup.dxy.reversal ? ' avec rejet' : ''}`
-            : 'serie DXY absente ou non couverte a cet horodatage'
-          : 'non evalue (refs.dxy.mode = off)',
-      },
-      {
-        label: `Horaire dans la fenetre ${formatHm(newsT)}-${formatHm(sbEnd)} GMT`,
-        ok: mod >= newsT && mod <= sbEnd,
-        detail: `signal a ${formatHm(mod)} GMT | Silver Bullet ${formatHm(sbStart)}-${formatHm(sbEnd)}` +
-          (mod >= sbStart && mod <= sbEnd ? ' (dans la fenetre)' : ' (hors fenetre Silver Bullet)'),
-      },
-    ];
+    return buildChecklist(this.cfg, setup);
   }
 
   /** Transmet l'ordre limite avec SL, TP et expiration attaches. */
@@ -251,7 +172,11 @@ export class LiveMonitor extends EventEmitter {
       tradeSide: setup.dir === 'sell' ? TRADE_SIDE.SELL : TRADE_SIDE.BUY,
       volume: sizing.apiVolume,
       stopLoss: roundPrice(cfg, setup.sl),
-      takeProfit: roundPrice(cfg, setup.tp),
+      // cTrader n'accepte qu'un seul take profit par ordre : on attache le
+      // PREMIER cran. Les crans suivants restent a gerer (manuellement ou
+      // par modification de la position apres remplissage) — l'echelle
+      // complete est affichee dans la carte de decision.
+      takeProfit: roundPrice(cfg, setup.targets?.[0]?.price ?? setup.tp),
       label: 'gold-sweep',
       comment: `NYsweep ${setup.side} rr=${setup.rr.toFixed(2)}`,
       clientOrderId: `gs-${setup.date}-${setup.dir}-${setup.signalIdx}`,

@@ -120,7 +120,10 @@ wireDrop($('drop'), $('file'), async (file) => {
         ? ` &middot; <b>${r.describe.skipped.skippedBadRows} lignes incoherentes rejetees</b>`
         : '');
     $('run').disabled = false;
-    status('Pret. Lancez le backtest.');
+    status('Pret — plan de trade calcule. Lancez le backtest pour les statistiques.');
+    // Le plan s'affiche immediatement : c'est ce que l'utilisateur vient
+    // chercher, pas des statistiques.
+    await runPlan();
   } catch (e) {
     loaded = false;
     $('drop').classList.remove('loaded');
@@ -207,7 +210,15 @@ $('reset').addEventListener('click', () => {
   $('json-err').textContent = '';
   $('preset').value = 'stable';
   status(loaded ? 'Parametres reinitialises.' : 'Chargez un CSV pour commencer.');
+  if (loaded) runPlan();
 });
+
+// Un changement de configuration change le plan : on le recalcule.
+for (const node of document.querySelectorAll('[data-path], #preset')) {
+  node.addEventListener('change', () => {
+    if (loaded) runPlan();
+  });
+}
 
 $('run').addEventListener('click', async () => {
   if (!loaded) return;
@@ -232,6 +243,159 @@ $('run').addEventListener('click', async () => {
     $('run').disabled = false;
   }
 });
+
+// ────────────────────── plan de trade ────────────────────────
+const D = (v, d = 2) => (Number.isFinite(v) ? v.toFixed(d) : '—');
+
+/** Lance le calcul du plan et l'affiche. Appele des le chargement du CSV. */
+async function runPlan() {
+  if (!loaded) return;
+  try {
+    const r = await ask('plan', { override: { __preset: $('preset').value, ...buildOverride() }, count: 12 });
+    renderPlan(r);
+  } catch (e) {
+    $('plan').classList.remove('hidden');
+    $('plan-status').className = 'plan-status';
+    $('plan-status').innerHTML = `<h3>Plan indisponible</h3><p>${esc(e.message)}</p>`;
+    $('plan-card').innerHTML = '';
+  }
+}
+
+function renderPlan(r) {
+  $('plan').classList.remove('hidden');
+  const cfg = r.config;
+  const ex = r.lastDayExplain;
+  const day = r.lastDay;
+  const lastBar = new Date(r.lastBarTs).toISOString();
+
+  // ── Etat de la derniere journee de donnees ──
+  $('plan-status').className = `plan-status ${ex.statut}`;
+  $('plan-status').innerHTML =
+    `<div class="plan-when">Derniere journee des donnees &middot; ${esc(day ? day.date : '—')} ` +
+    `(derniere barre ${esc(lastBar.slice(11, 16))} GMT)</div>` +
+    `<h3>${esc(ex.titre)}</h3><p>${esc(ex.detail)}</p>` +
+    (ex.attente ? `<p class="attente">&rarr; ${esc(ex.attente)}</p>` : '');
+
+  // ── Carte de decision du dernier setup ──
+  const setups = r.setups || [];
+  if (!setups.length) {
+    $('plan-card').innerHTML =
+      `<div class="card"><p class="empty">Aucun setup sur la periode chargee. ` +
+      `L'entonnoir du backtest ci-dessous indique a quelle etape les conditions bloquent.</p></div>`;
+  } else {
+    const x = setups[0];
+    const isToday = day && x.date === day.date;
+    const sz = x.sizing;
+    const isSell = x.dir === 'sell';
+
+    const rows = [
+      `<tr class="row-entry"><td>Entree</td><td class="px">${D(x.entry)}</td>` +
+        `<td class="dim">ordre limite</td><td class="dim">—</td><td class="dim">—</td></tr>`,
+      `<tr class="row-sl"><td>Stop loss</td><td class="px">${D(x.sl)}</td>` +
+        `<td class="dim">${D(sz.slDistPips, 0)} pips</td><td>&minus;1 R</td>` +
+        `<td>&minus;${D(sz.riskCash)} $</td></tr>`,
+      ...sz.ladder.map(
+        (t) =>
+          `<tr class="row-tp"><td>${esc(t.name)}</td><td class="px">${D(t.price)}</td>` +
+          `<td class="dim">${esc(t.anchor === 'internalLiquidity' ? 'liquidite interne' : t.anchor === 'equilibrium' ? 'equilibre du range' : t.anchor === 'final' ? 'niveau oppose de Londres' : t.anchor)}</td>` +
+          `<td>${D(t.rr)} R</td>` +
+          `<td>ferme ${(t.closeFraction * 100).toFixed(0)} %${sz.lots ? ` &middot; +${D(t.cash)} $` : ''}</td></tr>`
+      ),
+    ].join('');
+
+    const ck = x.checklist;
+    const yes = ck.filter((c) => c.ok === true).length;
+    const no = ck.filter((c) => c.ok === false).length;
+    const unk = ck.filter((c) => c.ok === null).length;
+
+    const outcome = x.outcome
+      ? `<div class="warn-inline" style="border-left-color:${x.outcome.r >= 0 ? 'var(--pos)' : 'var(--neg)'};` +
+        `background:color-mix(in srgb,${x.outcome.r >= 0 ? 'var(--pos)' : 'var(--neg)'} 8%,var(--surface-1))">` +
+        `<b>Resultat historique de ce setup :</b> ${x.outcome.r >= 0 ? '+' : ''}${D(x.outcome.r, 2)} R ` +
+        `(sortie ${esc(x.outcome.exitReason)}${x.outcome.tpHits && x.outcome.tpHits.length ? `, crans atteints : ${esc(x.outcome.tpHits.join(' + '))}` : ''}). ` +
+        `Ce setup est passe, il est affiche a titre d'exemple.</div>`
+      : `<div class="warn-inline"><b>Ordre non rempli dans le backtest</b> — le prix n'est pas revenu ` +
+        `dans la zone d'entree avant expiration.</div>`;
+
+    $('plan-card').innerHTML =
+      `<div class="card-trade">
+        <div class="trade-head">
+          <span class="badge ${isSell ? 'sell' : 'buy'}">${isSell ? 'VENDRE' : 'ACHETER'}</span>
+          <span class="trade-sym">${esc(cfg.instrument.symbol)}</span>
+          <span class="trade-meta">${esc(x.date)} &middot; signal ${esc(new Date(x.signalTs).toISOString().slice(11, 16))} GMT<br>
+            ${isToday ? '<b>journee en cours</b>' : 'setup passe'} &middot; balayage du ${x.side === 'high' ? 'HAUT' : 'BAS'} de Londres</span>
+        </div>
+        <div class="trade-body">
+          <table class="ladder">
+            <thead><tr><th>Niveau</th><th>Prix</th><th>Ancre</th><th>R:R</th><th>Effet</th></tr></thead>
+            <tbody>${rows}</tbody>
+          </table>
+
+          <div class="trade-size">
+            <div><div class="ts-v">${sz.lots ? D(sz.lots) + ' lot' : '—'}</div><div class="ts-l">Volume${sz.apiVolume ? ` (API ${sz.apiVolume})` : ''}</div></div>
+            <div><div class="ts-v">${D(sz.riskCash)} $</div><div class="ts-l">Risque (${D(sz.riskPctOfEquity)} % du capital)</div></div>
+            <div><div class="ts-v">${D(sz.rewardCash)} $</div><div class="ts-l">Gain si tous les crans</div></div>
+            <div><div class="ts-v">${D(x.rr)} R</div><div class="ts-l">R:R de la cible finale</div></div>
+            <div><div class="ts-v">${esc(cfg.sessions.entryExpiry)}</div><div class="ts-l">Ordre valable jusqu'a (GMT)</div></div>
+          </div>
+
+          ${sz.reason ? `<div class="warn-inline"><b>Volume nul :</b> ${esc(sz.reason)}</div>` : ''}
+
+          <div class="ck">
+            <div class="plan-when">Checklist avant entree</div>
+            ${ck
+              .map(
+                (c) =>
+                  `<div class="ck-row"><span class="ck-mark ${c.ok === true ? 'y' : c.ok === false ? 'n' : 'q'}">` +
+                  `${c.ok === true ? '&check;' : c.ok === false ? '&times;' : '?'}</span>` +
+                  `<span class="ck-txt"><strong>${esc(c.label)}</strong><span>${esc(c.detail)}</span></span></div>`
+              )
+              .join('')}
+            <div class="ck-score">${yes} validee${yes > 1 ? 's' : ''} sur ${ck.length}` +
+              `${no ? `, <b>${no} NON validee${no > 1 ? 's' : ''}</b>` : ''}` +
+              `${unk ? `, ${unk} non evaluable${unk > 1 ? 's' : ''} (filtre desactive ou serie absente)` : ''}</div>
+          </div>
+
+          ${outcome}
+        </div>
+      </div>`;
+  }
+
+  // ── Setups precedents ──
+  $('plan-recent').innerHTML = table(
+    ['Date', 'Sens', 'Entree', 'SL', 'TP1', 'TP2', 'TP3', 'R:R final', 'Resultat'],
+    setups.map((x) => {
+      const t = x.targets || [];
+      const px = (k) => (t[k] ? D(t[k].price) : '—');
+      return [
+        x.date,
+        x.dir === 'sell' ? 'Vente' : 'Achat',
+        D(x.entry),
+        D(x.sl),
+        px(0),
+        px(1),
+        px(2),
+        D(x.rr),
+        x.outcome
+          ? `<span class="${x.outcome.r >= 0 ? 'pos' : 'neg'}">${D(x.outcome.r, 2)} R</span>` +
+            (x.outcome.tpHits && x.outcome.tpHits.length ? ` <span class="dim">${esc(x.outcome.tpHits.join('+'))}</span>` : '')
+          : '<span class="dim">non rempli</span>',
+      ];
+    })
+  );
+
+  // ── Journees recentes ──
+  $('plan-days').innerHTML = table(
+    ['Date', 'Etat', 'Londres', 'Balayage', 'Consigne / blocage'],
+    (r.recentDays || []).map((d) => [
+      d.date,
+      esc(d.explain.titre),
+      d.londonLow != null ? `${D(d.londonLow)} – ${D(d.londonHigh)}` : '<span class="dim">—</span>',
+      d.sweep ? `${d.sweep.side === 'high' ? 'haut' : 'bas'} @ ${D(d.sweep.level)}` : '<span class="dim">aucun</span>',
+      esc(d.explain.attente || d.explain.detail),
+    ])
+  );
+}
 
 // ──────────────────────────── rendu ──────────────────────────
 function kpi(label, value, sub = '', tone = '') {

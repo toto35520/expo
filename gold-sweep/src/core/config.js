@@ -315,6 +315,46 @@ export const DEFAULTS = {
     minRR: 2.0,
     /** Rejeter le setup si R:R > maxRR (niveau de Londres aberrant). */
     maxRR: 25,
+
+    /**
+     * ECHELLE DE CIBLES TP1 / TP2 / TP3.
+     *
+     * `enabled: false` -> une seule cible fermant 100% de la position
+     * (comportement historique, chiffres du README).
+     *
+     * Ancres disponibles :
+     *   'internalLiquidity' : premier "plus bas" a court terme rencontre en
+     *                         chemin — l'or se deplace de poche de liquidite
+     *                         en poche de liquidite
+     *   'equilibrium'       : milieu du range de Londres (50% de Fibonacci)
+     *   'final'             : la cible principale (target.anchor ci-dessus)
+     *   'rr'                : multiple de R fixe, via `rr`
+     *
+     * `closePct` : fraction de la position INITIALE fermee a ce niveau. Le
+     * dernier cran ferme toujours le reste, quelle que soit sa valeur.
+     * `fallbackRR` : multiple de R utilise si l'ancre est indisponible.
+     * Un cran non monotone, trop proche du precedent (`minSpacingR`) ou
+     * au-dela de la cible finale est ECARTE plutot que corrige.
+     */
+    levels: {
+      /**
+       * Active par defaut : MESURE sur l'historique complet, l'echelle
+       * ancree sur la liquidite ameliore TOUTES les metriques face a une
+       * cible unique — reussite 45,5 -> 50,0 %, total +6,9 -> +7,4 R,
+       * profit factor 1,57 -> 1,82, drawdown max 4,1 -> 3,0 R.
+       *
+       * A ne pas confondre avec le breakeven, qui detruit 18 R : prendre des
+       * profits AUX NIVEAUX OU LE PRIX REAGIT fonctionne, deplacer le stop
+       * sur un multiple de R arbitraire non. Les memes crans poses a 1R/2R
+       * fixes ne rendent que +6,0 R.
+       */
+      enabled: true,
+      /** Espacement minimal entre deux crans, en R. Un cran trop proche est ecarte. */
+      minSpacingR: 0.3,
+      tp1: { anchor: 'internalLiquidity', closePct: 0.34, fallbackRR: 1.0, rr: 1.0 },
+      tp2: { anchor: 'equilibrium', closePct: 0.33, fallbackRR: 2.0, rr: 2.0 },
+      tp3: { anchor: 'final', closePct: 1.0, fallbackRR: null, rr: 4.0 },
+    },
   },
 
   manage: {
@@ -638,6 +678,19 @@ export function validateConfig(cfg) {
     errs.push(`target.anchor invalide : ${cfg.target.anchor}`);
   if (cfg.target.minRR >= cfg.target.maxRR)
     errs.push('target.minRR doit etre < target.maxRR');
+  for (const k of ['tp1', 'tp2', 'tp3']) {
+    const L = cfg.target.levels[k];
+    if (!L) {
+      errs.push(`target.levels.${k} manquant`);
+      continue;
+    }
+    if (!['internalLiquidity', 'equilibrium', 'final', 'rr'].includes(L.anchor))
+      errs.push(`target.levels.${k}.anchor invalide : ${L.anchor}`);
+    if (!(L.closePct > 0 && L.closePct <= 1))
+      errs.push(`target.levels.${k}.closePct doit etre dans ]0,1]`);
+  }
+  if (cfg.target.levels.minSpacingR < 0)
+    errs.push('target.levels.minSpacingR doit etre >= 0');
   if (!['fixedFractional', 'fixedLots', 'fixedCash'].includes(cfg.risk.model))
     errs.push(`risk.model invalide : ${cfg.risk.model}`);
   if (cfg.risk.initialEquity <= 0) errs.push('risk.initialEquity doit etre > 0');

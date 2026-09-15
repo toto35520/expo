@@ -19,6 +19,7 @@ import { runBacktest } from './engine/backtest/engine.js';
 import { computeMetrics } from './engine/backtest/metrics.js';
 import { renderHtml } from './engine/backtest/render.js';
 import { PRESETS } from './engine/core/presets.js';
+import { buildChecklist, explainDay, sizePosition } from './engine/core/checklist.js';
 
 /**
  * Resout `__preset` : le prereglage sert de BASE, les champs de l'interface
@@ -127,6 +128,46 @@ onmessage = async (ev) => {
           orderStats: res.orderStats,
           trades: res.trades,
           config: cfg,
+        },
+      });
+      return;
+    }
+
+    // ── Plan de trade : la carte de decision ─────────────────────────
+    if (type === 'plan') {
+      if (!series) throw new Error('Chargez d abord un CSV de barres M5.');
+      const cfg = buildConfig(resolveOverride(payload.override));
+      const res = runBacktest(series, cfg, atrProvider, { collectTrades: true, collectEquity: false }, refs, calendar);
+      const equity = cfg.risk.initialEquity;
+
+      // Resultat reel de chaque setup, retrouve par la date + le sens.
+      const byKey = new Map();
+      for (const t of res.trades) byKey.set(`${t.date}|${t.dir}`, t);
+
+      const enrich = (x) => ({
+        ...x,
+        sizing: sizePosition(cfg, x, equity),
+        checklist: buildChecklist(cfg, x),
+        outcome: byKey.get(`${x.date}|${x.dir}`) || null,
+      });
+
+      const N = payload.count || 12;
+      postMessage({
+        id,
+        ok: true,
+        result: {
+          config: cfg,
+          lastDay: res.lastDay,
+          lastDayExplain: explainDay(cfg, res.lastDay),
+          lastBarTs: series.time[series.length - 1],
+          // Le plus recent d'abord.
+          setups: res.setups.slice(-N).reverse().map(enrich),
+          totalSetups: res.setups.length,
+          // Les journees recentes, pour voir ce que les regles ont fait.
+          recentDays: res.dayLog.slice(-20).reverse().map((d) => ({
+            ...d,
+            explain: explainDay(cfg, d),
+          })),
         },
       });
       return;

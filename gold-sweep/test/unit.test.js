@@ -19,6 +19,7 @@ import { isUkDst, isUsDst, parseHm, formatHm, utcMinuteOfDay } from '../src/core
 import { firstTouch, runBacktest } from '../src/backtest/engine.js';
 import { computeMetrics } from '../src/backtest/metrics.js';
 import { PRESETS } from '../src/core/presets.js';
+import { buildChecklist, explainDay, sizePosition } from '../src/core/checklist.js';
 import { decode, decodeUnknown, encode } from '../src/live/protobuf.js';
 import * as M from '../src/live/ctrader/messages.js';
 import { CTraderClient } from '../src/live/ctrader/client.js';
@@ -302,11 +303,12 @@ test('prereglages : chiffres documentes reproduits', () => {
   const s = series();
   const prov = provider(s);
   const attendu = {
-    stable: { trades: 22, totalR: 6.9 },
-    literal: { trades: 19, totalR: 4.3 },
-    frequent: { trades: 50, totalR: 16.6 },
-    ote: { trades: 40, totalR: 11.2 },
-    selective: { trades: 15, totalR: 7.4 },
+    stable: { trades: 22, totalR: 7.4 },
+    literal: { trades: 19, totalR: 6.2 },
+    frequent: { trades: 50, totalR: 14.3 },
+    ote: { trades: 40, totalR: 10.8 },
+    selective: { trades: 15, totalR: 8.5 },
+    cibleUnique: { trades: 22, totalR: 6.9 },
   };
   for (const [name, exp] of Object.entries(attendu)) {
     const cfg = buildConfig(PRESETS[name]);
@@ -314,6 +316,76 @@ test('prereglages : chiffres documentes reproduits', () => {
     assert.equal(m.trades, exp.trades, `${name} : nombre de trades`);
     assert.ok(Math.abs(m.totalR - exp.totalR) < 0.05, `${name} : totalR ${m.totalR.toFixed(2)} attendu ~${exp.totalR}`);
   }
+});
+
+test('echelle de cibles : invariants garantis au moteur', () => {
+  const s = series();
+  const prov = provider(s);
+  const cfg = buildConfig();
+  const res = runBacktest(s, cfg, prov, { collectEquity: false });
+  assert.ok(res.setups.length > 0);
+  for (const x of res.setups) {
+    const L = x.targets;
+    assert.ok(L.length >= 1 && L.length <= 3, 'de 1 a 3 crans');
+    assert.equal(L[L.length - 1].closePct, 1, 'le dernier cran ferme le reste');
+    const isSell = x.dir === 'sell';
+    let prev = x.entry;
+    for (const t of L) {
+      // Progression monotone au-dela de l'entree, sans depasser la cible finale.
+      assert.ok(isSell ? t.price < prev : t.price > prev, `${x.date} ${t.name} monotone`);
+      assert.ok(isSell ? t.price >= x.tp : t.price <= x.tp, `${x.date} ${t.name} en deca du final`);
+      // Espacement minimal respecte.
+      assert.ok(
+        Math.abs(t.price - prev) / x.slDistUsd >= cfg.target.levels.minSpacingR - 1e-9,
+        `${x.date} ${t.name} espacement`
+      );
+      prev = t.price;
+    }
+  }
+});
+
+test('echelle de cibles : les fractions somment a 100 %', () => {
+  const s = series();
+  const cfg = buildConfig({ risk: { initialEquity: 10_000, pctPerTrade: 1 } });
+  const res = runBacktest(s, cfg, provider(s), { collectEquity: false });
+  for (const x of res.setups) {
+    const sz = sizePosition(cfg, x, 10_000);
+    if (!sz.lots) continue;
+    const total = sz.ladder.reduce((a, t) => a + t.closeFraction, 0);
+    assert.ok(Math.abs(total - 1) < 1e-9, `${x.date} : fractions = ${total}`);
+    // Le gain echelonne doit etre INFERIEUR a un encaissement integral au
+    // dernier cran — sinon la fraction du dernier cran est surevaluee.
+    const tout = Math.abs(x.targets[x.targets.length - 1].price - x.entry) * sz.lots * cfg.instrument.contractSize;
+    if (sz.ladder.length > 1) assert.ok(sz.rewardCash < tout, `${x.date} : gain surestime`);
+  }
+});
+
+test('echelle de cibles : desactivee, le resultat est inchange', () => {
+  const s = series();
+  const prov = provider(s);
+  const a = runBacktest(s, buildConfig({ target: { levels: { enabled: false } } }), prov, { collectEquity: false });
+  const b = runBacktest(s, buildConfig(PRESETS.cibleUnique), prov, { collectEquity: false });
+  assert.equal(a.trades.length, b.trades.length);
+  assert.ok(Math.abs(a.finalEquity - b.finalEquity) < 1e-9);
+  for (const x of a.setups) assert.equal(x.targets.length, 1, 'un seul cran');
+});
+
+test('explainDay : chaque phase produit une consigne lisible', () => {
+  const cfg = buildConfig();
+  const base = { date: '2026-09-07', dow: 1, londonHigh: 4423.84, londonLow: 4381.08, londonRange: 42.76, londonBars: 60, setups: 0, lastRejection: null, rejections: [] };
+  for (const phase of ['IDLE', 'ARMED', 'DONE', 'SKIPPED']) {
+    const e = explainDay(cfg, { ...base, phase, lastRejection: phase === 'SKIPPED' ? { reason: 'dayWeekday' } : null });
+    assert.ok(e.titre && e.titre.length > 3, `${phase} : titre`);
+    assert.ok(e.detail && e.detail.length > 3, `${phase} : detail`);
+    assert.ok(typeof e.statut === 'string');
+  }
+  const swept = explainDay(cfg, {
+    ...base, phase: 'SWEPT',
+    sweep: { side: 'high', dir: 'sell', level: 4423.84, extreme: 4431, penetration: 7.2, at: Date.parse('2026-09-07T13:20:00Z') },
+  });
+  assert.match(swept.titre, /HAUT/);
+  assert.ok(swept.attente.includes('MSS'));
+  assert.equal(explainDay(cfg, null).statut, 'aucune');
 });
 
 test('les couts degradent bien le resultat', () => {

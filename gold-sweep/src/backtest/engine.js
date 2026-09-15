@@ -115,6 +115,8 @@ export function runBacktest(s, cfg, atrProvider, opts = {}, refs = null, calenda
   let pos = null;
 
   const trades = [];
+  /** Tous les setups emis, retenus meme si l'ordre n'a pas ete rempli. */
+  const setups = [];
   const equityCurve = [];
   const orderStats = {
     placed: 0,
@@ -192,19 +194,18 @@ export function runBacktest(s, cfg, atrProvider, opts = {}, refs = null, calenda
       realized: 0,
       mae: 0,
       mfe: 0,
-      partialsTaken: 0,
       movedToBe: false,
-      partialPending:
-        cfg.manage.partial.enabled &&
-        (cfg.manage.partial.anchor !== 'internalLiquidity' || !!o.internalLiquidity),
-      partialLevel:
-        cfg.manage.partial.anchor === 'internalLiquidity'
-          ? o.internalLiquidity
-            ? o.internalLiquidity.level
-            : NaN
-          : o.dir === 'sell'
-            ? o.entry - cfg.manage.partial.atRR * slDist
-            : o.entry + cfg.manage.partial.atRR * slDist,
+      /**
+       * Echelle de cibles fournie par la strategie. Elle garantit au moins un
+       * cran et que le dernier ferme le reste de la position — le moteur s'y
+       * fie plutot que de recalculer des niveaux.
+       */
+      targets: o.targets && o.targets.length
+        ? o.targets
+        : [{ name: 'tp', price: o.tp, closePct: 1, rr: Math.abs(o.tp - o.entry) / slDist, anchor: 'final' }],
+      targetIdx: 0,
+      tpHits: [],
+      targetsSkipped: [],
       bePending: cfg.manage.breakEvenAtRR !== null,
       beTrigger:
         cfg.manage.breakEvenAtRR !== null
@@ -216,15 +217,16 @@ export function runBacktest(s, cfg, atrProvider, opts = {}, refs = null, calenda
     };
 
     // Le remplissage et la sortie peuvent tomber dans la meme barre M5.
+    // On ne teste que le PREMIER cran : les suivants seront evalues des la
+    // barre d'apres par la gestion de position normale.
     if (ex.allowSameBarExit) {
       const isS = pos.dir === 'sell';
-      const slMid = isS ? pos.sl - hs : pos.sl + hs;
-      const tpMid = isS ? pos.tp + hs : pos.tp - hs;
+      const t0 = pos.targets[0];
       const hit = firstTouch(
         bar,
         [
-          { key: 'sl', price: slMid, dir: isS ? 1 : -1 },
-          { key: 'tp', price: tpMid, dir: isS ? -1 : 1 },
+          { key: 'sl', price: isS ? pos.sl - hs : pos.sl + hs, dir: isS ? 1 : -1 },
+          { key: 'tp', price: isS ? t0.price + hs : t0.price - hs, dir: isS ? -1 : 1 },
         ],
         ex.intrabar,
         ['sl', 'tp']
@@ -233,7 +235,14 @@ export function runBacktest(s, cfg, atrProvider, opts = {}, refs = null, calenda
         const slip = cfg.costs.slippageUsdOnStop;
         closePosition(isS ? pos.sl + slip : pos.sl - slip, ts, i, 'sl');
       } else if (hit === 'tp') {
-        closePosition(pos.tp, ts, i, 'tp');
+        pos.targetIdx = 1;
+        pos.tpHits.push(t0.name);
+        const lots = pos.targets.length === 1 ? null : roundLots(cfg, pos.lotsOrig * t0.closePct);
+        if (lots === null || (lots > 0 && lots < pos.lots)) {
+          closePosition(t0.price, ts, i, t0.name, lots);
+        } else {
+          closePosition(t0.price, ts, i, t0.name);
+        }
       }
     }
   };
@@ -294,7 +303,9 @@ export function runBacktest(s, cfg, atrProvider, opts = {}, refs = null, calenda
           londonRange: pos.londonRange,
           sweepPenetrationUsd: pos.sweepPenetrationUsd,
           zoneKind: pos.zoneKind,
-          partialsTaken: pos.partialsTaken,
+          tpHits: pos.tpHits.slice(),
+          targetsSkipped: pos.targetsSkipped.slice(),
+          targets: pos.targets.map((t) => ({ name: t.name, price: t.price, rr: t.rr, anchor: t.anchor })),
           movedToBe: pos.movedToBe,
         });
       }
@@ -344,28 +355,33 @@ export function runBacktest(s, cfg, atrProvider, opts = {}, refs = null, calenda
     if (pos) {
       const isSell = pos.dir === 'sell';
       // Niveaux exprimes en MID pour comparaison aux OHLC de la serie.
-      // Short : on sort a l'ASK -> le SL se declenche 'hs' plus tot.
-      const slMid = isSell ? pos.sl - hs : pos.sl + hs;
-      const tpMid = isSell ? pos.tp + hs : pos.tp - hs;
-
-      const levels = [
-        { key: 'sl', price: slMid, dir: isSell ? 1 : -1 },
-        { key: 'tp', price: tpMid, dir: isSell ? -1 : 1 },
-      ];
-      if (pos.partialPending) {
-        const pMid = isSell ? pos.partialLevel + hs : pos.partialLevel - hs;
-        levels.push({ key: 'partial', price: pMid, dir: isSell ? -1 : 1 });
+      // Short : on sort a l'ASK -> le SL se declenche 'hs' plus tot, les
+      // cibles 'hs' plus tard. Les deux nous penalisent, c'est voulu.
+      const levels = [{ key: 'sl', price: isSell ? pos.sl - hs : pos.sl + hs, dir: isSell ? 1 : -1 }];
+      for (let k = pos.targetIdx; k < pos.targets.length; k++) {
+        const t = pos.targets[k];
+        levels.push({
+          key: `t${k}`,
+          price: isSell ? t.price + hs : t.price - hs,
+          dir: isSell ? -1 : 1,
+        });
       }
       if (pos.bePending) {
-        const bMid = isSell ? pos.beTrigger + hs : pos.beTrigger - hs;
-        levels.push({ key: 'be', price: bMid, dir: isSell ? -1 : 1 });
+        levels.push({
+          key: 'be',
+          price: isSell ? pos.beTrigger + hs : pos.beTrigger - hs,
+          dir: isSell ? -1 : 1,
+        });
       }
+      // Pire cas d'abord : le stop, puis le passage au point mort, puis les
+      // cibles de la plus proche a la plus lointaine.
+      const priority = ['sl', 'be', ...pos.targets.map((_, k) => `t${k}`)];
 
-      // Boucle : plusieurs evenements peuvent se produire dans la meme barre
-      // (partiel puis TP par exemple). On les traite dans l'ordre du chemin.
+      // Une meme barre peut franchir plusieurs crans (gap, bougie de news).
+      // On les traite dans l'ordre du chemin jusqu'a epuisement.
       let guard = 0;
-      while (pos && guard++ < 6) {
-        const hit = firstTouch(bar, levels, ex.intrabar, ['sl', 'be', 'partial', 'tp']);
+      while (pos && guard++ < 8) {
+        const hit = firstTouch(bar, levels, ex.intrabar, priority);
         if (!hit) break;
 
         if (hit === 'sl') {
@@ -374,19 +390,7 @@ export function runBacktest(s, cfg, atrProvider, opts = {}, refs = null, calenda
           closePosition(exit, ts, i, pos.movedToBe ? 'breakEven' : 'sl');
           break;
         }
-        if (hit === 'tp') {
-          closePosition(pos.tp, ts, i, 'tp');
-          break;
-        }
-        if (hit === 'partial') {
-          const lots = roundLots(cfg, pos.lotsOrig * cfg.manage.partial.closePct);
-          pos.partialPending = false;
-          pos.partialsTaken++;
-          const li = levels.findIndex((l) => l.key === 'partial');
-          if (li >= 0) levels.splice(li, 1);
-          if (lots > 0 && lots < pos.lots) closePosition(pos.partialLevel, ts, i, 'partial', lots);
-          continue;
-        }
+
         if (hit === 'be') {
           const off = resolveDistance(cfg, cfg.manage.breakEvenOffsetMode, cfg.manage.breakEvenOffset, {
             atr: pos.atrAtSignal,
@@ -403,7 +407,30 @@ export function runBacktest(s, cfg, atrProvider, opts = {}, refs = null, calenda
           if (si >= 0) levels[si].price = isSell ? pos.sl - hs : pos.sl + hs;
           continue;
         }
-        break;
+
+        // Cran de l'echelle de cibles.
+        const k = Number(hit.slice(1));
+        const t = pos.targets[k];
+        // On retire le cran des niveaux quoi qu'il arrive, sinon la boucle
+        // le retouche indefiniment.
+        const li = levels.findIndex((l) => l.key === hit);
+        if (li >= 0) levels.splice(li, 1);
+        pos.targetIdx = Math.max(pos.targetIdx, k + 1);
+
+        const isLast = pos.targetIdx >= pos.targets.length;
+        let lots = isLast ? pos.lots : roundLots(cfg, pos.lotsOrig * t.closePct);
+        // Un cran dont la fraction s'arrondit a zero (volume minimal du
+        // broker) est ignore : on ne ferme rien et on garde la position.
+        if (!isLast && (lots <= 0 || lots >= pos.lots)) {
+          if (lots >= pos.lots) lots = pos.lots;
+          else {
+            pos.targetsSkipped.push(t.name);
+            continue;
+          }
+        }
+        pos.tpHits.push(t.name);
+        closePosition(t.price, ts, i, t.name, lots === pos.lots ? null : lots);
+        if (!pos) break;
       }
     }
 
@@ -496,6 +523,7 @@ export function runBacktest(s, cfg, atrProvider, opts = {}, refs = null, calenda
 
     // ── 3. Nouveaux signaux (a la cloture de la barre i) ────────────────
     const emitted = strat.onBar(s, i);
+    for (const setup of emitted) setups.push(setup);
     for (const setup of emitted) {
       if (pos || order) break; // une seule position/ordre a la fois
       if (tradesToday >= cfg.filters.maxTradesPerDay) {
@@ -529,6 +557,11 @@ export function runBacktest(s, cfg, atrProvider, opts = {}, refs = null, calenda
 
   return {
     trades,
+    setups,
+    /** Journal jour par jour + etat de la derniere journee (plan du jour). */
+    dayLog: strat.dayLog,
+    lastDay: strat.summarizeDay(),
+    strategy: strat,
     equityCurve,
     funnel: strat.funnel,
     orderStats,

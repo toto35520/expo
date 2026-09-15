@@ -1,0 +1,14 @@
+
+  WALK-FORWARD ANCRE — 6 fenetres, 600 configs testees par fenetre
+
+    fenetre hors echantillon   IS:trad espR  |  OOS:trad %reus  totalR  espR
+    2023-07-01 -> 2023-12-31      24  0.97  |         3  33.3     0.9  0.29
+    2024-01-01 -> 2024-06-30      27  0.90  |         5  40.0     2.8  0.56
+    2024-07-01 -> 2024-12-31      21  0.92  |         5  40.0     3.2  0.64
+    2025-01-01 -> 2025-06-30      26  0.86  |         6  33.3     1.9  0.32
+    2025-07-01 -> 2025-12-31      32  0.76  |         8  25.0     0.5  0.06
+    2026-01-01 -> 2026-12-31      40  0.62  |         2  50.0     1.5  0.75
+    --------------------------------------------------------------------
+    CUMUL HORS ECHANTILLON :   10.8 R sur 29 trades   (esperance  0.372 R/trade)
+    C'est le seul chiffre qui approche une performance realiste.
+

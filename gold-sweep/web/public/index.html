@@ -97,6 +97,55 @@ button.ghost{background:transparent}
 .check{display:flex;align-items:center;gap:7px;font-size:.86rem;color:var(--text-secondary);font-weight:500}
 .check input{width:auto}
 
+/* ── plan de trade ───────────────────────────────────────── */
+.plan-status{background:var(--surface-1);border:1px solid var(--line);border-left:3px solid var(--text-muted);
+  border-radius:0 var(--radius) var(--radius) 0;padding:15px 18px}
+.plan-status.arme{border-left-color:var(--series-1)}
+.plan-status.balaye{border-left-color:var(--accent)}
+.plan-status.setup{border-left-color:var(--pos)}
+.plan-status.bloque,.plan-status.ecarte{border-left-color:var(--text-muted)}
+.plan-status h3{margin:0 0 4px;font-size:1rem}
+.plan-status p{margin:0;font-size:.88rem;color:var(--text-secondary)}
+.plan-status .attente{margin-top:8px;font-size:.88rem;color:var(--text-primary);font-weight:500}
+.plan-when{font-size:.76rem;color:var(--text-muted);text-transform:uppercase;letter-spacing:.05em;
+  font-weight:650;margin-bottom:6px}
+
+.card-trade{background:var(--surface-1);border:1px solid var(--line);border-radius:var(--radius);overflow:hidden}
+.trade-head{display:flex;align-items:baseline;gap:12px;flex-wrap:wrap;
+  padding:16px 18px;border-bottom:1px solid var(--line);background:var(--surface-2)}
+.badge{font-size:1.15rem;font-weight:700;letter-spacing:.02em;padding:4px 13px;border-radius:7px;color:#fff}
+.badge.sell{background:var(--neg)} .badge.buy{background:var(--pos)}
+.trade-sym{font-size:1.15rem;font-weight:650}
+.trade-meta{font-size:.82rem;color:var(--text-muted);margin-left:auto;text-align:right}
+.trade-body{padding:16px 18px}
+.ladder{width:100%;border-collapse:collapse;font-variant-numeric:tabular-nums}
+.ladder th{font-size:.7rem;text-transform:uppercase;letter-spacing:.05em;color:var(--text-muted);
+  text-align:right;padding:0 9px 7px;font-weight:650}
+.ladder th:first-child{text-align:left}
+.ladder td{padding:9px;border-top:1px solid var(--line);text-align:right;font-size:.92rem}
+.ladder td:first-child{text-align:left;font-weight:600}
+.ladder .px{font-size:1.06rem;font-weight:650;letter-spacing:-.01em}
+.ladder tr.row-sl td{color:var(--neg)}
+.ladder tr.row-entry td{color:var(--text-primary)}
+.ladder tr.row-tp .px{color:var(--pos)}
+.ladder .dim{color:var(--text-muted);font-size:.84rem}
+.trade-size{display:grid;grid-template-columns:repeat(auto-fit,minmax(128px,1fr));gap:10px;
+  margin-top:16px;padding-top:15px;border-top:1px solid var(--line)}
+.ts-v{font-size:1.1rem;font-weight:650;font-variant-numeric:tabular-nums}
+.ts-l{font-size:.73rem;color:var(--text-muted);margin-top:2px}
+.ck{margin-top:16px;padding-top:15px;border-top:1px solid var(--line)}
+.ck-row{display:flex;gap:10px;padding:6px 0;font-size:.86rem;align-items:flex-start}
+.ck-mark{flex:0 0 auto;width:20px;height:20px;border-radius:5px;display:grid;place-items:center;
+  font-size:.74rem;font-weight:700;color:#fff;margin-top:1px}
+.ck-mark.y{background:var(--pos)} .ck-mark.n{background:var(--neg)}
+.ck-mark.q{background:var(--surface-2);color:var(--text-muted);border:1px solid var(--line)}
+.ck-txt strong{display:block;font-weight:600;font-size:.88rem}
+.ck-txt span{color:var(--text-muted);font-size:.81rem}
+.ck-score{font-size:.82rem;color:var(--text-secondary);margin-top:10px;font-weight:500}
+.warn-inline{background:color-mix(in srgb,var(--neg) 8%,var(--surface-1));
+  border-left:3px solid var(--neg);border-radius:0 7px 7px 0;padding:10px 13px;margin-top:14px;
+  font-size:.84rem;color:var(--text-secondary)}
+
 /* ── indicateurs cles ────────────────────────────────────── */
 .kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(142px,1fr));gap:10px}
 .kpi{background:var(--surface-1);border:1px solid var(--line);border-radius:var(--radius);padding:13px 15px}
@@ -183,16 +232,33 @@ footer{margin-top:44px;padding-top:18px;border-top:1px solid var(--line);
     <p>Mesure sur 375 985 barres M5 (2021-05 &rarr; 2026-09), couts inclus, hypothese
     intra-barre pessimiste :</p>
     <ul>
-      <li>reglage par defaut : 22 trades, +6,9 R, profit factor 1,57 &mdash; mais
-          <b>t de Student 0,94</b>, alors qu'il faut |t| &gt; 2</li>
-      <li>grille de 5 000 configurations : le <b>temoin aleatoire fait mieux</b> que
-          le top 60 hors echantillon (32 % contre 27 % de configurations rentables)</li>
-      <li>correlation de rang entre score in-sample et resultat reel : <b>0,126</b>, soit zero</li>
+      <li>reglage par defaut : 22 trades, +7,4 R, profit factor 1,82 &mdash; mais
+          <b>t de Student 1,26</b>, alors qu'il faut |t| &gt; 2</li>
+      <li>grille de 5 000 configurations : le <b>temoin aleatoire fait presque deux
+          fois mieux</b> que le top 60 hors echantillon (52 % contre 27 % de
+          configurations rentables). Choisir la meilleure config sur l'historique
+          est <i>pire</i> que d'en prendre une au hasard.</li>
+      <li>walk-forward ancre : +10,8 R sur 29 trades, positif sur les 6 fenetres
+          &mdash; le meilleur signal du projet, mais |t| &asymp; 1,55</li>
       <li>la cause est la <b>frequence</b> : 3 a 10 trades par an. Il faudrait une
           centaine de trades pour trancher</li>
     </ul>
     <p style="margin-top:8px">Le modele n'est ni demontre ni refute. A utiliser en mode
     alerte ou sur compte demo.</p>
+  </div>
+
+  <div id="plan" class="hidden">
+    <h2>Plan de trade</h2>
+    <div id="plan-status"></div>
+    <div id="plan-card" style="margin-top:12px"></div>
+    <details style="margin-top:12px">
+      <summary>Setups precedents et ce qu'ils ont donne</summary>
+      <div class="card" style="margin-top:8px"><div class="scroll" id="plan-recent"></div></div>
+    </details>
+    <details>
+      <summary>Journees recentes — ce que les regles ont decide, jour par jour</summary>
+      <div class="card" style="margin-top:8px"><div class="scroll" id="plan-days"></div></div>
+    </details>
   </div>
 
   <h2>1 &middot; Donnees</h2>
@@ -227,7 +293,8 @@ footer{margin-top:44px;padding-top:18px;border-top:1px solid var(--line);
       <div>
         <label for="preset">Prereglage</label>
         <select id="preset">
-          <option value="stable">stable — defaut, le plus regulier</option>
+          <option value="stable">stable — defaut, TP1/TP2/TP3</option>
+          <option value="cibleUnique">cibleUnique — une seule cible</option>
           <option value="literal">literal — lecture litterale</option>
           <option value="frequent">frequent — plus de signaux</option>
           <option value="ote">ote — entree Fibonacci</option>
@@ -334,7 +401,7 @@ footer{margin-top:44px;padding-top:18px;border-top:1px solid var(--line);
   </div>
 
   <div id="results" class="hidden">
-    <h2>3 &middot; Resultats</h2>
+    <h2>3 &middot; Resultats du backtest</h2>
     <div class="kpis" id="kpis"></div>
     <div class="card" id="stat-note" style="margin-top:12px"></div>
 

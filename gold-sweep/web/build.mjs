@@ -30,6 +30,7 @@ const ENGINE = [
   'src/core/calendar.js',
   'src/core/refdata.js',
   'src/core/presets.js',
+  'src/core/checklist.js',
   'src/backtest/engine.js',
   'src/backtest/metrics.js',
   'src/backtest/render.js',

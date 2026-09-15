@@ -15,11 +15,14 @@ node --test test/*.test.js                          # 38 tests
 node web/build.mjs && npx serve web/dist            # tableau de bord web
 ```
 
-Un **tableau de bord web** déployable sur Vercel accompagne le CLI : il exécute
-le même moteur *dans le navigateur*, sans téléverser votre CSV.
-Voir [DEPLOIEMENT.md](DEPLOIEMENT.md). Le suivi cTrader temps réel reste en CLI
-local — il exige une socket TLS persistante, qu'un hébergement serverless ne
-peut pas tenir.
+Un **tableau de bord web** déployable sur Vercel accompagne le CLI. Dès qu'un
+CSV est déposé, il affiche la **carte de décision** : sens, entrée, stop,
+**TP1 / TP2 / TP3**, volume, risque en dollars et checklist en 5 points — puis,
+s'il n'y a pas de setup, **exactement quelle condition bloque et ce qu'il reste
+à attendre**. Voir [DEPLOIEMENT.md](DEPLOIEMENT.md).
+
+Le suivi cTrader temps réel reste en CLI local — il exige une socket TLS
+persistante, qu'un hébergement serverless ne peut pas tenir.
 
 ---
 
@@ -33,16 +36,18 @@ hypothèse intra-barre **pessimiste systématique**.
 
 | Préréglage | Trades | /an | Réussite | Total R | PF | maxDD | **t de Student** |
 |---|---|---|---|---|---|---|---|
-| `stable` (défaut) | 22 | 4,7 | 45,5 % | +6,9 R | 1,57 | 4,1 R | 0,94 |
-| `literal` | 19 | 4,3 | 47,4 % | +4,3 R | 1,42 | 3,4 R | 0,71 |
-| `frequent` | 50 | 10,1 | 38,0 % | +16,6 R | 1,53 | 8,1 R | **1,19** |
-| `ote` | 40 | 8,8 | 40,0 % | +11,2 R | 1,43 | 6,1 R | 0,93 |
-| `selective` | 15 | 3,2 | 53,3 % | +7,4 R | 2,02 | 3,0 R | **1,17** |
+| `stable` (défaut) | 22 | 4,7 | 50,0 % | +7,4 R | 1,82 | 3,0 R | 1,26 |
+| `cibleUnique` | 22 | 4,7 | 45,5 % | +6,9 R | 1,57 | 4,1 R | 0,94 |
+| `literal` | 19 | 4,3 | 52,6 % | +6,2 R | 1,91 | 3,0 R | 1,24 |
+| `frequent` | 50 | 10,1 | 42,0 % | +14,3 R | 1,63 | 7,4 R | **1,44** |
+| `ote` | 40 | 8,8 | 42,5 % | +10,8 R | 1,62 | 4,8 R | 1,25 |
+| `selective` | 15 | 3,2 | 60,0 % | +8,5 R | **3,00** | 2,0 R | **1,79** |
 
 **Aucun préréglage n'atteint |t| > 2**, le seuil usuel de significativité à
-5 % ; le meilleur (`frequent`) plafonne à 1,19. Sur le préréglage par défaut :
-22 trades, écart-type 1,56 R, donc une erreur-type de l'espérance de 0,33 R —
-un résultat de +0,31 R/trade est indiscernable du hasard.
+5 % ; le meilleur (`selective`) plafonne à 1,79 sur 15 trades. Sur le
+préréglage par défaut : 22 trades, écart-type 1,26 R, donc une erreur-type de
+l'espérance de 0,27 R — un résultat de +0,34 R/trade est indiscernable du
+hasard.
 
 Le problème n'est pas le signe, c'est la **fréquence** : 3 à 10 trades par an
 ne permettent pas de conclure, même sur 5 ans d'historique. Il faudrait environ
@@ -57,14 +62,16 @@ pendant la recherche :
 
 | | n | Espérance OOS | Total R OOS | % rentables OOS |
 |---|---|---|---|---|
-| Top 60 in-sample | 60 | −0,245 R | −7,1 R | 27 % |
-| **Témoin aléatoire** | 60 | **−0,195 R** | **−7,0 R** | **32 %** |
+| Top 60 in-sample | 60 | −0,162 R | −4,7 R | 27 % |
+| **Témoin aléatoire** | 60 | **−0,025 R** | **−2,1 R** | **52 %** |
 
-**Le témoin aléatoire fait marginalement mieux que le top 60.** Corrélation de
-rang (Spearman) entre score in-sample et espérance out-of-sample : **0,126**.
-La meilleure configuration in-sample (26 trades, +26,5 R, PF 3,40) rend +2,0 R
-et PF 1,16 hors échantillon. Seules 10 des 25 meilleures sont rentables OOS —
-soit un tirage à pile ou face.
+**Le témoin aléatoire fait presque deux fois mieux que le top 60** : 52 % de
+configurations rentables hors échantillon contre 27 %. Corrélation de rang
+(Spearman) entre score in-sample et espérance out-of-sample : **0,120**.
+
+Autrement dit : prendre une configuration au hasard parmi celles qui passent le
+filtre de base bat statistiquement le fait de choisir la meilleure sur
+l'historique. C'est la définition du sur-ajustement.
 
 Reproductible :
 `node src/cli/optimize.js grid --csv data/xauusd-m5.csv --n 5000`
@@ -78,16 +85,18 @@ Détail annuel du préréglage par défaut — et sa limite :
 
 | Année | Trades | Total R |
 |---|---|---|
-| 2021 (à partir de mai) | 1 | +2,2 |
-| 2022 | 5 | −2,4 |
-| 2023 | 2 | +3,7 |
-| 2024 | 1 | +1,6 |
-| 2025 | 9 | +1,0 |
-| 2026 (jusqu'en sept.) | 4 | +0,7 |
+| 2021 (à partir de mai) | 1 | +1,8 |
+| 2022 | 5 | −0,4 |
+| 2023 | 2 | +2,9 |
+| 2024 | 1 | +1,4 |
+| 2025 | 9 | +2,1 |
+| 2026 (jusqu'en sept.) | 4 | −0,3 |
 
-Cinq années sur six sont positives, mais avec **1 à 2 trades** en 2021, 2023 et
-2024 : « année positive » ne signifie rien à ce volume. C'est un critère de
-sélection moins mauvais que le rendement brut, pas une preuve.
+Quatre années sur six sont positives, mais avec **1 à 2 trades** en 2021, 2023
+et 2024 : « année positive » ne signifie rien à ce volume. À noter, l'échelle
+de cibles échange un peu de régularité annuelle (5 années positives sur 6 avec
+une cible unique, 4 sur 6 ici) contre de meilleures métriques d'ensemble —
+profit factor 1,57 → 1,82 et drawdown 4,1 → 3,0 R.
 
 ### Le split inverse ne sauve pas la stratégie
 
@@ -100,14 +109,19 @@ l'autre.
 ### Walk-forward ancré — le seul chiffre réaliste
 
 Réoptimisation glissante sur 6 fenêtres, résultats hors échantillon concaténés :
-**+3,8 R sur 29 trades**, espérance **+0,132 R/trade**, positif sur 4 fenêtres
-sur 6. Une variante de l'échantillonnage donne +4,3 R sur 30 trades
-(`docs/02-robustesse.txt`) : l'ordre de grandeur est stable, mais avec un
-écart-type de ~1,6 R l'erreur-type vaut 0,30 R — le résultat reste dans le
-bruit.
+**+10,8 R sur 29 trades**, espérance **+0,372 R/trade**, **positif sur les 6
+fenêtres**. C'est le meilleur signal de tout le projet — et il vient de
+l'échelle de cibles : la même procédure avec une cible unique ne rendait que
++3,8 R.
+
+Mais 29 trades avec un écart-type d'environ 1,3 R donnent une erreur-type de
+0,24 R : |t| ≈ 1,55. Encore sous le seuil de 2. Six fenêtres positives sur six
+est encourageant sans être une preuve — avec un taux de réussite de ~33 %, une
+telle série n'est pas improbable par hasard.
 
 Reproductible :
-`node src/cli/optimize.js walkforward --csv data/xauusd-m5.csv --n 1500`
+`node src/cli/optimize.js walkforward --csv data/xauusd-m5.csv --n 600`
+(sortie dans `docs/05-walkforward.txt`)
 
 ### Conclusion honnête
 
@@ -129,6 +143,13 @@ Les sorties non retouchées des mesures citées ici sont dans `docs/` :
 | `02-robustesse.txt` | split inverse, stabilité annuelle, walk-forward |
 | `03-candidats.txt` | 12 configurations candidates avec t de Student |
 | `04-grille-surajustement.txt` | grille de 5 000 configs + témoin + Spearman |
+| `05-walkforward.txt` | walk-forward ancré, 6 fenêtres |
+
+⚠️ `01`, `02` et `03` ont été mesurés **avant** l'activation de l'échelle de
+cibles, donc sur la variante `cibleUnique`. Leurs conclusions *qualitatives*
+(quels paramètres comptent, quels réglages sont instables) tiennent ; leurs
+chiffres absolus correspondent au préréglage `cibleUnique`, pas au défaut
+actuel. `04` et `05` sont à jour.
 
 ---
 
@@ -189,7 +210,34 @@ Londres et SL au-dessus du piège :
 `minRR = 2.0`, `fvgLevel = 0.75` (meilleur compromis mesuré entre prix et
 probabilité de remplissage).
 
-### 5. Toute gestion « protectrice » détruit l'avantage
+### 5. Les cibles échelonnées sur la liquidité améliorent tout
+
+C'est le **seul dispositif testé qui améliore chaque métrique** :
+
+| Sortie | Réussite | Total R | PF | maxDD |
+|---|---|---|---|---|
+| Cible unique (niveau opposé de Londres) | 45,5 % | +6,9 | 1,57 | 4,1 R |
+| **TP1/TP2/TP3 ancrés liquidité, 34/33/reste** | **50,0 %** | **+7,4** | **1,82** | **3,0 R** |
+| TP1/TP2 à 1R / 2R fixes | 45,5 % | +6,0 | 1,65 | 3,0 R |
+| TP1/TP2/TP3 liquidité, 50/30/reste | 50,0 % | +6,9 | 1,87 | 3,0 R |
+
+Les trois crans par défaut :
+
+| Cran | Ancre | Ferme |
+|---|---|---|
+| **TP1** | liquidité interne — le premier « plus bas » à court terme rencontré | 34 % |
+| **TP2** | équilibre du range de Londres (50 % de Fibonacci) | 33 % |
+| **TP3** | niveau opposé de Londres — l'objectif d'origine | le reste |
+
+Nuance qui compte : ce n'est **pas** en contradiction avec le point 6 ci-dessous.
+Prendre des profits **là où le prix réagit** fonctionne ; déplacer le stop sur
+un multiple de R arbitraire non. Les mêmes crans posés à 1R/2R fixes ne rendent
+que +6,0 R contre +7,4 R ancrés sur la liquidité.
+
+Sur les 22 trades : 13 atteignent au moins TP1, 8 atteignent TP2, 2 vont
+jusqu'à TP3.
+
+### 6. Toute gestion « protectrice » détruit l'avantage
 
 | Gestion | Réussite | Total R |
 |---|---|---|
@@ -206,7 +254,7 @@ complets jusqu'au bas de Londres (gagnant moyen 1,84 R, meilleur 3,71 R).
 L'or retrace profondément avant de partir — le BE transforme les futurs
 gagnants en nuls. Défauts : **aucune gestion dynamique**.
 
-### 6. Le côté vente domine
+### 7. Le côté vente domine
 
 | Sens | Trades | Réussite | Total R |
 |---|---|---|---|
@@ -217,13 +265,13 @@ Cohérent avec la logique décrite. Le côté achat reste actif par défaut
 (`sweep.side: both`) parce que le désactiver ne laisse que 16 trades — encore
 moins concluant. `highOnly` est disponible.
 
-### 7. Vos horaires GMT fixes sont les bons
+### 8. Vos horaires GMT fixes sont les bons
 
 `sessions.nyAnchor: 'gmt'` (heures figées) bat `'local'` (recalage sur l'heure
 de New York) : +9,4 R contre −13,5 R. Les deux référentiels sont implémentés
 avec les règles DST US et UK codées en dur, mais le GMT fixe gagne.
 
-### 8. Les jours NFP ne sont pas tous explosifs
+### 9. Les jours NFP ne sont pas tous explosifs
 
 Amplitude de la bougie de 13:30 GMT rapportée à l'ATR :
 
@@ -239,10 +287,10 @@ en mesurant la bougie de 13:30 après sa clôture (donc sans regard vers le
 futur, puisque `signalNotBefore` est à 13:35). Seuil 3 ATR → 8,9 % des jours
 écartés.
 
-### 9. Empiler toutes les confluences vide le filtre
+### 10. Empiler toutes les confluences vide le filtre
 
 Le préréglage `checklist` (premium/discount + Silver Bullet + blackout +
-inducement) ne laisse que **5 trades en 5 ans et 4 mois** (−0,4 R). Chaque
+inducement) ne laisse que **5 trades en 5 ans et 4 mois** (+0,6 R, PF 1,25). Chaque
 condition retire des setups valides et leur intersection est quasiment vide.
 À garder comme grille de lecture, pas comme réglage de production.
 
@@ -262,6 +310,8 @@ Les quatre phases décrites, plus toutes vos additions :
 | OTE (Fibonacci) | `entry.model: ote`, `entry.oteLevel` | ✅ |
 | SL au sommet du piège | `stop.anchor`, `stop.buffer` | ✅ |
 | TP au niveau opposé de Londres | `target.anchor` | ✅ |
+| **TP1 / TP2 / TP3 échelonnés** | `target.levels` | ✅ **actif par défaut** |
+| **Carte de décision + checklist** | `src/core/checklist.js` | ✅ CLI et web |
 | **Premium / Discount** | `filters.premiumDiscount` | ✅ |
 | **Silver Bullet 14:00–15:00** | `filters.silverBullet` | ✅ |
 | **Pas de signal avant 13:35** | `sessions.signalNotBefore` | ✅ (dans les défauts) |

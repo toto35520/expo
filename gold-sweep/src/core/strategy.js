@@ -118,6 +118,13 @@ export class SweepStrategy {
 
     /** Etat du jour courant. */
     this.day = null;
+    /**
+     * Journal compact des journees terminees (borne). C'est ce qui permet de
+     * repondre a « pourquoi pas de trade aujourd'hui ? » : on garde l'etat
+     * atteint et le motif de blocage, pas seulement les setups retenus.
+     */
+    this.dayLog = [];
+    this.dayLogMax = 500;
     /** High/Low du jour precedent (pour le filtre de confluence PDH/PDL). */
     this.prevDay = null;
     /** High/Low accumules du jour courant. */
@@ -134,10 +141,50 @@ export class SweepStrategy {
     return null;
   }
 
+  /**
+   * Resume compact d'une journee, pour le journal et pour l'affichage
+   * « plan du jour ».
+   */
+  summarizeDay(d = this.day) {
+    if (!d) return null;
+    return {
+      date: d.date,
+      dow: d.dow,
+      phase: d.phase,
+      londonHigh: Number.isFinite(d.londonHigh) ? d.londonHigh : null,
+      londonLow: Number.isFinite(d.londonLow) ? d.londonLow : null,
+      londonRange: d.londonRange ?? null,
+      londonBars: d.londonBars,
+      dayOpen: d.dayOpen,
+      sweep: d.sweep
+        ? {
+            side: d.sweep.side,
+            dir: d.sweep.dir,
+            level: d.sweep.level,
+            extreme: d.sweep.extremePrice,
+            penetration: Math.abs(d.sweep.extremePrice - d.sweep.level),
+            atrAtSweep: d.sweep.atrAtSweep,
+            at: d.sweep.crossTs,
+            ambiguous: d.sweep.ambiguous,
+          }
+        : null,
+      setups: d.setups.length,
+      /** Dernier motif de blocage rencontre — la reponse a « pourquoi rien ». */
+      lastRejection: d.lastRejection ? { ...d.lastRejection } : null,
+      rejections: d.rejections.slice(-6),
+    };
+  }
+
   /** Initialise l'etat pour un nouveau jour UTC. */
   _startDay(s, i) {
     const ts = s.time[i];
     const cfg = this.cfg;
+
+    // Archiver la journee qui s'acheve avant de la remplacer.
+    if (this.day) {
+      this.dayLog.push(this.summarizeDay(this.day));
+      if (this.dayLog.length > this.dayLogMax) this.dayLog.shift();
+    }
 
     // Rotation du High/Low journalier (pour PDH/PDL du jour suivant).
     if (this.curDayHL) this.prevDay = this.curDayHL;
@@ -874,6 +921,10 @@ export class SweepStrategy {
       }
     }
 
+    // ── Echelle de cibles TP1 / TP2 / TP3 ──────────────────────────
+    const internal = this._internalLiquidity(s, i, entry, tp, isSell, slDist);
+    const targets = this._buildTargets({ entry, tp, slDist, isSell, internal, d });
+
     // ── Setup final ────────────────────────────────────────────────
     const expiryBars = cfg.entry.expiryBars;
     return {
@@ -916,7 +967,9 @@ export class SweepStrategy {
 
       // Liquidite interne : premier "plus bas" a court terme entre l'entree et
       // l'objectif final, cible naturelle du profit partiel.
-      internalLiquidity: this._internalLiquidity(s, i, entry, tp, isSell, slDist),
+      internalLiquidity: internal,
+      /** Echelle de cibles consommee par le moteur (1 a 3 crans). */
+      targets,
 
       // Confluences (annotees meme en mode 'soft', pour le rapport).
       fibLondon,
@@ -932,6 +985,99 @@ export class SweepStrategy {
       fillFromMinute: sbMode === 'fill' || sbMode === 'both' ? sbStart : -Infinity,
       fillUntilMinute: sbMode === 'fill' || sbMode === 'both' ? sbEnd : Infinity,
     };
+  }
+
+  /**
+   * Construit l'echelle de cibles.
+   *
+   * Invariants garantis (le moteur peut s'y fier) :
+   *  - au moins un cran, le dernier fermant TOUJOURS le reste de la position ;
+   *  - prix strictement au-dela de l'entree dans le sens du trade ;
+   *  - progression monotone vers la cible finale, jamais au-dela ;
+   *  - espacement minimal entre crans, sinon le cran est ECARTE.
+   *
+   * @returns {Array<{name:string, price:number, closePct:number, rr:number, anchor:string}>}
+   */
+  _buildTargets({ entry, tp, slDist, isSell, internal, d }) {
+    const cfg = this.cfg;
+    const L = cfg.target.levels;
+
+    // Echelle a un seul cran : comportement historique, bit-identique.
+    if (!L.enabled) {
+      if (cfg.manage.partial.enabled) {
+        const pp = cfg.manage.partial;
+        const raw =
+          pp.anchor === 'internalLiquidity'
+            ? internal
+              ? internal.level
+              : NaN
+            : isSell
+              ? entry - pp.atRR * slDist
+              : entry + pp.atRR * slDist;
+        if (Number.isFinite(raw)) {
+          const beyond = isSell ? raw <= entry - pp.minRR * slDist : raw >= entry + pp.minRR * slDist;
+          const before = isSell ? raw > tp : raw < tp;
+          if (beyond && before) {
+            return [
+              { name: 'partial', price: roundPrice(cfg, raw), closePct: pp.closePct, rr: Math.abs(raw - entry) / slDist, anchor: pp.anchor },
+              { name: 'tp', price: tp, closePct: 1, rr: Math.abs(tp - entry) / slDist, anchor: 'final' },
+            ];
+          }
+        }
+      }
+      return [{ name: 'tp', price: tp, closePct: 1, rr: Math.abs(tp - entry) / slDist, anchor: 'final' }];
+    }
+
+    const equilibrium = d.londonLow + 0.5 * d.londonRange;
+    const priceFor = (spec) => {
+      switch (spec.anchor) {
+        case 'internalLiquidity':
+          return internal ? internal.level : NaN;
+        case 'equilibrium':
+          return equilibrium;
+        case 'final':
+          return tp;
+        case 'rr':
+          return isSell ? entry - spec.rr * slDist : entry + spec.rr * slDist;
+        default:
+          return NaN;
+      }
+    };
+
+    const out = [];
+    let prev = entry;
+    for (const [name, spec] of [['TP1', L.tp1], ['TP2', L.tp2], ['TP3', L.tp3]]) {
+      let price = priceFor(spec);
+      // Ancre indisponible -> repli sur un multiple de R, si configure.
+      if (!Number.isFinite(price) && spec.fallbackRR !== null) {
+        price = isSell ? entry - spec.fallbackRR * slDist : entry + spec.fallbackRR * slDist;
+      }
+      if (!Number.isFinite(price)) continue;
+
+      // Au-dela de l'entree, en deca de la cible finale, et suffisamment
+      // espace du cran precedent.
+      const gap = Math.abs(price - prev) / slDist;
+      const forward = isSell ? price < prev : price > prev;
+      const withinFinal = isSell ? price >= tp : price <= tp;
+      if (!forward || !withinFinal || gap < L.minSpacingR) continue;
+
+      out.push({
+        name,
+        price: roundPrice(cfg, price),
+        closePct: spec.closePct,
+        rr: Math.abs(price - entry) / slDist,
+        anchor: spec.anchor,
+      });
+      prev = price;
+    }
+
+    // Aucun cran retenu : on retombe sur la cible finale seule.
+    if (!out.length) {
+      return [{ name: 'TP', price: tp, closePct: 1, rr: Math.abs(tp - entry) / slDist, anchor: 'final' }];
+    }
+    // Le dernier cran ferme toujours le reste.
+    out[out.length - 1].closePct = 1;
+    return out;
   }
 
   /**
