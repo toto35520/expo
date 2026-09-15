@@ -1,0 +1,44 @@
+CANDIDATS — historique complet 2021-05 a 2026-09
+                                 trad /an  %reus  totalR  espR   ecartR    t-stat   PF  maxDD_R  %rempl
+  A  FVG 0.50                      19    4   47.4     4.3  0.23    1.39      0.71 1.42      3.4      46
+  B  FVG 0.75                      22    5   45.5     6.9  0.31    1.56      0.94 1.57      4.1      46
+  C  FVG 1.00 (bord lointain)      22    5   40.9     6.0  0.27    1.64      0.77 1.44      4.4      42
+  D  FVG ou OB 0.75                42    8   33.3     2.5  0.06    1.78      0.21 1.07     10.4      43
+  E  OTE 0.705                     40    9   40.0    11.2  0.28    1.91      0.93 1.43      6.1      56
+  F  OTE 0.62                      38    7   44.7     7.8  0.21    1.64      0.77 1.34      7.8      67
+  G  OrderBlock 0.5                42    8   28.6    -6.4 -0.15    1.73     -0.57 0.77     12.3      37
+  H  FVG 0.75 + premium MSS        15    3   53.3     7.4  0.50    1.64      1.17 2.02      3.0      38
+  I  FVG ou OB 0.75 + premium      30    6   36.7     6.3  0.21    1.97      0.59 1.30      8.8      37
+  J  FVG ou OB + TP mixte RR4      41    8   34.1     4.4  0.11    1.76      0.39 1.14      9.4      42
+  K  FVG ou OB + blackout NFP      41    8   34.1     3.5  0.09    1.80      0.30 1.11      9.4      43
+  L  FVG ou OB, 2 trades/jour      50   10   38.0    16.6  0.33    1.97      1.19 1.53      8.1      40
+
+CANDIDATS — totalR par annee (stabilite = ce qui compte vraiment)
+                                     2021    2022    2023    2024    2025    2026   annees+  annees-
+  A  FVG 0.50                          -    -0.6     3.2     1.5     0.3    -0.1        3        2
+  B  FVG 0.75                        2.2    -2.4     3.7     1.6     1.0     0.7        5        1
+  C  FVG 1.00 (bord lointain)          -    -2.3     5.8     0.7     0.7     0.9        4        1
+  D  FVG ou OB 0.75                  1.2    -5.7     4.5    -0.4    -1.0     3.9        3        3
+  E  OTE 0.705                         -    -3.0     4.9    -2.5    -1.4    13.3        2        3
+  F  OTE 0.62                        4.5    -5.2     3.2    -0.7    -3.8     9.8        3        3
+  G  OrderBlock 0.5                 -1.8    -8.4     5.7    -1.4    -0.5     0.2        2        4
+  H  FVG 0.75 + premium MSS          2.2    -1.4     3.7       -     1.2     1.7        4        1
+  I  FVG ou OB 0.75 + premium        2.2    -4.4     5.5    -2.0    -0.8     5.9        3        3
+  J  FVG ou OB + TP mixte RR4        1.2    -3.4     4.7    -0.4     0.1     2.2        4        2
+  K  FVG ou OB + blackout NFP        1.2    -5.7     4.5    -0.4     0.0     3.9        4        2
+  L  FVG ou OB, 2 trades/jour        0.2    -4.5    13.7     4.7    -1.0     3.6        4        2
+
+SEUIL DE SIGNIFICATIVITE : |t| > 2 ~ 5% de chance que ce soit du hasard
+  classement par t-stat :
+      1.19  L  FVG ou OB, 2 trades/jour    (50 trades,  16.6 R)
+      1.17  H  FVG 0.75 + premium MSS      (15 trades,   7.4 R)
+      0.94  B  FVG 0.75                    (22 trades,   6.9 R)
+      0.93  E  OTE 0.705                   (40 trades,  11.2 R)
+      0.77  C  FVG 1.00 (bord lointain)    (22 trades,   6.0 R)
+      0.77  F  OTE 0.62                    (38 trades,   7.8 R)
+      0.71  A  FVG 0.50                    (19 trades,   4.3 R)
+      0.59  I  FVG ou OB 0.75 + premium    (30 trades,   6.3 R)
+      0.39  J  FVG ou OB + TP mixte RR4    (41 trades,   4.4 R)
+      0.30  K  FVG ou OB + blackout NFP    (41 trades,   3.5 R)
+      0.21  D  FVG ou OB 0.75              (42 trades,   2.5 R)
+     -0.57  G  OrderBlock 0.5              (42 trades,  -6.4 R)

@@ -1,0 +1,12 @@
+# Donnees de marche (volumineuses, a fournir localement)
+data/*.csv
+!data/calendrier-exemple.csv
+
+# Sorties de backtest
+out/*
+!out/.gitkeep
+
+# Identifiants — NE JAMAIS COMMITER
+.env
+*.token
+secrets.json

@@ -1,0 +1,23 @@
+TEST 1 — SPLIT INVERSE : si l'edge existe, il doit transferer DANS LES DEUX SENS
+  optimise 2025-2026 -> teste 2021-2024 : espR moy   0.115  |  rentables 28/40
+  correlation de rang IS<->OOS : -0.507
+
+TEST 2 — STABILITE ANNEE PAR ANNEE de configs FIXES (aucune optimisation)
+  config                                 2021     2022     2023     2024     2025     2026     TOTAL
+  litterale (FVG 0.5, TP Londres)           -  -0.6/ 3   3.3/ 2   1.5/ 1   0.4/ 9   0.0/ 4     4.7/19
+  FVG bord lointain, RR 4 fixe        -3.3/ 4  -2.1/ 7   4.4/10  -0.6/ 5   0.4/12  -1.6/11    -2.9/49
+  OTE 0.705, TP Londres                     -  -2.9/10   5.2/ 6  -2.4/ 5  -1.4/ 9  13.1/11    11.6/41
+  ventes seules + premium                   -   0.3/ 2   2.2/ 1        -   1.5/ 4   1.7/ 2     5.7/9
+  achats seuls                              -        -   0.8/ 1   1.4/ 1  -1.0/ 1  -1.0/ 1     0.2/4
+  (format : totalR/nb_trades)
+
+TEST 3 — WALK-FORWARD ANCRE (reoptimisation a chaque fenetre, resultat OOS concatene)
+  fenetre OOS              IS:trad espR   |  OOS:trad %reus  totalR  espR
+  2023-07-01 -> 2023-12-31     30   0.89   |         4  25.0    -0.0 -0.01
+  2024-01-01 -> 2024-06-30     34   0.79   |         5  20.0    -0.5 -0.10
+  2024-07-01 -> 2024-12-31     21   1.12   |         5  40.0     2.9  0.58
+  2025-01-01 -> 2025-06-30     26   1.02   |         6  33.3     2.0  0.33
+  2025-07-01 -> 2025-12-31     32   0.89   |         8  25.0    -2.0 -0.25
+  2026-01-01 -> 2026-09-07     40   0.66   |         2  50.0     2.0  1.00
+  ----------------------------------------------------------------------
+  CUMUL WALK-FORWARD OOS :    4.3 R sur 30 trades  (esperance 0.144 R/trade)
