@@ -10,8 +10,16 @@ de backtest sont écrits à la main : rien à installer, rien à mettre à jour.
 node src/cli/backtest.js --csv data/xauusd-m5.csv --html out/rapport.html
 node src/cli/optimize.js walkforward --csv data/xauusd-m5.csv
 node src/cli/live.js watch --symbol XAUUSD          # mode alerte
-node --test test/*.test.js                          # 36 tests
+node --test test/*.test.js                          # 38 tests
+
+node web/build.mjs && npx serve web/dist            # tableau de bord web
 ```
+
+Un **tableau de bord web** déployable sur Vercel accompagne le CLI : il exécute
+le même moteur *dans le navigateur*, sans téléverser votre CSV.
+Voir [DEPLOIEMENT.md](DEPLOIEMENT.md). Le suivi cTrader temps réel reste en CLI
+local — il exige une socket TLS persistante, qu'un hébergement serverless ne
+peut pas tenir.
 
 ---
 
@@ -391,6 +399,30 @@ trades que le préfixe du backtest complet — la seule preuve qui compte.
 
 ---
 
+## Tableau de bord web
+
+`web/` contient une page statique qui rejoue le backtest **côté navigateur**,
+dans un Web Worker :
+
+- le CSV est lu localement — **aucun téléversement**, aucune limite de taille
+  (376 k barres analysées en ~400 ms, backtest en ~100 ms) ;
+- les 132 paramètres sont réglables : champs guidés pour les plus influents,
+  surcharge JSON libre pour le reste ;
+- courbe des R cumulés, résultat par année, entonnoir de sélection, motifs de
+  rejet, liste des trades — tous survolables, tous doublés d'une vue tableau ;
+- export du rapport HTML (même module que le CLI), du résultat JSON et de la
+  configuration JSON rechargeable avec `--config` ;
+- les preuves de validation sont embarquées : la page est utile sans CSV.
+
+Le moteur n'est **pas dupliqué** : `web/build.mjs` copie les modules depuis
+`src/` et **échoue si l'un d'eux importe `node:*`**. Les accès disque sont
+isolés dans `src/core/load.js`, jamais copié côté web.
+
+Vérifié par un test de bout en bout sous Chromium (mode clair et sombre) : le
+navigateur produit **exactement les mêmes chiffres que le CLI** (22 trades,
++6,9 R, PF 1,57, t = 0,94), aucune erreur console, aucun débordement horizontal
+en 1200 px comme en 390 px.
+
 ## Architecture
 
 ```
@@ -415,7 +447,12 @@ src/live/
   feed.js        agrégation M5, ATR incrémental (identique au batch)
   monitor.js     exécution live, dimensionnement, checklist 5 points
 src/cli/         backtest.js, optimize.js, live.js
-test/unit.test.js  36 tests
+src/backtest/render.js   rendu HTML pur, partagé CLI <-> web
+src/core/load.js         SEUL module du moteur à dépendre de Node
+web/
+  build.mjs      construit web/dist (copie du moteur + garde-fou node:*)
+  public/        index.html, app.js, charts.js, worker.js
+test/unit.test.js  38 tests
 ```
 
 Le même `SweepStrategy` tourne au backtest et en live. L'ATR incrémental du

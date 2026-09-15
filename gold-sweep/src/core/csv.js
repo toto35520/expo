@@ -1,14 +1,18 @@
 /**
- * Chargement de barres OHLCV depuis un CSV.
+ * Analyse de barres OHLCV au format CSV.
  * Format attendu : time,open,high,low,close,volume
  * avec time en ISO8601 UTC ("2021-05-19T20:25:00.000Z").
  *
  * Les barres sont stockees en "struct of arrays" (Float64Array) : c'est ce qui
  * permet de rejouer 376k barres des milliers de fois pendant l'optimisation
  * sans pression sur le GC.
+ *
+ * CE MODULE N'ACCEDE PAS AU DISQUE : il ne prend que du texte. C'est ce qui
+ * permet au meme moteur de tourner dans Node ET dans un navigateur (le
+ * tableau de bord web lit le CSV cote client, sans upload). La lecture de
+ * fichier vit dans `load.js`, cote Node uniquement.
  */
 
-import { readFileSync } from 'node:fs';
 import { MS_MIN } from './time.js';
 
 /**
@@ -24,12 +28,11 @@ import { MS_MIN } from './time.js';
  */
 
 /**
- * @param {string} path
+ * @param {string} raw contenu du CSV
  * @param {{from?: string, to?: string}} [opts] bornes ISO inclusives/exclusives
  * @returns {Series}
  */
-export function loadCsv(path, opts = {}) {
-  const raw = readFileSync(path, 'utf8');
+export function parseCsv(raw, opts = {}) {
   const lines = raw.split('\n');
 
   // En-tete -> index de colonnes (tolerant a l'ordre et a la casse).

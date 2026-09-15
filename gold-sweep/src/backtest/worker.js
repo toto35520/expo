@@ -6,7 +6,7 @@
  */
 import { parentPort, workerData } from 'node:worker_threads';
 import { buildConfig } from '../core/config.js';
-import { loadCsv } from '../core/csv.js';
+import { loadCsv } from '../core/load.js';
 import { atr } from '../core/indicators.js';
 import { runBacktest } from './engine.js';
 import { computeMetrics, score } from './metrics.js';

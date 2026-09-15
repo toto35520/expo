@@ -21,8 +21,8 @@
 
 import { writeFileSync } from 'node:fs';
 import { buildConfig } from '../core/config.js';
-import { EconomicCalendar } from '../core/calendar.js';
-import { RefBundle, RefSeries } from '../core/refdata.js';
+import { loadCalendar, loadRefSeries } from '../core/load.js';
+import { RefBundle } from '../core/refdata.js';
 import { formatHm, utcMinuteOfDay } from '../core/time.js';
 import { CTraderClient } from '../live/ctrader/client.js';
 import { PERIOD } from '../live/ctrader/messages.js';
@@ -218,12 +218,12 @@ async function main() {
     let refs = null;
     if (args.flags.dxy || args.flags.us10y) {
       refs = new RefBundle({
-        dxy: args.flags.dxy ? RefSeries.fromCsv('DXY', String(args.flags.dxy)) : null,
-        us10y: args.flags.us10y ? RefSeries.fromCsv('US10Y', String(args.flags.us10y)) : null,
+        dxy: args.flags.dxy ? loadRefSeries('DXY', String(args.flags.dxy)) : null,
+        us10y: args.flags.us10y ? loadRefSeries('US10Y', String(args.flags.us10y)) : null,
       });
       log('info', `references : ${JSON.stringify(refs.describe())}`);
     }
-    const calendar = args.flags.calendar ? EconomicCalendar.fromCsv(String(args.flags.calendar)) : null;
+    const calendar = args.flags.calendar ? loadCalendar(String(args.flags.calendar)) : null;
 
     const execute = !!args.flags.execute;
     if (execute) {

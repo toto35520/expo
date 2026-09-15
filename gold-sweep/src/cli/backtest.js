@@ -10,10 +10,10 @@
  */
 
 import { buildConfig } from '../core/config.js';
-import { describeSeries, loadCsv } from '../core/csv.js';
+import { describeSeries } from '../core/csv.js';
 import { atr } from '../core/indicators.js';
-import { EconomicCalendar } from '../core/calendar.js';
-import { RefBundle, RefSeries } from '../core/refdata.js';
+import { loadCalendar, loadCsv, loadRefSeries } from '../core/load.js';
+import { RefBundle } from '../core/refdata.js';
 import { runBacktest } from '../backtest/engine.js';
 import { computeMetrics } from '../backtest/metrics.js';
 import { printReport, printTrades, writeHtml, writeJson } from '../backtest/report.js';
@@ -77,14 +77,14 @@ async function main() {
   let refs = null;
   if (args.flags.dxy || args.flags.us10y) {
     refs = new RefBundle({
-      dxy: args.flags.dxy ? RefSeries.fromCsv('DXY', String(args.flags.dxy)) : null,
-      us10y: args.flags.us10y ? RefSeries.fromCsv('US10Y', String(args.flags.us10y)) : null,
+      dxy: args.flags.dxy ? loadRefSeries('DXY', String(args.flags.dxy)) : null,
+      us10y: args.flags.us10y ? loadRefSeries('US10Y', String(args.flags.us10y)) : null,
     });
     if (!args.flags.quiet) console.log('  REFERENCES ' + JSON.stringify(refs.describe()));
   }
   let calendar = null;
   if (args.flags.calendar) {
-    calendar = EconomicCalendar.fromCsv(String(args.flags.calendar));
+    calendar = loadCalendar(String(args.flags.calendar));
     if (!args.flags.quiet) console.log(`  CALENDRIER ${calendar.byDate.size} dates chargees`);
   }
 

@@ -18,7 +18,6 @@
  *     sans calendrier a jour.
  */
 
-import { readFileSync } from 'node:fs';
 import { isoDate } from './time.js';
 
 /**
@@ -44,10 +43,12 @@ export class EconomicCalendar {
     this.loaded = false;
   }
 
-  /** @param {string} path */
-  static fromCsv(path) {
+  /**
+   * @param {string} raw contenu du CSV (pas un chemin : ce module reste
+   *   utilisable dans un navigateur, cf. csv.js)
+   */
+  static fromText(raw) {
     const cal = new EconomicCalendar();
-    const raw = readFileSync(path, 'utf8');
     const lines = raw.split('\n');
     const header = lines[0].replace(/^﻿/, '').trim().toLowerCase().split(',');
     const iDate = header.indexOf('date');

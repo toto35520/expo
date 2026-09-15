@@ -1,0 +1,414 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Gold Sweep — Analyse XAUUSD</title>
+<meta name="description" content="Backtest de la strategie NY Open Liquidity Sweep sur XAUUSD, execute dans le navigateur.">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><text y='26' font-size='26'>🥇</text></svg>">
+<style>
+:root{
+  color-scheme: light;
+  --bg:#fbfbf9; --surface-1:#fcfcfb; --surface-2:#f4f3f0;
+  --text-primary:#0b0b0b; --text-secondary:#52514e; --text-muted:#807e78;
+  --line:#e4e3de; --grid:#dedcd6;
+  --series-1:#2a78d6;      /* slot categoriel 1 */
+  --pos:#2a78d6;           /* pole divergent froid */
+  --neg:#e34948;           /* pole divergent chaud */
+  --accent:#8a6d3b;
+  --warn-bg:#fdf3ef; --warn-line:#e34948;
+  --radius:10px;
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    color-scheme: dark;
+    --bg:#131311; --surface-1:#1a1a19; --surface-2:#222220;
+    --text-primary:#ffffff; --text-secondary:#c3c2b7; --text-muted:#948f85;
+    --line:#2e2e29; --grid:#34342f;
+    --series-1:#3987e5; --pos:#3987e5; --neg:#e66767; --accent:#c9a66b;
+    --warn-bg:#241a18; --warn-line:#e66767;
+  }
+}
+:root[data-theme="dark"]{
+  color-scheme: dark;
+  --bg:#131311; --surface-1:#1a1a19; --surface-2:#222220;
+  --text-primary:#ffffff; --text-secondary:#c3c2b7; --text-muted:#948f85;
+  --line:#2e2e29; --grid:#34342f;
+  --series-1:#3987e5; --pos:#3987e5; --neg:#e66767; --accent:#c9a66b;
+  --warn-bg:#241a18; --warn-line:#e66767;
+}
+*{box-sizing:border-box}
+html,body{margin:0}
+body{background:var(--bg);color:var(--text-primary);
+  font:15px/1.55 ui-sans-serif,-apple-system,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+  -webkit-text-size-adjust:100%}
+.wrap{max-width:1000px;margin:0 auto;padding:28px 16px 80px}
+h1{font-size:1.55rem;margin:0 0 2px;letter-spacing:-.015em}
+h2{font-size:.82rem;margin:34px 0 12px;text-transform:uppercase;letter-spacing:.07em;
+  color:var(--text-muted);font-weight:650}
+h3{font-size:.95rem;margin:0 0 10px;font-weight:600}
+p{margin:0 0 10px}
+.sub{color:var(--text-secondary);font-size:.9rem;margin:0 0 4px}
+a{color:var(--series-1)}
+code,kbd{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:.86em;
+  background:var(--surface-2);padding:1px 5px;border-radius:4px}
+.card{background:var(--surface-1);border:1px solid var(--line);border-radius:var(--radius);padding:18px}
+.card + .card{margin-top:12px}
+
+/* ── bandeau d'avertissement ─────────────────────────────── */
+.verdict{background:var(--warn-bg);border-left:3px solid var(--warn-line);
+  border-radius:0 var(--radius) var(--radius) 0;padding:15px 18px;margin:18px 0 6px}
+.verdict strong{display:block;margin-bottom:5px}
+.verdict p{margin:0;font-size:.9rem;color:var(--text-secondary)}
+.verdict ul{margin:8px 0 0;padding-left:20px;font-size:.88rem;color:var(--text-secondary)}
+.verdict li{margin:3px 0}
+
+/* ── depot de fichiers ───────────────────────────────────── */
+.drop{border:1.5px dashed var(--line);border-radius:var(--radius);padding:26px 18px;
+  text-align:center;cursor:pointer;transition:border-color .15s,background .15s;background:var(--surface-1)}
+.drop:hover,.drop.over{border-color:var(--series-1);background:var(--surface-2)}
+.drop.loaded{border-style:solid;border-color:var(--series-1)}
+.drop-title{font-weight:600;margin-bottom:3px}
+.drop-hint{color:var(--text-muted);font-size:.84rem}
+.opt-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:10px;margin-top:10px}
+.opt{border:1px dashed var(--line);border-radius:8px;padding:12px;text-align:center;
+  cursor:pointer;font-size:.84rem;color:var(--text-secondary);background:var(--surface-1)}
+.opt:hover,.opt.over{border-color:var(--series-1)}
+.opt.loaded{border-style:solid;border-color:var(--series-1);color:var(--text-primary)}
+
+/* ── formulaire ──────────────────────────────────────────── */
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:12px 16px;align-items:start}
+.grid > div{display:flex;flex-direction:column}
+.grid > div > label{flex:0 0 auto}
+label{display:block;font-size:.78rem;color:var(--text-muted);margin-bottom:4px;font-weight:600}
+select,input[type=text],input[type=number],textarea{
+  width:100%;padding:7px 9px;border:1px solid var(--line);border-radius:7px;
+  background:var(--bg);color:var(--text-primary);font:inherit;font-size:.88rem}
+select:focus,input:focus,textarea:focus{outline:2px solid var(--series-1);outline-offset:-1px}
+textarea{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:.82rem;min-height:86px;resize:vertical}
+.hint{font-size:.76rem;color:var(--text-muted);margin-top:4px}
+.row{display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin-top:16px}
+button{font:inherit;font-weight:600;padding:9px 18px;border-radius:8px;border:1px solid var(--line);
+  background:var(--surface-2);color:var(--text-primary);cursor:pointer}
+button:hover:not(:disabled){border-color:var(--series-1)}
+button:disabled{opacity:.45;cursor:not-allowed}
+button.primary{background:var(--series-1);border-color:var(--series-1);color:#fff}
+button.ghost{background:transparent}
+.check{display:flex;align-items:center;gap:7px;font-size:.86rem;color:var(--text-secondary);font-weight:500}
+.check input{width:auto}
+
+/* ── indicateurs cles ────────────────────────────────────── */
+.kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(142px,1fr));gap:10px}
+.kpi{background:var(--surface-1);border:1px solid var(--line);border-radius:var(--radius);padding:13px 15px}
+.kpi-v{font-size:1.42rem;font-weight:650;font-variant-numeric:tabular-nums;letter-spacing:-.02em;line-height:1.15}
+.kpi-l{color:var(--text-muted);font-size:.75rem;margin-top:3px}
+.kpi-s{color:var(--text-muted);font-size:.71rem;margin-top:4px;opacity:.85}
+.kpi.pos .kpi-v{color:var(--pos)} .kpi.neg .kpi-v{color:var(--neg)}
+
+/* ── graphiques ──────────────────────────────────────────── */
+.viz-grid{stroke:var(--grid);stroke-width:1}
+.viz-zero{stroke:var(--text-muted);stroke-width:1;opacity:.55}
+.viz-line{stroke:var(--series-1);stroke-width:2;fill:none;stroke-linejoin:round;stroke-linecap:round}
+.viz-cross{stroke:var(--text-muted);stroke-width:1;stroke-dasharray:3 3}
+.viz-dot{fill:var(--series-1);stroke:var(--surface-1);stroke-width:2}
+.viz-bar-pos{fill:var(--pos)} .viz-bar-neg{fill:var(--neg)}
+.viz-bar-pos:focus,.viz-bar-neg:focus{outline:2px solid var(--text-primary);outline-offset:2px}
+.viz-axis{fill:var(--text-muted);font-size:11px;font-family:inherit}
+.viz-axis-sub{fill:var(--text-muted);font-size:9.5px;font-family:inherit;opacity:.8}
+.viz-value{fill:var(--text-secondary);font-size:11px;font-weight:600;font-variant-numeric:tabular-nums;font-family:inherit}
+.viz-tip{position:fixed;display:none;z-index:50;pointer-events:none;
+  background:var(--surface-1);border:1px solid var(--line);border-radius:8px;padding:8px 11px;
+  font-size:.81rem;line-height:1.45;color:var(--text-secondary);
+  box-shadow:0 6px 20px rgb(0 0 0 / .13);max-width:250px}
+.viz-tip strong{color:var(--text-primary)} .viz-tip b{color:var(--text-primary)}
+.tip-note{color:var(--neg);font-size:.95em}
+
+/* ── entonnoir ───────────────────────────────────────────── */
+.funnel-row{display:grid;grid-template-columns:1fr 2.2fr auto 52px;gap:10px;align-items:center;
+  padding:5px 0;font-size:.85rem}
+.funnel-row:focus{outline:2px solid var(--series-1);outline-offset:2px;border-radius:5px}
+.funnel-label{color:var(--text-secondary)}
+.funnel-track{background:var(--surface-2);border-radius:5px;height:11px;overflow:hidden}
+.funnel-bar{display:block;height:100%;border-radius:0 4px 4px 0;min-width:2px}
+.funnel-value{font-variant-numeric:tabular-nums;font-weight:600;text-align:right;min-width:48px}
+.funnel-conv{font-variant-numeric:tabular-nums;color:var(--text-muted);font-size:.8rem;text-align:right}
+
+/* ── tableaux ────────────────────────────────────────────── */
+table{width:100%;border-collapse:collapse;font-variant-numeric:tabular-nums;font-size:.84rem}
+th,td{text-align:right;padding:6px 9px;border-bottom:1px solid var(--line);white-space:nowrap}
+th:first-child,td:first-child{text-align:left}
+th{color:var(--text-muted);font-weight:650;font-size:.72rem;text-transform:uppercase;letter-spacing:.04em;
+  position:sticky;top:0;background:var(--surface-1)}
+tbody tr:last-child td{border-bottom:none}
+.pos{color:var(--pos)} .neg{color:var(--neg)}
+.scroll{max-height:400px;overflow:auto;border-radius:8px}
+.empty{color:var(--text-muted);font-size:.87rem;margin:0;text-align:center;padding:24px 0}
+
+/* ── divers ──────────────────────────────────────────────── */
+.status{font-size:.86rem;color:var(--text-secondary);min-height:1.4em}
+.status.err{color:var(--neg)}
+.topbar{display:flex;justify-content:space-between;align-items:flex-start;gap:14px;flex-wrap:wrap}
+.theme{border:1px solid var(--line);background:var(--surface-1);border-radius:7px;
+  padding:5px 10px;font-size:.8rem;cursor:pointer;color:var(--text-secondary);font-weight:500}
+details{margin-top:12px}
+summary{cursor:pointer;font-size:.85rem;color:var(--text-secondary);font-weight:600;padding:4px 0}
+summary:focus{outline:2px solid var(--series-1);outline-offset:2px;border-radius:4px}
+pre{background:var(--surface-2);border:1px solid var(--line);border-radius:8px;padding:12px;
+  overflow:auto;font-size:.76rem;line-height:1.45;max-height:340px;margin:8px 0 0}
+footer{margin-top:44px;padding-top:18px;border-top:1px solid var(--line);
+  color:var(--text-muted);font-size:.82rem}
+.hidden{display:none!important}
+@media(max-width:560px){
+  .kpi-v{font-size:1.2rem}
+  .funnel-row{grid-template-columns:1fr auto;gap:4px 8px}
+  .funnel-track{grid-column:1/-1;order:3}
+  .funnel-conv{display:none}
+  h1{font-size:1.3rem}
+}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <div class="topbar">
+    <div>
+      <h1>Gold Sweep</h1>
+      <p class="sub">XAUUSD &middot; NY Open Liquidity Sweep &middot; backtest execute dans votre navigateur</p>
+    </div>
+    <button class="theme" id="theme" type="button" aria-label="Changer de theme">Theme</button>
+  </div>
+
+  <div class="verdict">
+    <strong>Ce backtest ne demontre pas d'avantage statistique.</strong>
+    <p>Mesure sur 375 985 barres M5 (2021-05 &rarr; 2026-09), couts inclus, hypothese
+    intra-barre pessimiste :</p>
+    <ul>
+      <li>reglage par defaut : 22 trades, +6,9 R, profit factor 1,57 &mdash; mais
+          <b>t de Student 0,94</b>, alors qu'il faut |t| &gt; 2</li>
+      <li>grille de 5 000 configurations : le <b>temoin aleatoire fait mieux</b> que
+          le top 60 hors echantillon (32 % contre 27 % de configurations rentables)</li>
+      <li>correlation de rang entre score in-sample et resultat reel : <b>0,126</b>, soit zero</li>
+      <li>la cause est la <b>frequence</b> : 3 a 10 trades par an. Il faudrait une
+          centaine de trades pour trancher</li>
+    </ul>
+    <p style="margin-top:8px">Le modele n'est ni demontre ni refute. A utiliser en mode
+    alerte ou sur compte demo.</p>
+  </div>
+
+  <h2>1 &middot; Donnees</h2>
+  <div class="drop" id="drop" tabindex="0" role="button"
+       aria-label="Deposer un fichier CSV de barres M5">
+    <div class="drop-title" id="drop-title">Deposez votre CSV de barres M5</div>
+    <div class="drop-hint" id="drop-hint">
+      ou cliquez pour choisir &middot; format <code>time,open,high,low,close,volume</code> &middot;
+      le fichier reste sur votre machine, rien n'est televerse
+    </div>
+  </div>
+  <input type="file" id="file" accept=".csv,text/csv" class="hidden">
+
+  <div class="opt-grid">
+    <div class="opt" id="opt-dxy" tabindex="0" role="button">
+      <b>DXY</b> &mdash; confluence de correlation inverse<br><span id="dxy-state">optionnel</span>
+    </div>
+    <div class="opt" id="opt-ty" tabindex="0" role="button">
+      <b>US10Y</b> &mdash; filtre macro de rendement<br><span id="ty-state">optionnel</span>
+    </div>
+    <div class="opt" id="opt-cal" tabindex="0" role="button">
+      <b>Calendrier</b> &mdash; <code>date,impact,event</code><br><span id="cal-state">optionnel</span>
+    </div>
+  </div>
+  <input type="file" id="file-dxy" accept=".csv" class="hidden">
+  <input type="file" id="file-ty" accept=".csv" class="hidden">
+  <input type="file" id="file-cal" accept=".csv" class="hidden">
+
+  <h2>2 &middot; Parametrage</h2>
+  <div class="card">
+    <div class="grid">
+      <div>
+        <label for="preset">Prereglage</label>
+        <select id="preset">
+          <option value="stable">stable — defaut, le plus regulier</option>
+          <option value="literal">literal — lecture litterale</option>
+          <option value="frequent">frequent — plus de signaux</option>
+          <option value="ote">ote — entree Fibonacci</option>
+          <option value="selective">selective — le plus filtre</option>
+          <option value="checklist">checklist — toutes les confluences</option>
+          <option value="auditOptimistic">auditOptimistic — borne haute</option>
+        </select>
+        <div class="hint">Base de depart ; les champs ci-dessous la surchargent.</div>
+      </div>
+      <div><label for="entryModel">Modele d'entree</label>
+        <select id="entryModel" data-path="entry.model">
+          <option value="">(prereglage)</option>
+          <option value="fvg">fvg — Fair Value Gap</option>
+          <option value="orderBlock">orderBlock</option>
+          <option value="fvgOrOb">fvgOrOb — FVG sinon OB</option>
+          <option value="ote">ote — Fibonacci</option>
+          <option value="market">market — au marche</option>
+        </select></div>
+      <div><label for="fvgLevel">Niveau dans le FVG</label>
+        <input type="number" id="fvgLevel" data-path="entry.fvgLevel" step="0.05" min="0" max="1" placeholder="0.75">
+        <div class="hint">0 = bord proche, 1 = bord lointain</div></div>
+      <div><label for="stopBuffer">Marge de stop (ATR)</label>
+        <input type="number" id="stopBuffer" data-path="stop.buffer" step="0.05" min="0" placeholder="0.3"></div>
+      <div><label for="stopMax">Distance de stop max (ATR)</label>
+        <input type="number" id="stopMax" data-path="stop.maxDistance" step="0.5" min="0.1" placeholder="5"></div>
+      <div><label for="maxPen">Penetration max du balayage (ATR)</label>
+        <input type="number" id="maxPen" data-path="sweep.maxPenetration" step="0.25" min="0.1" placeholder="3"></div>
+      <div><label for="side">Cote du balayage</label>
+        <select id="side" data-path="sweep.side">
+          <option value="">(prereglage)</option>
+          <option value="both">both — les deux</option>
+          <option value="highOnly">highOnly — ventes seules</option>
+          <option value="lowOnly">lowOnly — achats seuls</option>
+        </select></div>
+      <div><label for="tgtAnchor">Objectif</label>
+        <select id="tgtAnchor" data-path="target.anchor">
+          <option value="">(prereglage)</option>
+          <option value="oppositeLondon">oppositeLondon — niveau oppose</option>
+          <option value="rrMultiple">rrMultiple — multiple de R</option>
+          <option value="nearestOf">nearestOf — le plus proche</option>
+        </select></div>
+      <div><label for="minRR">R:R minimum</label>
+        <input type="number" id="minRR" data-path="target.minRR" step="0.25" min="0.25" placeholder="2"></div>
+      <div><label for="premium">Premium / Discount</label>
+        <select id="premium" data-path="filters.premiumDiscount">
+          <option value="">(prereglage)</option>
+          <option value="off">off</option>
+          <option value="londonRange">londonRange</option>
+          <option value="mssLeg">mssLeg — lecture ICT stricte</option>
+          <option value="both">both</option>
+        </select></div>
+      <div><label for="silver">Fenetre Silver Bullet</label>
+        <select id="silver" data-path="filters.silverBullet">
+          <option value="">(prereglage)</option>
+          <option value="off">off</option>
+          <option value="signal">signal</option>
+          <option value="fill">fill — remplissage 14:00-15:00</option>
+          <option value="both">both</option>
+        </select></div>
+      <div><label for="news">Blackout des annonces</label>
+        <select id="news" data-path="filters.newsBlackout">
+          <option value="">(prereglage)</option>
+          <option value="off">off</option>
+          <option value="volatilitySpike">volatilitySpike — detection</option>
+          <option value="nfp">nfp — 1er vendredi</option>
+          <option value="calendar">calendar — CSV fourni</option>
+          <option value="all">all</option>
+        </select></div>
+      <div><label for="be">Breakeven a N x R</label>
+        <input type="number" id="be" data-path="manage.breakEvenAtRR" step="0.5" min="0.25" placeholder="desactive">
+        <div class="hint">Mesure : &minus;18 R sur l'historique</div></div>
+      <div><label for="intrabar">Hypothese intra-barre</label>
+        <select id="intrabar" data-path="execution.intrabar">
+          <option value="">(prereglage)</option>
+          <option value="conservative">conservative — pire cas</option>
+          <option value="ohlcPath">ohlcPath — chemin reconstruit</option>
+          <option value="optimistic">optimistic — audit seulement</option>
+        </select></div>
+      <div><label for="spread">Spread modelise (USD)</label>
+        <input type="number" id="spread" data-path="costs.spreadUsd" step="0.01" min="0" placeholder="0.22"></div>
+      <div><label for="equity">Capital initial (USD)</label>
+        <input type="number" id="equity" data-path="risk.initialEquity" step="500" min="100" placeholder="10000"></div>
+      <div><label for="risk">Risque par trade (%)</label>
+        <input type="number" id="risk" data-path="risk.pctPerTrade" step="0.25" min="0.05" placeholder="1"></div>
+      <div><label for="from">Debut de periode</label>
+        <input type="text" id="from" data-path="sessions.dateFrom" placeholder="AAAA-MM-JJ"></div>
+      <div><label for="to">Fin de periode</label>
+        <input type="text" id="to" data-path="sessions.dateTo" placeholder="AAAA-MM-JJ"></div>
+    </div>
+
+    <details>
+      <summary>Surcharge libre — les 132 parametres</summary>
+      <p class="hint" style="margin:8px 0">JSON applique par-dessus tout le reste. Exemple :
+        <code>{"mss":{"swingLookback":3},"sweep":{"requireInducement":true}}</code></p>
+      <textarea id="json" spellcheck="false" placeholder="{}"></textarea>
+      <div class="hint" id="json-err"></div>
+    </details>
+
+    <div class="row">
+      <button class="primary" id="run" disabled>Lancer le backtest</button>
+      <button class="ghost" id="reset" type="button">Reinitialiser</button>
+      <span class="status" id="status">Chargez un CSV pour commencer.</span>
+    </div>
+  </div>
+
+  <div id="results" class="hidden">
+    <h2>3 &middot; Resultats</h2>
+    <div class="kpis" id="kpis"></div>
+    <div class="card" id="stat-note" style="margin-top:12px"></div>
+
+    <h2>Courbe des R cumules</h2>
+    <div class="card">
+      <h3>Capital en multiples de risque</h3>
+      <div id="chart-equity"></div>
+      <details><summary>Voir les donnees en tableau</summary>
+        <div class="scroll" id="equity-table"></div></details>
+    </div>
+
+    <h2>Resultat par annee</h2>
+    <div class="card">
+      <h3>Total R &mdash; bleu positif, rouge negatif</h3>
+      <div id="chart-years"></div>
+      <details><summary>Voir les donnees en tableau</summary>
+        <div class="scroll" id="years-table"></div></details>
+    </div>
+
+    <h2>Entonnoir de selection</h2>
+    <div class="card">
+      <h3>Ou les setups disparaissent</h3>
+      <div id="chart-funnel"></div>
+      <details><summary>Motifs de rejet detailles</summary>
+        <div class="scroll" id="rejections"></div></details>
+    </div>
+
+    <h2>Sorties &amp; ordres</h2>
+    <div class="card"><div class="grid">
+      <div><h3>Par motif de sortie</h3><div id="exits"></div></div>
+      <div><h3>Devenir des ordres</h3><div id="orders"></div></div>
+    </div></div>
+
+    <h2>Trades</h2>
+    <div class="card"><div class="scroll" id="trades"></div></div>
+
+    <h2>Export</h2>
+    <div class="card"><div class="row" style="margin:0">
+      <button id="export-html">Rapport HTML</button>
+      <button id="export-json">Resultat JSON</button>
+      <button id="export-cfg">Configuration JSON</button>
+      <span class="status" id="export-status"></span>
+    </div>
+    <p class="hint" style="margin-top:10px">Le rapport HTML est produit par le meme
+      module que le CLI (<code>src/backtest/render.js</code>). La configuration exportee
+      se recharge avec <code>node src/cli/backtest.js --config fichier.json</code>.</p>
+    </div>
+  </div>
+
+  <h2>Preuves de validation</h2>
+  <div class="card">
+    <p class="hint" style="margin:0 0 6px">Sorties brutes, non retouchees, des mesures citees
+      dans le bandeau ci-dessus.</p>
+    <details><summary>Sensibilite — 149 evaluations, un parametre a la fois</summary>
+      <pre id="doc-01">chargement…</pre></details>
+    <details><summary>Robustesse — split inverse, stabilite annuelle, walk-forward</summary>
+      <pre id="doc-02">chargement…</pre></details>
+    <details><summary>Candidats — 12 configurations avec t de Student</summary>
+      <pre id="doc-03">chargement…</pre></details>
+    <details><summary>Grille — 5 000 configurations, temoin, Spearman</summary>
+      <pre id="doc-04">chargement…</pre></details>
+  </div>
+
+  <footer>
+    <p><b>Le suivi temps reel cTrader n'est pas sur cette page.</b> Il exige une socket
+      TLS persistante, ce qu'un hebergement serverless ne peut pas tenir. Il reste en
+      CLI local : <code>node src/cli/live.js watch --symbol XAUUSD</code>.
+      Cette page est la surface d'analyse et de backtest ; le moteur execute est
+      exactement le meme.</p>
+    <p>Outil de recherche. Le trading de l'or avec effet de levier peut faire perdre la
+      totalite du capital. Les resultats de backtest ne prejugent pas des resultats
+      futurs &mdash; et celui-ci ne demontre pas d'avantage statistique.</p>
+  </footer>
+</div>
+<script type="module" src="./app.js"></script>
+</body>
+</html>

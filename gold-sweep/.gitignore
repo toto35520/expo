@@ -1,6 +1,7 @@
 # Donnees de marche (volumineuses, a fournir localement)
 data/*.csv
 !data/calendrier-exemple.csv
+!data/echantillon-xauusd-m5.csv
 
 # Sorties de backtest
 out/*
@@ -10,3 +11,4 @@ out/*
 .env
 *.token
 secrets.json
+web/dist/

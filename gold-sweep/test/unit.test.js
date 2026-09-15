@@ -11,7 +11,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 
 import { buildConfig, deepMerge, resolveDistance, roundPrice } from '../src/core/config.js';
-import { loadCsv } from '../src/core/csv.js';
+import { loadCsv } from '../src/core/load.js';
 import { atr, findFvgs, findOrderBlock, findSwings, orderBlockZone, zoneLevel } from '../src/core/indicators.js';
 import { isNfpDay, newsSpike } from '../src/core/calendar.js';
 import { RefSeries } from '../src/core/refdata.js';

@@ -10,7 +10,7 @@
  * `available:false` et la config decide (`onMissing: 'pass' | 'block'`).
  */
 
-import { loadCsv } from './csv.js';
+import { parseCsv } from './csv.js';
 import { MS_DAY, londonShiftMinutes, utcDayIndex, utcMinuteOfDay } from './time.js';
 
 export class RefSeries {
@@ -26,9 +26,9 @@ export class RefSeries {
     this._builtFor = null;
   }
 
-  /** Charge une reference depuis un CSV au meme format que la serie principale. */
-  static fromCsv(name, path) {
-    return new RefSeries(name, loadCsv(path));
+  /** Construit une reference depuis un CSV au meme format que la serie principale. */
+  static fromText(name, raw) {
+    return new RefSeries(name, parseCsv(raw));
   }
 
   /**
