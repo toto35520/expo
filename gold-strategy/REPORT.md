@@ -222,8 +222,109 @@ fois la volatilité et cinq fois le drawdown. À risque égal, le portefeuille d
 
 ---
 
+## Seconde passe — 10 hypothèses de plus, et le test de data-snooping
+
+### Correction d'un défaut de la première passe
+
+Le balayage initial de 44 fenêtres contenait une erreur d'indexation : les fenêtres
+traversant la frontière de séance (ex. « 16:00→18:00, t = −1,91 ») étaient lues à
+l'envers, 18:00 étant le *début* de la séance et 16:00 la *fin*. Cette ligne mesurait
+l'inverse du rendement du jour. Strategy A n'était pas touchée (18:00→20:55 est
+correctement ordonné), mais le balayage a été refait.
+
+**Balayage exhaustif corrigé** : 555 fenêtres (grille 30 min, durées 1 h à 8 h),
+contrôle de Benjamini-Hochberg à 5 %. **7 survivent — toutes commencent à 18:00.**
+Aucune fenêtre négative au-delà de t = −2,5 : il n'existe pas d'edge short horaire.
+
+### Ce qui a encore été testé et rejeté
+
+| Hypothèse | Résultat |
+|---|---|
+| 15 features quotidiennes (momentum, volume, NR7, inside day, largeur BB, position de clôture, streaks, jour du mois) | **aucune ne survit au FDR** |
+| Pivots floor-trader (P, R1/R2, S1/S2 — fade et breakout) | 10 variantes, toutes \|t\| < 2,1 |
+| Chandeliers (engulfing, marteau, doji, 3 soldats) | rien (D1 doji t = 2,45, ne survit pas au FDR) |
+| Ichimoku, Parabolic SAR, Heikin-Ashi, ADX+EMA | long-only : Sharpe 0,24-1,09, sous le buy & hold |
+| Filtre volume sur Strategy A | **rejeté** — non monotone, et le signe s'inverse en walk-forward |
+| Rebond post-session US sur Strategy A | **rejeté** — écart nul in-sample, n'apparaît qu'en OOS |
+| 10 variantes de sortie (stops, targets, trailing, durées) | **toutes dégradent** la version simple |
+
+### Deux résultats négatifs qui valent d'être connus
+
+**Le « squeeze » de volatilité ne prédit pas d'expansion.** C'est l'inverse :
+
+| État | Amplitude du mouvement le lendemain |
+|---|---|
+| ATR5/ATR20 < 0,8 (comprimé) | **−12,2 %** vs la base |
+| ATR5/ATR20 > 1,2 (dilaté) | **+25,8 %** vs la base |
+| Largeur BB dans les 20 % bas | −1,0 % |
+| Jour NR7 | +0,3 % |
+
+La volatilité s'auto-entretient, elle n'alterne pas. Le setup « compression → explosion »
+(NR7, Bollinger squeeze), omniprésent en formation, n'a aucun fondement ici.
+
+**Le fade du VWAP perd de façon fiable.** Sur 37 systèmes testés dans cette passe,
+3 survivent au FDR — et **deux sont des perdants** :
+
+| Système | t | Sharpe |
+|---|---|---|
+| Fade du VWAP à 2σ | **−4,49** | −2,00 |
+| Retour au VWAP (>1,5σ) | **−3,52** | −1,55 |
+| Ichimoku H4 long-only | +3,40 | +0,60 |
+
+Le résultat le plus significatif de tout le lot est une stratégie qui perd de l'argent.
+
+### Le test qui compte : White's Reality Check
+
+Après ~730 hypothèses testées dans cette étude, à \|t\| > 2 on attend **~33 faux positifs
+par pur hasard**. Le bootstrap de la première passe (P(moyenne ≤ 0) = 0,00 %) testait une
+hypothèse *unique* — il ignorait la recherche. Il fallait corriger.
+
+Méthode : imposer l'hypothèse nulle (centrage), rééchantillonner les jours par blocs de 10
+(ce qui préserve la corrélation entre fenêtres qui se chevauchent), et comparer le
+\|t\| observé à la distribution du **maximum** sous la nulle.
+
+| Périmètre de recherche | \|t\| observé | p ajusté | Verdict |
+|---|---|---|---|
+| 555 fenêtres, brut de frais | 3,52 | **0,064** | **ne passe pas** |
+| 1 665 hypothèses (fenêtres × filtres), net de frais | 3,95 | **0,036** | passe, de justesse |
+
+Le signal horaire **brut** ne survit donc pas seul. C'est la règle filtrée et nette de
+frais qui passe, à p = 0,036 — significatif, mais loin d'être écrasant.
+
+### Ce qui soutient quand même l'edge
+
+**La largeur.** Un pic de bruit serait isolé ; ici l'effet est un bloc contigu :
+
+| Heure de départ NY | Fenêtres | % avec t > 0 | t moyen |
+|---|---|---|---|
+| **18:00** | 30 | **100 %** | **+2,56** |
+| **19:00** | 30 | **100 %** | **+1,32** |
+| 20:00 | 30 | 80 % | +0,41 |
+| *toutes les autres* | 27 à 30 | 0 à 73 % | **négatif** |
+
+Toutes les sorties possibles fonctionnent entre 18:00 et 19:00, entourées d'un désert.
+
+**La littérature.** L'anomalie overnight est documentée indépendamment de ce jeu de
+données, sur d'autres classes d'actifs (Haghani, Ragulin & Dewey). Si on la traite comme
+une hypothèse *a priori* issue de la littérature plutôt que comme une découverte issue du
+balayage, la correction de data-snooping ne s'applique pas et le p-value pertinent est
+celui de l'hypothèse unique (< 0,001). Les deux lectures sont défendables ; la vérité est
+entre les deux.
+
+### Piège de méthode à connaître
+
+Soustraire un coût **fixe** à toutes les fenêtres crée de faux signaux négatifs. La
+fenêtre la plus « significative » du balayage net (23:30→00:30, t = −4,54) a un t **brut
+de −0,24** : zéro. Son écart-type intraday est simplement le plus petit de la journée
+(0,078 contre 0,18-0,22 à 18:00), donc les frais y pèsent le plus lourd en t. La shorter
+perdrait aussi. Ne jamais lire un t net sans regarder le t brut.
+
+---
+
 ## Limites — à lire avant de risquer un euro
 
+0. **Le p-value ajusté du data-snooping est 0,036**, pas 0,000. Après ~730 hypothèses
+   testées, l'edge passe le test de White de justesse. Ce n'est pas un résultat écrasant.
 1. **Un seul régime.** 5 ans, tous dans un marché haussier historique. Aucun test en
    marché baissier durable. Le filtre SMA200 et le biais long ne sont pas validés à la
    baisse.
