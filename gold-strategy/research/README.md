@@ -12,6 +12,8 @@ holding them, or run `strategy.py` which does everything from the CSV directly.
 | `volfilter.py` | volume filter walk-forward + exit optimisation (10 variants) |
 | `reversal.py` | does the preceding US session predict the overnight drift? |
 | `reality2.py` | White's Reality Check over the full windows x filters search space |
+| `tsmom.py` | time-series momentum, the below-SMA200 regime, session interaction |
+| `sizing.py` | volatility estimators for position sizing; within-window momentum |
 | `checkneg.py` | shows why a fixed cost manufactures fake negative t-stats in quiet hours |
 
 `lib.py` holds `load()` and `ts()` shared by all of them.

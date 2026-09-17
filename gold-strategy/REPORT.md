@@ -327,6 +327,87 @@ perdrait aussi. Ne jamais lire un t net sans regarder le t brut.
 
 ---
 
+## Troisième passe — momentum long terme, régime baissier, volatilité
+
+### Time-series momentum (Moskowitz-Ooi-Pedersen)
+
+Le TSMOM formel — signe du rendement passé sur N jours, position rebalancée
+quotidiennement et calibrée en volatilité — n'avait pas été testé (seulement des
+croisements d'EMA, qui sont une chose différente). C'est pourtant ce que les CTA
+tradent réellement sur l'or.
+
+| Système | CAGR | Vol | Sharpe | DD max |
+|---|---|---|---|---|
+| TSMOM 12 m long-only | 12,6 % | 9,6 % | **1,25** | −14,7 % |
+| TSMOM 6 m long-only | 11,8 % | 9,7 % | 1,17 | −14,1 % |
+| TSMOM blend 1/3/6/12 m long-only | 9,2 % | 7,9 % | 1,12 | −8,5 % |
+| TSMOM 12 m long **+ short** | 11,0 % | 10,2 % | 1,05 | −20,8 % |
+| TSMOM 1 m long + short | 2,6 % | 11,2 % | 0,28 | −21,8 % |
+| **Buy & hold vol-ciblé** | 14,4 % | 11,2 % | **1,23** | −16,9 % |
+
+Le meilleur TSMOM fait 1,25 contre 1,23 pour le benchmark : identique. Et le signal
+récurrent revient une fois de plus — **toutes les versions long + short sont moins bonnes
+que les long-only**. Si le momentum avait un vrai pouvoir prédictif, shorter en tendance
+baissière ajouterait du rendement. Ce n'est pas le cas.
+
+### Le régime baissier : il n'y a pas d'échantillon
+
+Question pratique, puisque l'or est aujourd'hui sous sa SMA200 : que faire dans ce régime ?
+
+| | meanR | t | n |
+|---|---|---|---|
+| Long pendant les jours sous SMA200 | **+0,031** | +0,65 | 218 |
+| Long pendant les jours au-dessus | +0,061 | +2,93 | 1 083 |
+| **Short** pendant les jours sous SMA200 | −0,031 | −0,65 | 218 |
+
+Seulement **218 jours** (17 %) de l'échantillon sont sous la SMA200 — et l'or y a **quand
+même dérivé à la hausse**. Shorter y perd. Le balayage horaire restreint à ces jours donne
+un |t| max de 3,01 contre 3,16 attendu sous pur bruit : rien.
+
+**Il n'existe pas d'échantillon de marché baissier dans ces données.** Aucune stratégie
+short sur l'or ne peut être construite ni validée ici. Ce n'est pas un manque d'effort,
+c'est une limite des données.
+
+### La volatilité est prévisible, la direction non
+
+| Mesure | Corrélation |
+|---|---|
+| Range asiatique → amplitude du mouvement Londres/NY | **+0,17** |
+| Direction asiatique → direction Londres/NY | +0,05 |
+| Leg 1 (18:05-19:55) → leg 2 (19:55-21:55) | −0,01 |
+
+C'est la même structure que la compression de volatilité : l'amplitude se prédit, le sens
+non. Tentative de monétisation par un meilleur estimateur de risque pour dimensionner
+Strategy A :
+
+| Estimateur | Sharpe |
+|---|---|
+| ATR5 | 1,93 |
+| ATR14 (actuel) | **1,91** |
+| EWMA (λ = 0,94) | 1,90 |
+| ATR30 | 1,86 |
+| Volatilité réalisée de la fenêtre, 20 obs | 1,70 |
+
+Gain maximal : +0,02 de Sharpe. Du bruit. **Garder ATR(14)** — le choix de l'estimateur
+est un effet de second ordre ici.
+
+### Où en est la recherche
+
+~900 hypothèses testées au total sur ce jeu de données. À \|t\| > 2, on attend **~41 faux
+positifs par pur hasard**. Toute nouvelle « découverte » sur ces mêmes données aurait
+désormais besoin d'un **\|t\| > 3,5** pour signifier quoi que ce soit.
+
+Une seule anomalie a survécu, avec un p ajusté de 0,036. Le fil conducteur de toute
+l'étude est cohérent : **la direction de l'or est imprévisible à toutes les échelles
+testées ; seule sa volatilité est prévisible, et elle ne se trade pas sur le spot.**
+
+Continuer à chercher ici produira des faux positifs, pas des edges. Ce qu'il faudrait à la
+place : plus d'historique incluant de vrais marchés baissiers (2012-2015), d'autres
+instruments pour du cross-sectional, des données d'options pour trader la volatilité
+directement, ou un calendrier d'événements macro.
+
+---
+
 ## Paramétrage opérationnel
 
 ### Les règles, en heure de New York (à ancrer sur NY, pas sur l'heure locale)
