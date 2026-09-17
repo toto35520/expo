@@ -1,0 +1,172 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Courbes d'équité XAUUSD</title>
+<style>
+:root{
+  color-scheme:light;
+  --surface-0:#f6f5f2; --surface-1:#fcfcfb; --border:#e3e2dd;
+  --text-primary:#0b0b0b; --text-secondary:#52514e; --text-muted:#7c7b76;
+  --s-p:#2a78d6; --s-a:#eb6834; --s-b:#1baf7a; --s-bh:#9a998f;
+  --grid:#eceae5;
+}
+@media (prefers-color-scheme:dark){ :root:not([data-theme="light"]){
+  color-scheme:dark;
+  --surface-0:#121211; --surface-1:#1a1a19; --border:#33332f;
+  --text-primary:#ffffff; --text-secondary:#c3c2b7; --text-muted:#8f8e85;
+  --s-p:#3987e5; --s-a:#d95926; --s-b:#199e70; --s-bh:#7a7970;
+  --grid:#2a2a27;
+}}
+:root[data-theme="dark"]{
+  color-scheme:dark;
+  --surface-0:#121211; --surface-1:#1a1a19; --border:#33332f;
+  --text-primary:#ffffff; --text-secondary:#c3c2b7; --text-muted:#8f8e85;
+  --s-p:#3987e5; --s-a:#d95926; --s-b:#199e70; --s-bh:#7a7970;
+  --grid:#2a2a27;
+}
+*{box-sizing:border-box}
+body{margin:0;background:var(--surface-0);color:var(--text-primary);
+  font:15px/1.5 ui-sans-serif,system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
+  padding:24px 16px 48px;}
+.wrap{max-width:900px;margin:0 auto}
+h1{font-size:19px;margin:0 0 4px;letter-spacing:-.01em}
+.sub{color:var(--text-secondary);font-size:13px;margin:0 0 20px}
+.tiles{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:10px;margin-bottom:18px}
+.tile{background:var(--surface-1);border:1px solid var(--border);border-radius:10px;padding:12px 14px}
+.tile .k{font-size:11px;letter-spacing:.04em;text-transform:uppercase;color:var(--text-muted)}
+.tile .v{font-size:22px;font-weight:600;margin-top:3px;font-variant-numeric:tabular-nums}
+.tile .n{font-size:11px;color:var(--text-secondary);margin-top:1px}
+.card{background:var(--surface-1);border:1px solid var(--border);border-radius:12px;padding:16px 14px 10px}
+.legend{display:flex;flex-wrap:wrap;gap:14px;margin:0 0 10px;font-size:12.5px;color:var(--text-secondary)}
+.legend span{display:inline-flex;align-items:center;gap:6px}
+.sw{width:14px;height:3px;border-radius:2px;display:inline-block}
+svg{display:block;width:100%;height:auto;overflow:visible}
+.gl{stroke:var(--grid);stroke-width:1}
+.ax{fill:var(--text-muted);font-size:11px;font-variant-numeric:tabular-nums}
+.ln{fill:none;stroke-width:2;stroke-linejoin:round;stroke-linecap:round}
+.dl{font-size:11.5px;font-weight:600;font-variant-numeric:tabular-nums}
+#tip{position:fixed;pointer-events:none;opacity:0;transition:opacity .1s;
+  background:var(--surface-1);border:1px solid var(--border);border-radius:9px;
+  padding:9px 11px;font-size:12.5px;box-shadow:0 6px 20px rgba(0,0,0,.16);z-index:9;min-width:168px}
+#tip .th{font-weight:600;margin-bottom:5px;font-size:12px;color:var(--text-secondary)}
+#tip .r{display:flex;justify-content:space-between;gap:14px;font-variant-numeric:tabular-nums}
+#tip .r b{font-weight:600}
+details{margin-top:16px}
+summary{cursor:pointer;font-size:13px;color:var(--text-secondary)}
+table{border-collapse:collapse;width:100%;margin-top:10px;font-size:12.5px;font-variant-numeric:tabular-nums}
+th,td{text-align:right;padding:5px 8px;border-bottom:1px solid var(--border)}
+th:first-child,td:first-child{text-align:left}
+th{color:var(--text-secondary);font-weight:600}
+.note{font-size:12px;color:var(--text-muted);margin-top:14px;line-height:1.55}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>Courbes d'équité — XAUUSD, août 2021 → septembre 2026</h1>
+  <p class="sub">Base 100. Stratégies A et B calibrées à 10 % de volatilité annualisée. Frais de 0,30 $/oz aller-retour inclus.</p>
+
+  <div class="tiles">
+    <div class="tile"><div class="k">Portefeuille 50/50</div><div class="v">Sharpe 2,03</div><div class="n">CAGR +14,1 % · DD max&nbsp;−5,1&nbsp;%</div></div>
+    <div class="tile"><div class="k">Stratégie A</div><div class="v">Sharpe 1,71</div><div class="n">CAGR +13,4 % · DD max&nbsp;−6,2&nbsp;%</div></div>
+    <div class="tile"><div class="k">Stratégie B</div><div class="v">Sharpe 1,43</div><div class="n">CAGR +14,3 % · DD max&nbsp;−8,7&nbsp;%</div></div>
+    <div class="tile"><div class="k">Buy &amp; hold</div><div class="v">Sharpe 1,03</div><div class="n">CAGR +19,2 % · DD max&nbsp;−26,6&nbsp;%</div></div>
+  </div>
+
+  <div class="card">
+    <div class="legend">
+      <span><i class="sw" style="background:var(--s-p)"></i>Portefeuille 50/50</span>
+      <span><i class="sw" style="background:var(--s-a)"></i>Stratégie A — dérive de réouverture</span>
+      <span><i class="sw" style="background:var(--s-b)"></i>Stratégie B — tendance vol-ciblée</span>
+      <span><i class="sw" style="background:var(--s-bh);height:0;border-top:3px dashed var(--s-bh)"></i>Buy &amp; hold</span>
+    </div>
+    <svg id="c" viewBox="0 0 760 380" role="img" aria-label="Courbes d'équité comparées"></svg>
+  </div>
+
+  <details>
+    <summary>Voir les données (fin de mois, base 100)</summary>
+    <table id="tb"></table>
+  </details>
+
+  <p class="note">Le buy &amp; hold finit plus haut en valeur absolue — l'or a fait +143 % sur la période. Il y arrive avec 18,2 % de volatilité et un drawdown de 26,6 %. À volatilité égale, c'est le portefeuille qui domine : deux fois le Sharpe pour un cinquième du drawdown.</p>
+</div>
+
+<div id="tip"></div>
+<script>
+const DATA = [{"d":"2021-08","A":100.0,"B":100.0,"P":100.0,"BH":100.0},{"d":"2021-09","A":100.0,"B":100.0,"P":100.0,"BH":98.05},{"d":"2021-10","A":100.0,"B":99.2,"P":99.6,"BH":99.51},{"d":"2021-11","A":100.0,"B":98.64,"P":99.33,"BH":99.05},{"d":"2021-12","A":100.0,"B":100.09,"P":100.06,"BH":102.08},{"d":"2022-01","A":100.0,"B":98.28,"P":99.17,"BH":100.3},{"d":"2022-02","A":100.0,"B":103.71,"P":101.88,"BH":106.53},{"d":"2022-03","A":100.0,"B":106.14,"P":103.09,"BH":108.1},{"d":"2022-04","A":100.0,"B":103.9,"P":102.0,"BH":105.86},{"d":"2022-05","A":100.0,"B":102.88,"P":101.51,"BH":102.54},{"d":"2022-06","A":98.1,"B":102.88,"P":100.54,"BH":100.85},{"d":"2022-07","A":98.1,"B":102.88,"P":100.54,"BH":98.55},{"d":"2022-08","A":98.1,"B":102.88,"P":100.54,"BH":95.49},{"d":"2022-09","A":98.1,"B":102.88,"P":100.54,"BH":92.69},{"d":"2022-10","A":98.1,"B":102.88,"P":100.54,"BH":91.16},{"d":"2022-11","A":98.1,"B":102.61,"P":100.41,"BH":98.69},{"d":"2022-12","A":97.81,"B":104.56,"P":101.22,"BH":101.78},{"d":"2023-01","A":100.82,"B":108.5,"P":104.69,"BH":107.6},{"d":"2023-02","A":104.32,"B":104.29,"P":104.43,"BH":101.94},{"d":"2023-03","A":102.79,"B":106.87,"P":104.97,"BH":109.9},{"d":"2023-04","A":103.85,"B":107.26,"P":105.71,"BH":111.03},{"d":"2023-05","A":102.94,"B":105.98,"P":104.63,"BH":109.52},{"d":"2023-06","A":103.09,"B":105.11,"P":104.28,"BH":107.12},{"d":"2023-07","A":103.25,"B":104.91,"P":104.27,"BH":109.68},{"d":"2023-08","A":103.33,"B":103.25,"P":103.48,"BH":108.27},{"d":"2023-09","A":100.5,"B":103.25,"P":102.06,"BH":103.16},{"d":"2023-10","A":102.19,"B":103.55,"P":103.06,"BH":110.72},{"d":"2023-11","A":104.62,"B":107.02,"P":106.03,"BH":113.62},{"d":"2023-12","A":109.99,"B":107.92,"P":109.19,"BH":115.12},{"d":"2024-01","A":112.69,"B":106.84,"P":109.98,"BH":113.8},{"d":"2024-02","A":115.44,"B":107.54,"P":111.68,"BH":114.07},{"d":"2024-03","A":115.91,"B":117.2,"P":116.86,"BH":124.6},{"d":"2024-04","A":116.06,"B":120.27,"P":118.49,"BH":127.59},{"d":"2024-05","A":116.29,"B":121.08,"P":119.02,"BH":129.88},{"d":"2024-06","A":115.0,"B":120.79,"P":118.24,"BH":129.82},{"d":"2024-07","A":113.99,"B":124.5,"P":119.52,"BH":136.57},{"d":"2024-08","A":115.04,"B":126.23,"P":120.91,"BH":139.68},{"d":"2024-09","A":114.06,"B":131.77,"P":123.02,"BH":147.03},{"d":"2024-10","A":116.53,"B":136.58,"P":126.61,"BH":153.13},{"d":"2024-11","A":116.63,"B":132.86,"P":124.97,"BH":147.91},{"d":"2024-12","A":122.88,"B":131.49,"P":127.63,"BH":146.46},{"d":"2025-01","A":128.03,"B":138.21,"P":133.58,"BH":156.18},{"d":"2025-02","A":132.76,"B":141.13,"P":137.49,"BH":159.45},{"d":"2025-03","A":132.14,"B":151.46,"P":142.12,"BH":174.34},{"d":"2025-04","A":146.27,"B":154.05,"P":150.86,"BH":183.51},{"d":"2025-05","A":139.81,"B":154.16,"P":147.57,"BH":183.57},{"d":"2025-06","A":141.73,"B":153.76,"P":148.39,"BH":184.33},{"d":"2025-07","A":141.83,"B":153.19,"P":148.19,"BH":183.6},{"d":"2025-08","A":141.98,"B":158.98,"P":151.07,"BH":192.42},{"d":"2025-09","A":146.4,"B":175.59,"P":161.25,"BH":215.32},{"d":"2025-10","A":150.03,"B":183.67,"P":167.02,"BH":223.39},{"d":"2025-11","A":151.6,"B":187.95,"P":169.85,"BH":235.47},{"d":"2025-12","A":161.94,"B":192.85,"P":177.89,"BH":241.02},{"d":"2026-01","A":163.98,"B":204.79,"P":184.55,"BH":273.03},{"d":"2026-02","A":170.53,"B":207.71,"P":189.57,"BH":294.56},{"d":"2026-03","A":180.35,"B":195.41,"P":189.12,"BH":260.46},{"d":"2026-04","A":189.94,"B":195.41,"P":194.1,"BH":257.93},{"d":"2026-05","A":191.97,"B":195.41,"P":195.15,"BH":253.38},{"d":"2026-06","A":191.57,"B":195.41,"P":194.95,"BH":223.65},{"d":"2026-07","A":191.57,"B":195.41,"P":194.95,"BH":225.71},{"d":"2026-08","A":188.88,"B":197.86,"P":194.81,"BH":248.29},{"d":"2026-09","A":188.88,"B":196.26,"P":194.02,"BH":242.68}];
+const S=[{k:"P",c:"--s-p",n:"Portefeuille 50/50",d:0},{k:"A",c:"--s-a",n:"Stratégie A",d:0},
+         {k:"B",c:"--s-b",n:"Stratégie B",d:0},{k:"BH",c:"--s-bh",n:"Buy & hold",d:1}];
+const W=760,H=380,M={t:14,r:74,b:30,l:44};
+const IW=W-M.l-M.r, IH=H-M.t-M.b;
+const vals=DATA.flatMap(r=>S.map(s=>r[s.k]));
+const lo=Math.min(...vals), hi=Math.max(...vals);
+const y0=Math.floor(lo/20)*20, y1=Math.ceil(hi/20)*20;
+const X=i=>M.l+i*IW/(DATA.length-1);
+const Y=v=>M.t+IH-(v-y0)/(y1-y0)*IH;
+const svg=document.getElementById("c");
+const NS="http://www.w3.org/2000/svg";
+function el(t,a){const e=document.createElementNS(NS,t);for(const k in a)e.setAttribute(k,a[k]);return e;}
+// grid + y axis
+for(let v=y0;v<=y1;v+=20){
+  svg.appendChild(el("line",{class:"gl",x1:M.l,x2:M.l+IW,y1:Y(v),y2:Y(v)}));
+  const t=el("text",{class:"ax",x:M.l-9,y:Y(v)+4,"text-anchor":"end"});t.textContent=v;svg.appendChild(t);
+}
+// x axis: one tick per year
+let lastY=null;
+DATA.forEach((r,i)=>{const yr=r.d.slice(0,4);
+  if(yr!==lastY){lastY=yr;
+    const t=el("text",{class:"ax",x:X(i),y:H-8,"text-anchor":"middle"});t.textContent=yr;svg.appendChild(t);}});
+// lines
+S.forEach(s=>{
+  const p=DATA.map((r,i)=>(i?"L":"M")+X(i).toFixed(1)+" "+Y(r[s.k]).toFixed(1)).join(" ");
+  const a={class:"ln",d:p,stroke:"var("+s.c+")"};
+  if(s.d)a["stroke-dasharray"]="5 4";
+  svg.appendChild(el("path",a));
+});
+// end labels, pushed apart so they never overlap
+const GAP=13;
+const labs=S.map(s=>({s,v:DATA[DATA.length-1][s.k],y:Y(DATA[DATA.length-1][s.k])}))
+            .sort((a,b)=>a.y-b.y);
+for(let i=1;i<labs.length;i++)
+  if(labs[i].y-labs[i-1].y<GAP) labs[i].y=labs[i-1].y+GAP;
+const over=labs[labs.length-1].y-(M.t+IH);
+if(over>0) labs.forEach(l=>l.y-=over);
+labs.forEach(l=>{
+  // a small leader keeps the moved label tied to its line
+  if(Math.abs(l.y-Y(l.v))>2)
+    svg.appendChild(el("line",{x1:M.l+IW+2,x2:M.l+IW+6,y1:Y(l.v),y2:l.y-4,
+      stroke:"var("+l.s.c+")","stroke-width":1,opacity:.55}));
+  const t=el("text",{class:"dl",x:M.l+IW+9,y:l.y,fill:"var("+l.s.c+")"});
+  t.textContent=Math.round(l.v);svg.appendChild(t);
+});
+// crosshair + hover
+const cross=el("line",{class:"gl",stroke:"var(--text-muted)","stroke-dasharray":"3 3",y1:M.t,y2:M.t+IH,opacity:0});
+svg.appendChild(cross);
+const dots=S.map(s=>{const c=el("circle",{r:4.5,fill:"var("+s.c+")",stroke:"var(--surface-1)","stroke-width":2,opacity:0});svg.appendChild(c);return c;});
+const tip=document.getElementById("tip");
+const hit=el("rect",{x:M.l,y:M.t,width:IW,height:IH,fill:"transparent"});svg.appendChild(hit);
+function move(ev){
+  const b=svg.getBoundingClientRect();
+  const px=(ev.clientX-b.left)/b.width*W;
+  let i=Math.round((px-M.l)/IW*(DATA.length-1));
+  i=Math.max(0,Math.min(DATA.length-1,i));
+  const r=DATA[i];
+  cross.setAttribute("x1",X(i));cross.setAttribute("x2",X(i));cross.setAttribute("opacity",1);
+  S.forEach((s,k)=>{dots[k].setAttribute("cx",X(i));dots[k].setAttribute("cy",Y(r[s.k]));dots[k].setAttribute("opacity",1);});
+  tip.style.opacity=1;
+  tip.innerHTML='<div class="th">'+r.d+'</div>'+S.map(s=>
+    '<div class="r"><span><i class="sw" style="background:var('+s.c+');margin-right:6px"></i>'+s.n+'</span><b>'+r[s.k].toFixed(1)+'</b></div>').join("");
+  const tw=tip.offsetWidth;
+  tip.style.left=Math.min(window.innerWidth-tw-10,Math.max(8,ev.clientX+14))+"px";
+  tip.style.top=Math.max(8,ev.clientY-20)+"px";
+}
+hit.addEventListener("pointermove",move);
+hit.addEventListener("pointerleave",()=>{tip.style.opacity=0;cross.setAttribute("opacity",0);dots.forEach(d=>d.setAttribute("opacity",0));});
+// table
+const tb=document.getElementById("tb");
+tb.innerHTML="<thead><tr><th>Mois</th>"+S.map(s=>"<th>"+s.n+"</th>").join("")+"</tr></thead><tbody>"+
+  DATA.map(r=>"<tr><td>"+r.d+"</td>"+S.map(s=>"<td>"+r[s.k].toFixed(1)+"</td>").join("")+"</tr>").join("")+"</tbody>";
+</script>
+</body>
+</html>
