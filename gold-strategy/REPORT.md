@@ -130,7 +130,7 @@ Le filtre 2 est robuste à sa période — ce n'est pas 200 qui est magique :
 
 | Filtre | SMA50 | SMA100 | SMA150 | SMA200 | SMA250 | SMA300 | aucun |
 |---|---|---|---|---|---|---|---|
-| Sharpe net | 1,80 | 2,04 | 2,62 | 2,36 | 2,52 | 2,53 | 1,64 |
+| Sharpe net | 1,45 | 1,65 | 2,11 | 1,91 | 2,03 | 2,04 | 1,32 |
 
 ### Résultats (frais 0,30 $ inclus)
 
@@ -141,8 +141,14 @@ Le filtre 2 est robuste à sa période — ce n'est pas 200 qui est magique :
 | Moyenne R (net) | +0,0239 ATR, **t = +3,92** |
 | Taux de réussite | 53,6 % |
 | Profit factor | 1,672 |
-| Sharpe | **2,36** |
+| Sharpe annualisé | **1,91** |
 | Exposition | 5,7 % du temps |
+
+> **Correction.** Les Sharpe au niveau trade ont d'abord été annualisés avec 252 trades
+> par an alors que la stratégie n'en produit que **164**. Les valeurs ci-dessus sont
+> corrigées (facteur √(164/252) = 0,81). Les chiffres du portefeuille plus bas (1,71
+> pour A, 2,03 pour le 50/50) passent par la série quotidienne avec des zéros les jours
+> sans trade — ils étaient déjà justes.
 
 **Walk-forward** — sortie choisie uniquement sur 2021-2024, appliquée en aveugle ensuite :
 
@@ -159,7 +165,7 @@ Bootstrap par blocs de 20 (respecte l'autocorrélation) : P = **0,02 %**.
 
 | Coût | 0,20 $ | 0,30 $ | 0,50 $ | 0,80 $ | 1,00 $ |
 |---|---|---|---|---|---|
-| Sharpe | 2,63 | 2,36 | 1,81 | 0,99 | 0,45 |
+| Sharpe | 2,12 | 1,91 | 1,46 | 0,80 | 0,36 |
 
 ### La limite à comprendre absolument
 
@@ -318,6 +324,87 @@ fenêtre la plus « significative » du balayage net (23:30→00:30, t = −4,54
 de −0,24** : zéro. Son écart-type intraday est simplement le plus petit de la journée
 (0,078 contre 0,18-0,22 à 18:00), donc les frais y pèsent le plus lourd en t. La shorter
 perdrait aussi. Ne jamais lire un t net sans regarder le t brut.
+
+---
+
+## Paramétrage opérationnel
+
+### Les règles, en heure de New York (à ancrer sur NY, pas sur l'heure locale)
+
+| Paramètre | Valeur |
+|---|---|
+| Instrument | XAUUSD |
+| Sens | long uniquement |
+| Entrée | ordre au marché à **18:05 NY** (clôture de la bougie M5 de 18:00) |
+| Sortie | ordre au marché à **20:55 NY**, sans condition |
+| Stop-loss | **aucun** (10 variantes testées, toutes dégradent le résultat) |
+| Take-profit | aucun |
+| Filtre 1 | ne pas trader la réouverture du **dimanche soir** |
+| Filtre 2 | uniquement si **clôture quotidienne précédente > SMA(200)** quotidienne |
+| Fréquence | ~164 trades/an |
+
+Heure de Paris : **00:05 → 02:55**. La règle doit suivre le fuseau de New York, pas
+Paris : la coupure quotidienne de l'or est calée sur NY, et les deux zones ne changent
+pas d'heure aux mêmes dates (~3 semaines de décalage à 5 h par an). Impossible à tenir
+manuellement — c'est à automatiser.
+
+### Taille de position
+
+```
+unités (onces) = capital x f / ATR(14) quotidien
+```
+
+| Volatilité visée | f | Rendement attendu/an | Drawdown plausible |
+|---|---|---|---|
+| 5 % | 2,4 % | ~9,5 % | ~8 % |
+| 7,5 % | 3,6 % | ~14,3 % | ~12 % |
+| 10 % | 4,9 % | ~19,1 % | ~16 % |
+
+Exemple à f = 2,5 %, capital 10 000 $, ATR = 105 $ : 2,38 oz = **0,024 lot**,
+soit ~6 $ espérés par trade et ~980 $/an. Avec un lot minimum de 0,01, il faut environ
+**4 000 $ de capital** pour que la taille soit représentable sans arrondi grossier.
+
+### Les deux verrous à vérifier avant de risquer un euro
+
+**1. Le spread réel à 18:05 NY.** C'est le paramètre n°1, et il n'est pas dans les
+données. Relevez-le pendant 2-3 semaines à cette minute précise :
+
+| Spread constaté | Verdict |
+|---|---|
+| ≤ 0,30 $ | correct, l'edge passe |
+| 0,30-0,50 $ | acceptable, Sharpe ~1,5 |
+| 0,50-0,80 $ | marginal |
+| > 0,80 $ | **ne pas trader** |
+
+**2. Le seuil d'ATR.** L'edge brut vaut ~0,039 ATR. Pour qu'il fasse au moins 2× le coût :
+
+| Spread | ATR minimum requis |
+|---|---|
+| 0,30 $ | 15 $ |
+| 0,50 $ | 26 $ |
+| 0,80 $ | 41 $ |
+
+ATR actuel : **105 $**. Très confortable — mais la condition doit rester dans le code,
+car en 2022 (ATR 25 $) la stratégie ne gagnait rien net de frais.
+
+### Ce qu'un test en avant peut et ne peut pas prouver
+
+| Objectif | Trades nécessaires | Durée |
+|---|---|---|
+| t = 1,5 | 102 | 7 mois |
+| t = 2,0 | 181 | **13 mois** |
+| t = 2,5 | 283 | 21 mois |
+
+**Trois mois ne confirmeront rien statistiquement.** Un forward test sert uniquement à
+valider l'exécution : spread réel, slippage, heures de session correctes, comportement du
+broker à la réouverture. Pour la validation statistique, il faut plus d'un an.
+
+### Critères d'arrêt, à fixer maintenant
+
+- drawdown > 2× le maximum du backtest à volatilité équivalente (soit > 12-15 %)
+- 150 trades écoulés avec une espérance nette négative
+- spread moyen constaté à 18:05 qui dépasse durablement 0,80 $
+- ATR quotidien sous le seuil du tableau ci-dessus → mise en pause, pas d'arrêt définitif
 
 ---
 
