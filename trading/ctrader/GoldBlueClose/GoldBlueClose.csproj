@@ -1,0 +1,12 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net6.0</TargetFramework>
+    <LangVersion>latest</LangVersion>
+    <RootNamespace>cAlgo.Robots</RootNamespace>
+    <AssemblyName>GoldBlueClose</AssemblyName>
+    <Version>1.0.0</Version>
+    <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
+  </PropertyGroup>
+  <ItemGroup><Compile Include="GoldBlueClose.cs" /></ItemGroup>
+  <ItemGroup><PackageReference Include="cTrader.Automate" Version="1.*" /></ItemGroup>
+</Project>
