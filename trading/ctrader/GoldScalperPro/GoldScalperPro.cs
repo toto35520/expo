@@ -1022,9 +1022,9 @@ namespace cAlgo.Robots
         /// <summary>A resting limit is a stale opinion once the setup's bar is a few bars old.</summary>
         private void ExpirePendingOrders()
         {
-            PendingOrder[] orders = PendingOrders.FindAll(_label, SymbolName);
+            List<PendingOrder> orders = MyPendingOrders();
 
-            if (orders.Length == 0)
+            if (orders.Count == 0)
             {
                 _awaitingLimitFill = false;
                 _pendingSetup = null;
@@ -1040,7 +1040,7 @@ namespace cAlgo.Robots
 
             if (!stale && !shutDown) return;
 
-            for (int i = 0; i < orders.Length; i++)
+            for (int i = 0; i < orders.Count; i++)
                 CancelPendingOrder(orders[i]);
 
             LogVerbose(stale ? "limit order expired" : "limit order cancelled (bot standing down)");
@@ -1279,10 +1279,10 @@ namespace cAlgo.Robots
         {
             // A resting limit must die with the positions, or the daily cap can be
             // breached by an order that fills a minute after the bot stood down.
-            PendingOrder[] orders = PendingOrders.FindAll(_label, SymbolName);
-            for (int i = 0; i < orders.Length; i++)
+            List<PendingOrder> orders = MyPendingOrders();
+            for (int i = 0; i < orders.Count; i++)
                 CancelPendingOrder(orders[i]);
-            if (orders.Length > 0)
+            if (orders.Count > 0)
             {
                 _awaitingLimitFill = false;
                 _pendingSetup = null;
@@ -1461,7 +1461,7 @@ namespace cAlgo.Robots
             if (!IsInSession()) return "outside session";
             if (!_hourAllowed[Server.Time.Hour])
                 return string.Format("hour {0:00}h off", Server.Time.Hour);
-            if (PendingOrders.FindAll(_label, SymbolName).Length > 0) return "limit order working";
+            if (MyPendingOrders().Count > 0) return "limit order working";
             if (IsRolloverWindow()) return "rollover window";
             if (IsNewsBlackout()) return "news blackout";
 
@@ -1725,7 +1725,7 @@ namespace cAlgo.Robots
                 SpreadPips, _spreadAverage,
                 _slippageCount > 0 ? (_slippageSumPips / _slippageCount).ToString("F2") + "p avg" : "n/a",
                 Positions.FindAll(_label, SymbolName).Length,
-                PendingOrders.FindAll(_label, SymbolName).Length,
+                MyPendingOrders().Count,
                 _tradesToday, MaxTradesPerDay,
                 dayChange,
                 _statTrades,
@@ -1880,6 +1880,21 @@ namespace cAlgo.Robots
         #endregion
 
         #region Helpers
+
+        /// <summary>
+        /// PendingOrders offers no FindAll(label, symbol) overload the way Positions does,
+        /// so this is the equivalent: this instance's working orders on this symbol only.
+        /// </summary>
+        private List<PendingOrder> MyPendingOrders()
+        {
+            List<PendingOrder> mine = new List<PendingOrder>();
+            foreach (PendingOrder order in PendingOrders)
+            {
+                if (order.Label == _label && order.SymbolName == SymbolName)
+                    mine.Add(order);
+            }
+            return mine;
+        }
 
         private double SpreadPips
         {

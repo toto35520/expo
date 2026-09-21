@@ -161,7 +161,12 @@ Sur un cTrader plus ancien, deux retours en arrière possibles :
 | Erreur de build | Correctif |
 |---|---|
 | `'RobotAttribute' does not contain a definition for 'AddIndicators'` | Dans `[Robot(...)]`, supprimer `, AddIndicators = true` |
-| `No overload for 'ModifyPosition' takes 4 arguments` | Ligne ~1089, supprimer `, ProtectionType.Absolute` |
+| `No overload for 'ModifyPosition' takes 4 arguments` | Dans `TryMoveStop`, supprimer `, ProtectionType.Absolute` |
+| `'PendingOrder' does not contain a definition for 'SymbolName'` | Dans `MyPendingOrders()`, remplacer `order.SymbolName` par `order.SymbolCode` |
+| `'Robot' does not contain a definition for 'PlaceLimitOrder'` | Mettre `Entry execution` sur `Market` et supprimer la méthode `PlaceRetraceLimit` |
+
+Note d'API : `Positions` expose `FindAll(label, symbol)`, **pas** `PendingOrders` — d'où le
+helper `MyPendingOrders()` qui filtre la collection à la main. Ne remplace pas l'un par l'autre.
 
 ## 8. Le dashboard
 
