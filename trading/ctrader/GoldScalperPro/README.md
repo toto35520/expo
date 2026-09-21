@@ -179,7 +179,45 @@ Le panneau en haut à **droite** du graphique donne l'état en direct :
 Si rien ne se passe, la ligne `status` répond à la question. `outside session` = normal hors
 07:00–17:00 UTC par défaut : le bot reprend tout seul à l'ouverture de la fenêtre.
 
-## 9. Limites connues
+## 9. Critères d'acceptation du backtest
+
+Le code est fini. La **stratégie**, elle, n'est validée par aucun trade historique : les valeurs
+par défaut sont des choix raisonnés, pas des chiffres optimisés. Voilà comment trancher.
+
+### Le coût par trade (à calculer sur TON compte)
+
+```
+coût en R  =  (spread + commission en pips) / stop en pips
+```
+
+Exemple réel (Fusion Markets, XAUUSD, 1 pip = 0,10 $) : spread 0,9 pip + commission ~0,45 pip
+sur un stop de 17 pips → **~8 % du R perdu à chaque aller-retour**. C'est un bon terrain :
+au-dessus de 20 %, le scalping de l'or est mathématiquement condamné quelle que soit la logique.
+
+### Le verdict
+
+| Mesure | Garder | Jeter |
+|---|---|---|
+| Nombre de trades | ≥ 200 sur ≥ 12 mois | < 100 (statistiquement vide) |
+| Profit factor (net de commissions) | ≥ 1,25 | < 1,10 |
+| Drawdown max | < 15 % | > 25 % |
+| Écart in-sample / out-of-sample | PF hors échantillon ≥ 80 % du PF optimisé | effondrement hors échantillon |
+| Profit factor > 2,5 | **suspect** — vérifier les données et les commissions | |
+
+Un PF spectaculaire sur 40 trades ne veut rien dire. Un PF de 1,3 sur 400 trades, stable
+hors échantillon, vaut infiniment plus.
+
+### Protocole
+
+1. Backtest **tick data** + commissions réelles, 12 mois minimum.
+2. Optimise **3 à 5 paramètres maximum** sur les 6 premiers mois
+   (`Stop loss = ATR x`, `Min quality score`, `Trend ADX threshold`, `TP1/TP2 at R`).
+3. Valide sur les 3 mois suivants **sans retoucher un seul réglage**.
+4. Si ça tient : démo ≥ 4 semaines sur le serveur live.
+5. Si ça ne tient pas : ce n'est pas un réglage à ajuster, c'est la stratégie qui n'a pas d'edge
+   sur cette période. Change de logique plutôt que de re-optimiser.
+
+## 10. Limites connues
 
 - Pas de calendrier économique : cTrader n'y donne pas accès avec `AccessRights.None`. Le filtre
   news est **manuel** (`News blackout times`, en UTC — pense à mettre 12:30/14:00 pour NFP & CPI,

@@ -462,6 +462,9 @@ namespace cAlgo.Robots
                 MaxRiskPercent = RiskPercent;
             if (RangeAdxLevel > TrendAdxLevel)
                 Print("WARNING: range ADX ceiling above trend ADX threshold, regimes will overlap.");
+            if (TpRewardRatio <= 0 && !UseTpLadder && !UseTrailing && MaxBarsInTrade <= 0)
+                Print("WARNING: no hard take profit, no ladder, no trailing and no time stop. "
+                    + "Positions could only ever exit on their stop loss. Enable at least one.");
 
             _emaFast = Indicators.ExponentialMovingAverage(Bars.ClosePrices, FastEmaPeriod);
             _emaPullback = Indicators.ExponentialMovingAverage(Bars.ClosePrices, PullbackEmaPeriod);
@@ -1260,7 +1263,16 @@ namespace cAlgo.Robots
 
         private void EnforceDailyGuards()
         {
-            if (_dayLocked || _dayStartEquity <= 0) return;
+            if (_dayStartEquity <= 0) return;
+
+            if (_dayLocked)
+            {
+                // A close can be rejected (requote, market closed, connection drop).
+                // Being locked must never mean being locked *and still exposed*.
+                if (Positions.FindAll(_label, SymbolName).Length > 0)
+                    CloseAll("daily limit - retry");
+                return;
+            }
 
             double changePercent = (Account.Equity - _dayStartEquity) / _dayStartEquity * 100.0;
 
