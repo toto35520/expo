@@ -6,6 +6,12 @@ using cAlgo.API.Internals;
 
 namespace cAlgo.Robots
 {
+    public enum ScoreMode
+    {
+        OfiOnly,
+        Blend
+    }
+
     public enum ContextMode
     {
         Off,
@@ -97,6 +103,9 @@ namespace cAlgo.Robots
         #endregion
 
         #region 03 - Score weights
+
+        [Parameter("Score mode", Group = "03 - Weights", DefaultValue = ScoreMode.OfiOnly)]
+        public ScoreMode Scoring { get; set; }
 
         [Parameter("Weight: order flow imbalance", Group = "03 - Weights", DefaultValue = 30, MinValue = 0, MaxValue = 100)]
         public double WeightOfi { get; set; }
@@ -203,6 +212,7 @@ namespace cAlgo.Robots
         {
             public DateTime Time;
             public double NormalisedOfi;
+            public double BlendScore;
             public double Mid;
             public bool Settled;
             public double Outcome;
@@ -240,6 +250,8 @@ namespace cAlgo.Robots
         private double _absorption;
         private double _spreadQuality;
         private double _score;
+        private double _blendScore;
+        private double _ofiScore;
         private double _avgDepth = 1;
         private double _spreadAverage;
         private DateTime _lastSampleTime = DateTime.MinValue;
@@ -476,9 +488,17 @@ namespace cAlgo.Robots
             if (weightSum <= 0) { _score = 0; return; }
 
             // Spread quality multiplies conviction: a widening book is not a signal.
-            _score = (signed / weightSum) * 100.0 * (WeightSpread > 0 ? _spreadQuality : 1.0);
-            if (_score > 100) _score = 100;
-            if (_score < -100) _score = -100;
+            double spreadFactor = WeightSpread > 0 ? _spreadQuality : 1.0;
+
+            _blendScore = (signed / weightSum) * 100.0 * spreadFactor;
+            _blendScore = Math.Max(-100, Math.Min(100, _blendScore));
+
+            // The research supports ONE variable. Keep it separately tradeable, and
+            // separately measurable, instead of burying it inside a weighted blend.
+            _ofiScore = _depthAvailable ? ofiSignal * 100.0 * spreadFactor : 0;
+            _ofiScore = Math.Max(-100, Math.Min(100, _ofiScore));
+
+            _score = Scoring == ScoreMode.OfiOnly ? _ofiScore : _blendScore;
         }
 
         #endregion
@@ -501,6 +521,7 @@ namespace cAlgo.Robots
             {
                 Time = Server.Time,
                 NormalisedOfi = _avgDepth > 0 ? _ofiWindow / _avgDepth : 0,
+                BlendScore = _blendScore,
                 Mid = (Symbol.Bid + Symbol.Ask) / 2.0,
                 Settled = false
             });
@@ -521,59 +542,83 @@ namespace cAlgo.Robots
             }
         }
 
-        private void PrintRegression()
+        private class Fit
         {
+            public int N;
+            public double Beta;
+            public double T;
+            public double R2;
+            public bool Valid;
+        }
+
+        /// <summary>
+        /// Ordinary least squares of the realised move on one predictor. Run on both
+        /// candidates so the six-feature blend has to prove it beats the single
+        /// variable the literature actually supports.
+        /// </summary>
+        private Fit Regress(bool useBlend)
+        {
+            Fit fit = new Fit();
             int n = 0;
             double sx = 0, sy = 0;
+
             for (int i = 0; i < _samples.Count; i++)
             {
                 if (!_samples[i].Settled) continue;
-                sx += _samples[i].NormalisedOfi;
+                sx += useBlend ? _samples[i].BlendScore : _samples[i].NormalisedOfi;
                 sy += _samples[i].Outcome;
                 n++;
             }
-
-            if (n < 30)
-            {
-                Print("Order flow regression: only {0} settled samples, not enough to say anything.", n);
-                return;
-            }
+            if (n < 30) { fit.N = n; return fit; }
 
             double mx = sx / n, my = sy / n;
             double sxx = 0, sxy = 0, syy = 0;
             for (int i = 0; i < _samples.Count; i++)
             {
                 if (!_samples[i].Settled) continue;
-                double dx = _samples[i].NormalisedOfi - mx;
+                double x = useBlend ? _samples[i].BlendScore : _samples[i].NormalisedOfi;
+                double dx = x - mx;
                 double dy = _samples[i].Outcome - my;
                 sxx += dx * dx; sxy += dx * dy; syy += dy * dy;
             }
+            if (sxx <= 0 || syy <= 0) { fit.N = n; return fit; }
 
-            if (sxx <= 0 || syy <= 0)
+            fit.N = n;
+            fit.Beta = sxy / sxx;
+            fit.R2 = (sxy * sxy) / (sxx * syy);
+            double residual = Math.Max(syy - fit.Beta * sxy, 0);
+            double se = Math.Sqrt(residual / Math.Max(1, n - 2) / sxx);
+            fit.T = se > 0 ? fit.Beta / se : 0;
+            fit.Valid = true;
+            return fit;
+        }
+
+        private void PrintRegression()
+        {
+            Fit ofi = Regress(false);
+            Fit blend = Regress(true);
+
+            if (!ofi.Valid)
             {
-                Print("Order flow regression: no variation in the samples.");
+                Print("Order flow regression: only {0} settled samples, not enough to say anything.", ofi.N);
                 return;
             }
 
-            double beta = sxy / sxx;
-            double r2 = (sxy * sxy) / (sxx * syy);
-            double residual = Math.Max(syy - beta * sxy, 0);
-            double se = Math.Sqrt(residual / Math.Max(1, n - 2) / sxx);
-            double t = se > 0 ? beta / se : 0;
-
             Print("--- order flow regression on YOUR feed ---");
-            Print("dMid(pips over {0}s) = alpha + beta * (OFI / depth)", HorizonSeconds);
-            Print("n {0} | beta {1:F4} pips per unit | t {2:F2} | R2 {3:F4}", n, beta, t, r2);
+            Print("dMid(pips over {0}s) regressed on each predictor, n = {1}", HorizonSeconds, ofi.N);
+            Print("  OFI / depth  : beta {0:F4} | t {1:F2} | R2 {2:F5}", ofi.Beta, ofi.T, ofi.R2);
+            if (blend.Valid)
+                Print("  blended score: beta {0:F4} | t {1:F2} | R2 {2:F5}", blend.Beta, blend.T, blend.R2);
 
             double cost = _spreadAverage;
-            Print("Round-trip spread is {0:F2} pips. At this beta, the signal must reach "
+            Print("Round-trip spread is {0:F2} pips. At this beta the signal must reach "
                 + "OFI/depth of {1:F2} just to cover it.",
-                cost, beta != 0 ? Math.Abs(cost / beta) : 0);
+                cost, ofi.Beta != 0 ? Math.Abs(cost / ofi.Beta) : 0);
 
-            if (Math.Abs(t) < 2.0)
+            if (Math.Abs(ofi.T) < 2.0)
                 Print("VERDICT: beta is not significant on this sample. The published effect does "
                     + "not show up on this feed at this horizon. Do not trade this score.");
-            else if (beta < 0)
+            else if (ofi.Beta < 0)
                 Print("VERDICT: beta is significant but NEGATIVE - flow leads price the opposite way "
                     + "here, consistent with liquidity-provider inventory skew rather than market "
                     + "pressure. The score's sign would have to be inverted, and that is a finding "
@@ -581,6 +626,19 @@ namespace cAlgo.Robots
             else
                 Print("VERDICT: beta is positive and significant. Now check the magnitude above: "
                     + "significance is not the same as clearing the spread.");
+
+            if (blend.Valid)
+            {
+                if (blend.R2 > ofi.R2 * 1.2)
+                    Print("BLEND: the six-feature score explains {0:F0}% more variance than OFI alone. "
+                        + "The extra weights are earning their keep - switch Score mode to Blend.",
+                        100.0 * (blend.R2 / Math.Max(ofi.R2, 1e-12) - 1.0));
+                else
+                    Print("BLEND: the six-feature score does NOT beat OFI alone (R2 {0:F5} vs {1:F5}). "
+                        + "The extra five weights are free parameters buying nothing - stay on OfiOnly "
+                        + "rather than tuning them until the backtest looks good.",
+                        blend.R2, ofi.R2);
+            }
             Print("------------------------------------------");
         }
 
