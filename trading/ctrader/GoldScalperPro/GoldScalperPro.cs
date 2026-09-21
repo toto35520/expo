@@ -490,7 +490,7 @@ namespace cAlgo.Robots
             Print("=== GOLD SCALPER PRO v2 ===");
             Print("Symbol {0} | entry TF {1} | bias TF {2}", SymbolName, TimeFrame, BiasTimeFrame);
             Print("PipSize {0} | Digits {1} | live spread {2:F1} pips", Symbol.PipSize, Symbol.Digits, SpreadPips);
-            Print("Min volume {0} units | equity {1:F2} {2}", Symbol.VolumeInUnitsMin, Account.Equity, Account.Currency);
+            Print("Min volume {0} units | equity {1:F2} {2}", Symbol.VolumeInUnitsMin, Account.Equity, Account.Asset.Name);
             Print("Calibrate 'Max spread (pips)' against the live spread printed above.");
         }
 
@@ -948,7 +948,7 @@ namespace cAlgo.Robots
                 {
                     LogVerbose(string.Format(
                         "skip: risk {0:F2} {1} too small for a {2:F1} pip stop (below broker min lot)",
-                        riskAmount, Account.Currency, stopPips));
+                        riskAmount, Account.Asset.Name, stopPips));
                     return 0;
                 }
                 units = Symbol.VolumeInUnitsMin;
@@ -1084,7 +1084,9 @@ namespace cAlgo.Robots
                 if (position.StopLoss.HasValue && newStop >= position.StopLoss.Value - step) return false;
             }
 
-            return ModifyPosition(position, newStop, position.TakeProfit).IsSuccessful;
+            // Absolute: newStop is a price level, not a pip distance.
+            // On a pre-5.0 cTrader, drop the ProtectionType argument.
+            return ModifyPosition(position, newStop, position.TakeProfit, ProtectionType.Absolute).IsSuccessful;
         }
 
         private void ClosePositionSafe(Position position, string reason)
@@ -1182,7 +1184,7 @@ namespace cAlgo.Robots
             if (drawdown > _statMaxDrawdown) _statMaxDrawdown = drawdown;
 
             LogVerbose(string.Format("closed #{0} {1:F2} {2} ({3:F1} pips, {4:F2}R)",
-                position.Id, netProfit, Account.Currency, position.Pips,
+                position.Id, netProfit, Account.Asset.Name, position.Pips,
                 riskPips > 0 ? position.Pips / riskPips : 0));
         }
 
@@ -1419,11 +1421,11 @@ namespace cAlgo.Robots
             Print("Trades {0} | wins {1} ({2:F1}%)", _statTrades, _statWins,
                 _statTrades > 0 ? 100.0 * _statWins / _statTrades : 0);
             Print("Gross profit {0:F2} | gross loss {1:F2} | net {2:F2} {3}",
-                _statGrossProfit, _statGrossLoss, _cumulativeNetProfit, Account.Currency);
+                _statGrossProfit, _statGrossLoss, _cumulativeNetProfit, Account.Asset.Name);
             Print("Profit factor {0} | average {1:F2}R | max drawdown {2:F2} {3}",
                 _statGrossLoss > 0 ? (_statGrossProfit / _statGrossLoss).ToString("F2") : "n/a",
                 _statTrades > 0 ? _statSumR / _statTrades : 0,
-                _statMaxDrawdown, Account.Currency);
+                _statMaxDrawdown, Account.Asset.Name);
         }
 
         #endregion

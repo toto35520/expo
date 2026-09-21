@@ -140,7 +140,17 @@ Paramètres à optimiser en priorité (les plus sensibles) :
 
 ---
 
-## 7. Limites connues
+## 7. Compatibilité cTrader
+
+Le code cible cTrader **4.x / 5.x** et compile sans warning sur ces versions.
+Sur un cTrader plus ancien, deux retours en arrière possibles :
+
+| Erreur de build | Correctif |
+|---|---|
+| `'RobotAttribute' does not contain a definition for 'AddIndicators'` | Dans `[Robot(...)]`, supprimer `, AddIndicators = true` |
+| `No overload for 'ModifyPosition' takes 4 arguments` | Ligne ~1089, supprimer `, ProtectionType.Absolute` |
+
+## 8. Limites connues
 
 - Pas de calendrier économique : cTrader n'y donne pas accès avec `AccessRights.None`. Le filtre
   news est **manuel** (`News blackout times`, en UTC — pense à mettre 12:30/14:00 pour NFP & CPI,
