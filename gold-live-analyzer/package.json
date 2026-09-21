@@ -1,0 +1,31 @@
+{
+  "name": "gold-live-analyzer",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Analyseur XAU/USD live \u2014 lecture de marche en direct et signaux buy/sell, connecte a cTrader Open API.",
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "typecheck": "tsc --noEmit",
+    "test": "node --import ./tests/register.mjs --test tests/*.test.ts"
+  },
+  "dependencies": {
+    "next": "^16.3.5",
+    "react": "^19.3.0",
+    "react-dom": "^19.3.0",
+    "ws": "8.18.3"
+  },
+  "devDependencies": {
+    "@tailwindcss/postcss": "4.1.13",
+    "@types/node": "22.18.1",
+    "@types/react": "^19.3.0",
+    "@types/react-dom": "^19.3.0",
+    "@types/ws": "8.18.1",
+    "tailwindcss": "4.1.13",
+    "typescript": "5.9.2"
+  },
+  "engines": {
+    "node": ">=20.0.0"
+  }
+}

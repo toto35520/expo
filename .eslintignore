@@ -26,3 +26,6 @@
 
 !packages/@expo/config-plugins/src/android/**
 !packages/@expo/config-plugins/src/ios/**
+
+# Projet autonome (Next.js) avec sa propre chaine d outils
+/gold-live-analyzer/**
