@@ -106,7 +106,53 @@ Lis ça avant de lui faire confiance.
 
 ---
 
-## 5. Ordre de test
+## 5. Combien de trades par jour — et pourquoi c'est un réglage, pas une observation
+
+Avec les valeurs par défaut sur M15, session 07:00-16:00 UTC (36 barres/jour) :
+
+| Étape | Trades/jour |
+|---|---|
+| Signaux bruts, mode `RegimeTransition` | ~2,9 |
+| (mode `Both` ajoutait ~2,0 de plus) | ~4,9 |
+| Après le repli de 0,5×ATR (≈55 % de remplissage) | ~1,6 |
+| Après blocage par une position déjà ouverte | **~1,4** |
+| Plafond dur `Max trades per day` | 6 |
+
+**Or, les signaux validés du papier tradaient beaucoup moins :**
+
+| Signal validé | Trades | Jours | Par jour |
+|---|---|---|---|
+| London Session Signal B | 289 | 947 | **0,31** |
+| RTH Confluence (in-sample) | 538 | ~750 | **0,72** |
+
+Mon implémentation trade donc **2 à 4 fois plus souvent** que le signal validé. Ce n'est pas
+un détail : ça veut dire qu'elle prend des configurations marginales que le signal validé
+aurait rejetées, et la moyenne de l'edge s'effondre avec.
+
+La cause probable : avec K=3 et une initialisation par quantiles, mes régimes pèsent environ
+1/3 chacun. Le « Regime 1 (Active Flow) » du papier est sans doute un état bien plus rare —
+leur nombre de trades l'implique. Le papier ne publie pas K.
+
+### Calibre la fréquence AVANT de regarder le P&L
+
+C'est la seule cible de calibration disponible qui **ne touche pas au résultat**, donc qui ne
+peut pas overfitter. Vise **0,31 à 0,72 trade/jour**, dans cet ordre :
+
+| Levier | Défaut | Direction | Publié par le papier ? |
+|---|---|---|---|
+| `Regimes (mixture components)` | 3 | **monter à 4 ou 5** | ❌ non publié → c'est le bon levier |
+| `Signal mode` | RegimeTransition | garder un seul mode | ❌ mon choix |
+| `Min volume z-score` | 0,5 | monter vers 1,0 | ✅ publié — à bouger en dernier |
+| `Min transition probability` | 0,15 | monter vers 0,25 | ✅ publié — à bouger en dernier |
+| `Clean-transition lookback` | 2 | monter à 3 | ✅ publié — à bouger en dernier |
+
+Bouge d'abord ce que le papier ne fixe pas. Ne touche à ses valeurs publiées qu'en dernier
+recours, et note-le.
+
+Le bot écrit sa fréquence réelle dans le dashboard et dans le résumé de session, et te
+prévient explicitement si elle sort de la bande.
+
+## 6. Ordre de test
 
 1. **Backtest tick data, 12 mois, commissions réelles**, M15, réglages par défaut.
 2. Lire le bloc `expectancy` : `Win rate X% | break-even win rate needed Y%`.

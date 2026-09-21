@@ -67,7 +67,7 @@ namespace cAlgo.Robots
         [Parameter("On-chart dashboard", Group = "01 - General", DefaultValue = true)]
         public bool ShowDashboard { get; set; }
 
-        [Parameter("Signal mode", Group = "01 - General", DefaultValue = SignalMode.Both)]
+        [Parameter("Signal mode", Group = "01 - General", DefaultValue = SignalMode.RegimeTransition)]
         public SignalMode Mode { get; set; }
 
         [Parameter("Allow shorts", Group = "01 - General", DefaultValue = true)]
@@ -223,6 +223,9 @@ namespace cAlgo.Robots
         private bool _dayLocked;
         private string _status = "starting";
 
+        private DateTime _firstTradingDay = DateTime.MinValue;
+        private int _tradingDays;
+        private int _signalsArmed;
         private int _statTrades;
         private int _statWins;
         private double _statNet;
@@ -249,6 +252,10 @@ namespace cAlgo.Robots
                 SymbolName, TimeFrame, HoldBars, RegimeCount);
             Print("PipSize {0} | spread now {1:F1} pips | equity {2:F2} {3}",
                 Symbol.PipSize, SpreadPips, Account.Equity, Account.Asset.Name);
+            Print("CALIBRATION TARGET: the validated signals fired 0.31 (London Signal B) to "
+                + "0.72 (RTH Confluence) trades per day. Tune regime count and thresholds until "
+                + "this bot's rate lands in that band BEFORE looking at any P&L - frequency is "
+                + "the one target that does not overfit the outcome.");
             Print("NOTE: the controls this is built on were measured on Nasdaq futures. "
                 + "The same study found nothing on gold intraday. Walk-forward before trusting it.");
 
@@ -669,6 +676,7 @@ namespace cAlgo.Robots
 
         private void Arm(int direction, string setup)
         {
+            _signalsArmed++;
             _armedDirection = direction;
             _armedSetup = setup;
             _armedReference = Bars.ClosePrices.Last(1);
@@ -956,6 +964,11 @@ namespace cAlgo.Robots
 
         private void StartNewDay()
         {
+            if (_currentDay != default(DateTime) && Server.Time.DayOfWeek != DayOfWeek.Saturday
+                && Server.Time.DayOfWeek != DayOfWeek.Sunday)
+                _tradingDays++;
+            if (_firstTradingDay == DateTime.MinValue) _firstTradingDay = Server.Time.Date;
+
             _currentDay = Server.Time.Date;
             _dayStartEquity = Account.Equity;
             _tradesToday = 0;
@@ -987,6 +1000,17 @@ namespace cAlgo.Robots
                 _statNet, Account.Asset.Name);
             Print("Profit factor {0}",
                 _statGrossLoss > 0 ? (_statGrossProfit / _statGrossLoss).ToString("F2") : "n/a");
+
+            int days = Math.Max(1, _tradingDays);
+            double perDay = (double)_statTrades / days;
+            Print("Frequency: {0} trades over {1} trading days = {2:F2} per day ({3} signals armed)",
+                _statTrades, days, perDay, _signalsArmed);
+            if (perDay > 1.0)
+                Print("TOO FREQUENT: the validated signals fired 0.31-0.72 per day. Raise the regime "
+                    + "count, the transition probability floor or the volume z floor until the rate "
+                    + "matches, then re-read the expectancy.");
+            else if (perDay < 0.15 && _statTrades > 0)
+                Print("TOO RARE: below the validated band, and too few trades to conclude anything.");
 
             if (_tradeRs.Count == 0) return;
 
@@ -1034,7 +1058,8 @@ namespace cAlgo.Robots
                 "status      {4}\n" +
                 "armed       {5}\n" +
                 "position    {6} | today {7}/{8}\n" +
-                "trades      {9} | win {10:F0}% | net {11:F2}",
+                "trades      {9} | win {10:F0}% | net {11:F2}\n" +
+                "frequency   {12:F2}/day (target 0.31-0.72)",
                 RegimeName(current),
                 current >= 0 ? TransitionProbability(current, BullRegime) : 0,
                 current >= 0 ? TransitionProbability(current, BearRegime) : 0,
@@ -1045,7 +1070,8 @@ namespace cAlgo.Robots
                 _tradesToday, MaxTradesPerDay,
                 _statTrades,
                 _statTrades > 0 ? 100.0 * _statWins / _statTrades : 0,
-                _statNet);
+                _statNet,
+                (double)_statTrades / Math.Max(1, _tradingDays));
 
             Chart.DrawStaticText("grs_dashboard", text, VerticalAlignment.Top, HorizontalAlignment.Right, Color.Gold);
         }
