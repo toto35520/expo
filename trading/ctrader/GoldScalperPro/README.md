@@ -246,7 +246,43 @@ Ferme un trade de tendance quand l'EMA rapide repasse de l'autre côté de l'EMA
 ATR. À tester : ça améliore le PF sur des marchés qui tournent vite, ça le dégrade sur des
 tendances qui respirent.
 
-## 10. Critères d'acceptation du backtest
+## 10. Ce que l'échelle de TP coûte vraiment
+
+Contre-intuitif, mais c'est la mécanique la plus importante du bot.
+
+Prendre TP1 à 1R sur 40 % de la position **plafonne tes gagnants pendant que tes perdants
+restent en taille pleine**. Ça rassure, et ça augmente le taux de réussite dont tu as besoin
+pour simplement être à l'équilibre :
+
+| Ce que fait le gagnant moyen | Gain moyen | Win rate nécessaire pour être à zéro |
+|---|---|---|
+| TP1 touché, puis runner stoppé au break-even | +0,40R | **71 %** |
+| TP1 + TP2 touchés, puis runner au BE | +0,94R | **52 %** |
+| Course complète jusqu'au TP dur | +1,84R | **35 %** |
+
+(+ 2 à 4 points à cause des ~8 % de coût par aller-retour)
+
+Un scalpeur qui touche 1R puis revient au BE est le cas **le plus fréquent** en intraday sur
+l'or. Si ton backtest sort un win rate de 55 % et une expectancy négative, le réflexe
+« j'ajoute un filtre » est le mauvais : le problème est que tes gagnants sont coupés trop tôt.
+Essaie alors `TP ladder = Non` (ou TP1 à 1,5R au lieu de 1,0R) **avant** de durcir les entrées.
+
+Le rapport de fin de session te donne directement ces chiffres :
+
+```
+--- expectancy (in R) ---
+Average win 0.71R | average loss 0.98R | payoff 0.72
+Expectancy 0.041R per trade | best 1.84R | worst -1.12R
+Win rate 58.4% | break-even win rate needed 58.0%
+Longest losing streak 6 trades
+VERDICT: positive expectancy over 214 trades. Now check it holds out of sample.
+```
+
+`worst` est le chiffre à surveiller pour « les pertes doivent être minimes » : si une seule
+perte dépasse **-1,35R**, le bot te le signale — ça veut dire qu'un stop n'a pas tenu (gap,
+slippage, décalage), et que le modèle de risque fuit quelque part.
+
+## 11. Critères d'acceptation du backtest
 
 Le code est fini. La **stratégie**, elle, n'est validée par aucun trade historique : les valeurs
 par défaut sont des choix raisonnés, pas des chiffres optimisés. Voilà comment trancher.
@@ -284,7 +320,7 @@ hors échantillon, vaut infiniment plus.
 5. Si ça ne tient pas : ce n'est pas un réglage à ajuster, c'est la stratégie qui n'a pas d'edge
    sur cette période. Change de logique plutôt que de re-optimiser.
 
-## 11. Limites connues
+## 12. Limites connues
 
 - Pas de calendrier économique : cTrader n'y donne pas accès avec `AccessRights.None`. Le filtre
   news est **manuel** (`News blackout times`, en UTC — pense à mettre 12:30/14:00 pour NFP & CPI,

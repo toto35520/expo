@@ -437,6 +437,7 @@ namespace cAlgo.Robots
         private readonly Dictionary<int, TradeState> _states = new Dictionary<int, TradeState>();
         private readonly List<int> _blackoutMinutesOfDay = new List<int>();
         private readonly List<double> _equityCurve = new List<double>();
+        private readonly List<double> _tradeRs = new List<double>();
 
         private ExponentialMovingAverage _emaFast;
         private ExponentialMovingAverage _emaPullback;
@@ -1426,8 +1427,16 @@ namespace cAlgo.Robots
                 }
             }
 
-            if (riskMoney > 0) _statSumR += netProfit / riskMoney;
-            else if (riskPips > 0) _statSumR += position.Pips / riskPips;
+            if (riskMoney > 0)
+            {
+                double r = netProfit / riskMoney;
+                _statSumR += r;
+                _tradeRs.Add(r);
+            }
+            else if (riskPips > 0)
+            {
+                _statSumR += position.Pips / riskPips;
+            }
 
             double equity = Account.Equity;
             if (equity > _statPeakEquity) _statPeakEquity = equity;
@@ -1791,7 +1800,71 @@ namespace cAlgo.Robots
                 Print("Entry slippage {0:F2} pips on average over {1} market fills",
                     _slippageSumPips / _slippageCount, _slippageCount);
 
+            PrintExpectancy();
             PrintBreakdown();
+        }
+
+        /// <summary>
+        /// The honest scoreboard. "Small losses, big wins" is not a setting - it is an
+        /// outcome, and these are the numbers that say whether it actually happened.
+        /// </summary>
+        private void PrintExpectancy()
+        {
+            if (_tradeRs.Count == 0) return;
+
+            double sumWin = 0, sumLoss = 0, worst = 0, best = 0, sum = 0;
+            int wins = 0, losses = 0, streak = 0, longestStreak = 0;
+
+            for (int i = 0; i < _tradeRs.Count; i++)
+            {
+                double r = _tradeRs[i];
+                sum += r;
+
+                if (r > 0)
+                {
+                    wins++;
+                    sumWin += r;
+                    streak = 0;
+                }
+                else
+                {
+                    losses++;
+                    sumLoss += -r;
+                    streak++;
+                    if (streak > longestStreak) longestStreak = streak;
+                }
+
+                if (r < worst) worst = r;
+                if (r > best) best = r;
+            }
+
+            double avgWin = wins > 0 ? sumWin / wins : 0;
+            double avgLoss = losses > 0 ? sumLoss / losses : 0;
+            double payoff = avgLoss > 0 ? avgWin / avgLoss : 0;
+            double expectancy = sum / _tradeRs.Count;
+            double breakEvenWinRate = (avgWin + avgLoss) > 0 ? 100.0 * avgLoss / (avgWin + avgLoss) : 0;
+            double actualWinRate = 100.0 * wins / _tradeRs.Count;
+
+            Print("--- expectancy (in R) ---");
+            Print("Average win {0:F2}R | average loss {1:F2}R | payoff {2:F2}", avgWin, avgLoss, payoff);
+            Print("Expectancy {0:F3}R per trade | best {1:F2}R | worst {2:F2}R", expectancy, best, worst);
+            Print("Win rate {0:F1}% | break-even win rate needed {1:F1}%", actualWinRate, breakEvenWinRate);
+            Print("Longest losing streak {0} trades", longestStreak);
+
+            if (expectancy <= 0)
+                Print("VERDICT: negative expectancy. This configuration loses money over time, "
+                    + "whatever any individual day looked like.");
+            else if (_tradeRs.Count < 100)
+                Print("VERDICT: positive so far, but {0} trades is not yet evidence. "
+                    + "Come back at 200+.", _tradeRs.Count);
+            else
+                Print("VERDICT: positive expectancy over {0} trades. Now check it holds "
+                    + "out of sample before believing it.", _tradeRs.Count);
+
+            // A stop loss that held should never lose meaningfully more than 1R.
+            if (worst < -1.35)
+                Print("WARNING: worst trade lost {0:F2}R against a 1R risk model. Gaps, slippage "
+                    + "or a stop that did not hold. Check that trade before trusting the sizing.", worst);
         }
 
         /// <summary>
