@@ -118,16 +118,59 @@ Un trade n'est pris que si `score ≥ Min quality score` (45 par défaut). Si
 
 ## 5. Presets de départ
 
-| Paramètre | Prudent | Équilibré (défaut) | Agressif |
-|---|---|---|---|
-| Base risk per trade | 0,25 % | 0,5 % | 0,8 % |
-| Min quality score | 60 | 45 | 35 |
-| Session | NewYorkOnly | LondonAndNewYork | LondonAndNewYork |
-| Enable range mode | non | oui | oui |
-| Max trades per day | 6 | 15 | 25 |
-| Daily loss cap | 2 % | 3 % | 4 % |
-| Enable pyramiding | non | non | oui (1 renfort) |
-| Time stop (barres) | 40 | 60 | 90 |
+| Paramètre | Prudent | Équilibré (défaut) | Agressif | **Win rate 70 %** |
+|---|---|---|---|---|
+| Base risk per trade | 0,25 % | 0,5 % | 0,8 % | 0,5 % |
+| Min quality score | 60 | 45 | 35 | 50 |
+| Session | NewYorkOnly | LondonAndNewYork | LondonAndNewYork | LondonAndNewYork |
+| Enable range mode | non | oui | oui | oui |
+| Max trades per day | 6 | 15 | 25 | 20 |
+| Daily loss cap | 2 % | 3 % | 4 % | 3 % |
+| Enable pyramiding | non | non | oui (1 renfort) | non |
+| Time stop (barres) | 40 | 60 | 90 | 30 |
+| **TP ladder** | oui | oui | oui | **non** |
+| **Hard take profit = R x** | 3,0 | 3,0 | 3,0 | **0,45** |
+| **Break-even** | oui | oui | oui | **non** |
+| **ATR trailing stop** | oui | oui | oui | **non** |
+
+### Le preset « Win rate 70 % »
+
+Le win rate est un **réglage**, pas un résultat : il se choisit en déplaçant le TP par
+rapport au stop. Pour une marche sans dérive, `P(toucher +a avant -1R) = 1/(1+a)`.
+
+| TP visé | TP en pips (stop 17p) | Win rate obtenu | Win rate pour être à zéro | Expectancy à ce win rate |
+|---|---|---|---|---|
+| 0,25R | 4,3 | 80,0 % | 86,4 % | −0,080R |
+| 0,33R | 5,6 | 75,2 % | 81,2 % | −0,080R |
+| **0,43R** | **7,3** | **69,9 %** | **75,5 %** | **−0,080R** |
+| 0,70R | 11,9 | 58,8 % | 63,5 % | −0,080R |
+| 1,00R | 17,0 | 50,0 % | 54,0 % | −0,080R |
+| 2,50R | 42,6 | 28,6 % | 30,9 % | −0,080R |
+
+**Regarde la dernière colonne : elle est identique partout.** Sans edge, toutes les
+configurations perdent exactement le coût d'exécution. Choisir 70 % n'est donc ni plus
+facile ni plus difficile que choisir 40 % — c'est un choix de **forme**, pas de performance.
+Dans tous les cas il faut battre le win rate « sans edge » de **8 % relatifs**.
+
+Ce que ce preset change vraiment :
+
+| | Défaut (ladder) | Preset 70 % |
+|---|---|---|
+| Win rate attendu | ~55 % | ~70 % |
+| Seuil de rentabilité | 55-63 % | **75,5 %** |
+| Une perte efface | ~1,4 gagnant | **2,33 gagnants** |
+| Plus longue série de pertes sur 200 trades | ~6 trades | ~4 trades |
+| Marge d'exécution du TP | 19× le spread | **8× le spread** |
+
+Le vrai risque de ce preset n'est pas mathématique, il est **opérationnel** : un TP à
+7,3 pips pour un spread de 0,9 pip ne laisse que 8× de marge. Un élargissement de spread
+à 3 pips ramène ce ratio à 2,4× et le TP devient difficile à atteindre proprement.
+Le filtre `Max spread` et la détection de spike sont donc **critiques** sur cette config,
+pas optionnels.
+
+**Le test est simple** : lance le backtest avec ce preset et lis la ligne
+`Win rate X% | break-even win rate needed 75.5%`. Si X < 75,5 %, tu perds — même avec un
+70 % qui a l'air magnifique.
 
 Le pyramidage suppose `Max open positions` ≥ 1 : les entrées supplémentaires sont traitées comme
 des **renforts** (même sens obligatoire, position existante ≥ `Add-on at R`, risque ×0,5).
