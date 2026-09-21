@@ -1,0 +1,70 @@
+=============================================================
+ GOLD cBOTS - INSTALLATION
+=============================================================
+
+CONTENU
+  GoldOrderFlow/     v0.5 - moteur order flow      [NE TRADE PAS par defaut]
+  GoldScalperPro/    scalpeur M1                   [TRADE en demarrant]
+  GoldRegimeShift/   regimes GMM M15               [TRADE en demarrant]
+  GoldBlueClose/     ferme des que dans le bleu    [TRADE en demarrant]
+  GoldTrendFTF/      trend journalier              [refuse de dimensionner sur petit compte]
+  README.md          index complet + checklist avant reel
+
+-------------------------------------------------------------
+ INSTALLATION SANS COPIER-COLLER  (recommandee)
+-------------------------------------------------------------
+
+1. Dezippe l'archive.
+
+2. Copie les CINQ dossiers dans :
+
+   Windows :  C:\Users\<toi>\Documents\cAlgo\Sources\Robots\
+   macOS   :  ~/Documents/cAlgo/Sources/Robots/
+
+   Tu dois obtenir par exemple :
+   ~/Documents/cAlgo/Sources/Robots/GoldOrderFlow/GoldOrderFlow.cs
+   ~/Documents/cAlgo/Sources/Robots/GoldOrderFlow/GoldOrderFlow.csproj
+
+3. Redemarre cTrader.
+
+4. Onglet Automate : les cinq robots apparaissent dans la liste.
+   Clic droit sur chacun -> Build (ou ouvrir + F6).
+
+-------------------------------------------------------------
+ POURQUOI CINQ FICHIERS ET PAS UN SEUL
+-------------------------------------------------------------
+
+Un fichier unique voudrait dire un seul Build. Or une seule erreur
+d'API dans une strategie ferait echouer la compilation des CINQ.
+
+On a deja eu deux echecs de build sur des suppositions d'API
+(PendingOrders.FindAll, puis ModifyPosition). Le moteur order flow
+utilise MarketDepth, qui est la partie la plus incertaine de toutes.
+
+Separes : si GoldOrderFlow ne compile pas chez ton courtier, les
+quatre autres fonctionnent quand meme.
+
+Tu veux quand meme un fichier unique ? C'est faisable, demande-le.
+
+-------------------------------------------------------------
+ PAR OU COMMENCER
+-------------------------------------------------------------
+
+1. GoldOrderFlow sur XAUUSD M1, "Measure only" = Oui.
+   Risque zero. Laisse tourner quelques sessions.
+   A l'arret, lis le bloc "order flow regression" dans le journal.
+
+2. En parallele : backtest de GoldRegimeShift, M15, tick data,
+   12 mois, avec tes commissions reelles.
+
+3. Ne passe AUCUN bot en reel avant la checklist du README.
+
+-------------------------------------------------------------
+ IMPORTANT
+-------------------------------------------------------------
+
+Aucun de ces robots n'a ete valide sur des donnees historiques.
+Compte demo uniquement tant que les backtests ne sont pas faits.
+
+Rien ne trade tant que tu n'as pas ajoute une instance ET appuye
+sur Start.
