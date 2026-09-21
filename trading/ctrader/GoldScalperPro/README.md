@@ -179,7 +179,69 @@ Le panneau en haut à **droite** du graphique donne l'état en direct :
 Si rien ne se passe, la ligne `status` répond à la question. `outside session` = normal hors
 07:00–17:00 UTC par défaut : le bot reprend tout seul à l'ouverture de la fenêtre.
 
-## 9. Critères d'acceptation du backtest
+## 9. La boucle d'amélioration
+
+C'est ici que les performances se gagnent — pas en ajoutant des indicateurs, mais en mesurant
+puis en coupant.
+
+### Le rapport de fin de session
+
+Quand tu arrêtes le bot (ou à la fin d'un backtest), il écrit ceci dans le journal :
+
+```
+=== session summary ===
+Trades 214 | wins 118 (55.1%)
+Profit factor 1.34 | average 0.11R | max drawdown 63.20 EUR
+Entry slippage 0.38 pips on average over 214 market fills
+--- by setup ---
+TREND-PULLBACK    118 trades | win  59% | net    184.50 | PF 1.62
+TREND-BREAKOUT     61 trades | win  48% | net    -22.10 | PF 0.92
+RANGE-FADE         35 trades | win  57% | net     41.30 | PF 1.28
+--- by hour (UTC) ---
+07h                42 trades | win  62% | net     96.40 | PF 1.88
+08h                39 trades | win  51% | net      8.20 | PF 1.06
+13h                48 trades | win  58% | net     71.10 | PF 1.51
+16h                31 trades | win  39% | net    -48.90 | PF 0.71
+```
+
+### Ce que tu en fais
+
+1. **Un setup sous PF 1,0 sur ≥ 40 trades** → coupe-le : `Enable trend mode`,
+   `Enable range mode`, `Breakout entries`, `Pullback entries` sont là pour ça.
+   Dans l'exemple ci-dessus, désactiver `Breakout entries` remonte le PF global.
+2. **Une heure sous PF 1,0 sur ≥ 30 trades** → sors-la avec `Trading hours UTC`.
+   Ici : `7-15` au lieu de tout, et l'heure 16 disparaît.
+3. **Slippage moyen > 1 pip** → passe `Entry execution` en `LimitRetrace`.
+4. Re-backteste. Si le PF monte **et** que ça tient hors échantillon, tu gardes.
+   S'il monte seulement en échantillon, tu viens d'overfitter : reviens en arrière.
+
+Ne coupe jamais sur moins de 30 trades dans un bucket — c'est du bruit, pas un signal.
+
+### Entrée à la limite (`Entry execution = LimitRetrace`)
+
+Au lieu de payer le spread pour chasser la clôture de la bougie de signal, le bot pose un
+**ordre limite au niveau sur lequel le setup a été construit** (l'EMA de pullback, le niveau
+cassé, la bande de Bollinger) et attend que le prix revienne :
+
+| | Market | LimitRetrace |
+|---|---|---|
+| Taux de remplissage | 100 % | ~40-60 % |
+| Prix d'entrée | clôture + spread | le niveau, souvent 2-5 pips mieux |
+| Effet sur un stop de 17 pips | — | **10 à 30 % de R gagné par trade rempli** |
+
+C'est le plus gros levier d'exécution du bot, mais il change la nature de la stratégie
+(moins de trades, meilleurs prix) : **backteste les deux modes séparément**, ne suppose pas.
+`Limit offset` décale l'ordre vers le prix actuel (remplit plus souvent, un peu moins bien),
+`Limit expiry` annule l'ordre après N barres — un niveau vieux de 5 barres n'est plus le setup.
+
+### Sortie sur cassure de tendance (`Exit trend trades on EMA flip`)
+
+Ferme un trade de tendance quand l'EMA rapide repasse de l'autre côté de l'EMA de pullback,
+**uniquement si le trade n'est pas en perte**. Capture le retournement plus tôt que le trailing
+ATR. À tester : ça améliore le PF sur des marchés qui tournent vite, ça le dégrade sur des
+tendances qui respirent.
+
+## 10. Critères d'acceptation du backtest
 
 Le code est fini. La **stratégie**, elle, n'est validée par aucun trade historique : les valeurs
 par défaut sont des choix raisonnés, pas des chiffres optimisés. Voilà comment trancher.
@@ -217,13 +279,14 @@ hors échantillon, vaut infiniment plus.
 5. Si ça ne tient pas : ce n'est pas un réglage à ajuster, c'est la stratégie qui n'a pas d'edge
    sur cette période. Change de logique plutôt que de re-optimiser.
 
-## 10. Limites connues
+## 11. Limites connues
 
 - Pas de calendrier économique : cTrader n'y donne pas accès avec `AccessRights.None`. Le filtre
   news est **manuel** (`News blackout times`, en UTC — pense à mettre 12:30/14:00 pour NFP & CPI,
   et 18:00 les jours de FOMC).
 - Le P&L journalier est mesuré en equity depuis le début de journée : un redémarrage du bot en
   cours de journée remet cette référence à zéro.
-- Les stats de session (`win rate`, `profit factor`) comptent les fermetures partielles comme
-  des trades distincts — c'est la mécanique de cTrader, pas un bug.
+- Les stats du bot regroupent les fermetures partielles par position : un trade sorti en
+  3 morceaux compte pour **un** trade, avec son P&L total. Le rapport de cTrader, lui, les
+  compte séparément — les deux chiffres ne coïncideront pas, et c'est normal.
 - Toutes les heures sont en **UTC** (le robot force `TimeZones.UTC`), pas en heure du courtier.

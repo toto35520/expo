@@ -30,6 +30,12 @@ namespace cAlgo.Robots
         Chaos
     }
 
+    public enum EntryExecution
+    {
+        Market,
+        LimitRetrace
+    }
+
     public enum EquityCurveMode
     {
         Off,
@@ -280,6 +286,15 @@ namespace cAlgo.Robots
         [Parameter("Min bars between trades", Group = "09 - Quality", DefaultValue = 3, MinValue = 0, MaxValue = 200)]
         public int MinBarsBetweenTrades { get; set; }
 
+        [Parameter("Entry execution", Group = "09 - Quality", DefaultValue = EntryExecution.Market)]
+        public EntryExecution Execution { get; set; }
+
+        [Parameter("Limit offset (pips)", Group = "09 - Quality", DefaultValue = 1.0, MinValue = 0, MaxValue = 50, Step = 0.5)]
+        public double LimitOffsetPips { get; set; }
+
+        [Parameter("Limit expiry (bars)", Group = "09 - Quality", DefaultValue = 3, MinValue = 1, MaxValue = 50)]
+        public int LimitExpiryBars { get; set; }
+
         #endregion
 
         #region 10 - Exits
@@ -338,6 +353,9 @@ namespace cAlgo.Robots
         [Parameter("Give-back stop (% of peak R, 0=off)", Group = "10 - Exits", DefaultValue = 0, MinValue = 0, MaxValue = 100, Step = 5)]
         public double GiveBackPercent { get; set; }
 
+        [Parameter("Exit trend trades on EMA flip", Group = "10 - Exits", DefaultValue = false)]
+        public bool ExitOnTrendBreak { get; set; }
+
         #endregion
 
         #region 11 - Pyramiding
@@ -382,6 +400,9 @@ namespace cAlgo.Robots
         [Parameter("News blackout +/- (minutes)", Group = "12 - Clock", DefaultValue = 12, MinValue = 0, MaxValue = 180)]
         public int NewsBlackoutMinutes { get; set; }
 
+        [Parameter("Trading hours UTC (empty=all)", Group = "12 - Clock", DefaultValue = "")]
+        public string TradingHoursMask { get; set; }
+
         [Parameter("Trade on Friday", Group = "12 - Clock", DefaultValue = true)]
         public bool TradeFriday { get; set; }
 
@@ -395,12 +416,22 @@ namespace cAlgo.Robots
         private class TradeState
         {
             public double RiskPips;
+            public double RiskMoney;
             public int PartialsDone;
             public bool BreakEvenDone;
             public int OpenBarIndex;
             public double PeakR;
             public string Setup;
             public bool IsAddOn;
+        }
+
+        private class Bucket
+        {
+            public int Trades;
+            public int Wins;
+            public double Net;
+            public double GrossProfit;
+            public double GrossLoss;
         }
 
         private readonly Dictionary<int, TradeState> _states = new Dictionary<int, TradeState>();
@@ -437,6 +468,14 @@ namespace cAlgo.Robots
         private MarketRegime _regime = MarketRegime.Unknown;
         private string _lastBlocker = "starting";
         private bool _calibrationPrinted;
+
+        private readonly Dictionary<int, string> _setupOf = new Dictionary<int, string>();
+        private readonly bool[] _hourAllowed = new bool[24];
+        private int _pendingBarIndex = int.MinValue;
+        private string _pendingSetup;
+        private bool _awaitingLimitFill;
+        private double _slippageSumPips;
+        private int _slippageCount;
 
         private double _cumulativeNetProfit;
         private int _statTrades;
@@ -486,9 +525,11 @@ namespace cAlgo.Robots
             _statPeakEquity = Account.Equity;
 
             ParseBlackoutTimes();
+            ParseTradingHours();
             StartNewDay();
             AdoptExistingPositions();
 
+            Positions.Opened += OnPositionOpened;
             Positions.Closed += OnPositionClosed;
 
             Print("=== GOLD SCALPER PRO v2 ===");
@@ -500,6 +541,7 @@ namespace cAlgo.Robots
 
         protected override void OnStop()
         {
+            Positions.Opened -= OnPositionOpened;
             Positions.Closed -= OnPositionClosed;
             PrintStatistics();
         }
@@ -529,6 +571,8 @@ namespace cAlgo.Robots
             }
 
             _regime = ClassifyRegime();
+            ExpirePendingOrders();
+            ApplyTrendBreakExit();
 
             if (CloseOutsideSession && !IsInSession())
             {
@@ -875,12 +919,19 @@ namespace cAlgo.Robots
             double volume = ComputeVolume(stopPips, riskPercent);
             if (volume <= 0) return;
 
+            if (Execution == EntryExecution.LimitRetrace && !isAddOn)
+            {
+                PlaceRetraceLimit(tradeType, setup, score, volume, stopPips, targetPips);
+                return;
+            }
+
+            double requested = tradeType == TradeType.Buy ? Symbol.Ask : Symbol.Bid;
+
             TradeResult result;
             if (UseSlippageProtection)
             {
-                double basePrice = tradeType == TradeType.Buy ? Symbol.Ask : Symbol.Bid;
                 result = ExecuteMarketRangeOrder(tradeType, SymbolName, volume, MaxSlippagePips,
-                    basePrice, _label, stopPips, targetPips);
+                    requested, _label, stopPips, targetPips);
             }
             else
             {
@@ -897,9 +948,13 @@ namespace cAlgo.Robots
             _lastEntryBarIndex = Bars.Count - 1;
             if (isAddOn) _addOnsInCluster++;
 
+            RecordSlippage(tradeType, requested, result.Position.EntryPrice);
+
+            _setupOf[result.Position.Id] = setup;
             _states[result.Position.Id] = new TradeState
             {
                 RiskPips = stopPips,
+                RiskMoney = stopPips * Symbol.PipValue * volume,
                 PartialsDone = 0,
                 BreakEvenDone = false,
                 OpenBarIndex = Bars.Count - 1,
@@ -913,6 +968,118 @@ namespace cAlgo.Robots
                 targetPips.HasValue ? targetPips.Value.ToString("F1") + "p" : "trail only", SpreadPips);
 
             DrawSignal(tradeType, setup);
+        }
+
+        /// <summary>
+        /// Instead of paying the spread to chase the signal bar's close, rest a limit
+        /// at the level the setup was built on and let price come back to us. Fewer
+        /// fills, materially better entry price on the ones that do fill.
+        /// </summary>
+        private void PlaceRetraceLimit(TradeType tradeType, string setup, double score,
+            double volume, double stopPips, double? targetPips)
+        {
+            bool isBuy = tradeType == TradeType.Buy;
+            double level;
+
+            if (setup == "RANGE-FADE")
+                level = isBuy ? _bollinger.Bottom.Last(1) : _bollinger.Top.Last(1);
+            else if (setup == "TREND-BREAKOUT")
+                level = isBuy ? HighestHigh(BreakoutLookback, 2) : LowestLow(BreakoutLookback, 2);
+            else
+                level = _emaPullback.Result.Last(1);
+
+            if (double.IsNaN(level)) return;
+
+            // Offset towards current price: slightly worse fill price, materially better fill rate.
+            double limitPrice = isBuy
+                ? level + PipsToPrice(LimitOffsetPips)
+                : level - PipsToPrice(LimitOffsetPips);
+            limitPrice = Math.Round(limitPrice, Symbol.Digits);
+
+            // The retrace has to still be ahead of us, otherwise this is just a worse market order.
+            if (isBuy && limitPrice >= Symbol.Ask) return;
+            if (!isBuy && limitPrice <= Symbol.Bid) return;
+
+            TradeResult result = PlaceLimitOrder(tradeType, SymbolName, volume, limitPrice,
+                _label, stopPips, targetPips, (DateTime?)null);
+
+            if (!result.IsSuccessful)
+            {
+                Print("Limit rejected ({0}): {1}", setup, result.Error);
+                return;
+            }
+
+            _awaitingLimitFill = true;
+            _pendingSetup = setup;
+            _pendingBarIndex = Bars.Count - 1;
+            _lastEntryBarIndex = Bars.Count - 1;
+
+            Print("LIMIT {0} {1} | {2} | score {3:F0} | at {4} ({5:F1}p below market) | SL {6:F1}p",
+                tradeType, SymbolName, setup, score, limitPrice,
+                PriceToPips(Math.Abs((isBuy ? Symbol.Ask : Symbol.Bid) - limitPrice)), stopPips);
+        }
+
+        /// <summary>A resting limit is a stale opinion once the setup's bar is a few bars old.</summary>
+        private void ExpirePendingOrders()
+        {
+            PendingOrder[] orders = PendingOrders.FindAll(_label, SymbolName);
+
+            if (orders.Length == 0)
+            {
+                _awaitingLimitFill = false;
+                _pendingSetup = null;
+                _pendingBarIndex = int.MinValue;
+                return;
+            }
+
+            bool stale = _pendingBarIndex != int.MinValue
+                && Bars.Count - 1 - _pendingBarIndex >= LimitExpiryBars;
+            bool shutDown = _dayLocked
+                || Server.Time < _cooldownUntil
+                || (CloseOutsideSession && !IsInSession());
+
+            if (!stale && !shutDown) return;
+
+            for (int i = 0; i < orders.Length; i++)
+                CancelPendingOrder(orders[i]);
+
+            LogVerbose(stale ? "limit order expired" : "limit order cancelled (bot standing down)");
+            _awaitingLimitFill = false;
+            _pendingSetup = null;
+            _pendingBarIndex = int.MinValue;
+        }
+
+        /// <summary>
+        /// A trend trade whose trend is gone is no longer the trade that was taken.
+        /// Only ever applied once the position is out of its initial risk.
+        /// </summary>
+        private void ApplyTrendBreakExit()
+        {
+            if (!ExitOnTrendBreak) return;
+
+            double fast = _emaFast.Result.Last(1);
+            double slow = _emaPullback.Result.Last(1);
+            if (double.IsNaN(fast) || double.IsNaN(slow)) return;
+
+            Position[] positions = Positions.FindAll(_label, SymbolName);
+            for (int i = 0; i < positions.Length; i++)
+            {
+                Position position = positions[i];
+                TradeState state = GetOrRebuildState(position);
+                if (state == null || state.RiskPips <= 0) continue;
+                if (state.Setup == null || !state.Setup.StartsWith("TREND")) continue;
+                if (position.Pips < 0) continue;
+
+                bool broken = position.TradeType == TradeType.Buy ? fast < slow : fast > slow;
+                if (broken) ClosePositionSafe(position, "trend break");
+            }
+        }
+
+        private void RecordSlippage(TradeType tradeType, double requested, double filled)
+        {
+            if (requested <= 0 || filled <= 0) return;
+            _slippageSumPips += PriceToPips(tradeType == TradeType.Buy ? filled - requested : requested - filled);
+            _slippageCount++;
         }
 
         /// <summary>Base risk adjusted by streak, quality score and the bot's own equity curve.</summary>
@@ -1110,6 +1277,18 @@ namespace cAlgo.Robots
 
         private void CloseAll(string reason)
         {
+            // A resting limit must die with the positions, or the daily cap can be
+            // breached by an order that fills a minute after the bot stood down.
+            PendingOrder[] orders = PendingOrders.FindAll(_label, SymbolName);
+            for (int i = 0; i < orders.Length; i++)
+                CancelPendingOrder(orders[i]);
+            if (orders.Length > 0)
+            {
+                _awaitingLimitFill = false;
+                _pendingSetup = null;
+                _pendingBarIndex = int.MinValue;
+            }
+
             Position[] positions = Positions.FindAll(_label, SymbolName);
             for (int i = 0; i < positions.Length; i++)
                 ClosePositionSafe(positions[i], reason);
@@ -1151,16 +1330,77 @@ namespace cAlgo.Robots
                 Print("Adopted {0} existing position(s) with label {1}", positions.Length, _label);
         }
 
+        private void OnPositionOpened(PositionOpenedEventArgs args)
+        {
+            Position position = args.Position;
+            if (position.Label != _label || position.SymbolName != SymbolName) return;
+            if (_states.ContainsKey(position.Id)) return; // the market path already registered it
+
+            double riskPips = position.StopLoss.HasValue
+                ? PriceToPips(Math.Abs(position.EntryPrice - position.StopLoss.Value))
+                : 0;
+            string setup = _pendingSetup == null ? "LIMIT" : _pendingSetup;
+
+            _setupOf[position.Id] = setup;
+            _states[position.Id] = new TradeState
+            {
+                RiskPips = riskPips,
+                RiskMoney = riskPips * Symbol.PipValue * position.VolumeInUnits,
+                PartialsDone = 0,
+                BreakEvenDone = false,
+                OpenBarIndex = Bars.Count - 1,
+                PeakR = 0,
+                Setup = setup,
+                IsAddOn = false
+            };
+
+            if (_awaitingLimitFill)
+            {
+                _tradesToday++;
+                _awaitingLimitFill = false;
+                _pendingSetup = null;
+                _pendingBarIndex = int.MinValue;
+                Print("LIMIT FILLED {0} {1} | {2} | entry {3} | SL {4:F1}p",
+                    position.TradeType, SymbolName, setup, position.EntryPrice, riskPips);
+                DrawSignal(position.TradeType, setup);
+            }
+        }
+
+        /// <summary>
+        /// Sums every historical fill belonging to one position. A laddered trade closes in
+        /// several pieces, and Position.NetProfit at the close event only carries the last
+        /// one - reading that alone scores a winning trade as a loss whenever the runner
+        /// comes back to break-even, which would poison the streak logic and the stats.
+        /// </summary>
+        private double RealizedForPosition(int positionId, double fallback)
+        {
+            double total = 0;
+            bool found = false;
+            int stop = Math.Max(0, History.Count - 200);
+
+            for (int i = History.Count - 1; i >= stop; i--)
+            {
+                HistoricalTrade trade = History[i];
+                if (trade.PositionId != positionId) continue;
+                total += trade.NetProfit;
+                found = true;
+            }
+
+            return found ? total : fallback;
+        }
+
         private void OnPositionClosed(PositionClosedEventArgs args)
         {
             Position position = args.Position;
             if (position.Label != _label || position.SymbolName != SymbolName) return;
 
             TradeState state;
-            double riskPips = _states.TryGetValue(position.Id, out state) ? state.RiskPips : 0;
+            bool hadState = _states.TryGetValue(position.Id, out state);
+            double riskPips = hadState ? state.RiskPips : 0;
+            double riskMoney = hadState ? state.RiskMoney : 0;
             _states.Remove(position.Id);
 
-            double netProfit = position.NetProfit;
+            double netProfit = RealizedForPosition(position.Id, position.NetProfit);
             _cumulativeNetProfit += netProfit;
             _equityCurve.Add(_cumulativeNetProfit);
 
@@ -1186,16 +1426,18 @@ namespace cAlgo.Robots
                 }
             }
 
-            if (riskPips > 0) _statSumR += position.Pips / riskPips;
+            if (riskMoney > 0) _statSumR += netProfit / riskMoney;
+            else if (riskPips > 0) _statSumR += position.Pips / riskPips;
 
             double equity = Account.Equity;
             if (equity > _statPeakEquity) _statPeakEquity = equity;
             double drawdown = _statPeakEquity - equity;
             if (drawdown > _statMaxDrawdown) _statMaxDrawdown = drawdown;
 
-            LogVerbose(string.Format("closed #{0} {1:F2} {2} ({3:F1} pips, {4:F2}R)",
-                position.Id, netProfit, Account.Asset.Name, position.Pips,
-                riskPips > 0 ? position.Pips / riskPips : 0));
+            LogVerbose(string.Format("closed #{0} {1} | total {2:F2} {3} ({4:F2}R)",
+                position.Id, _setupOf.ContainsKey(position.Id) ? _setupOf[position.Id] : "?",
+                netProfit, Account.Asset.Name,
+                riskMoney > 0 ? netProfit / riskMoney : 0));
         }
 
         #endregion
@@ -1217,6 +1459,9 @@ namespace cAlgo.Robots
                 return "entry spacing";
 
             if (!IsInSession()) return "outside session";
+            if (!_hourAllowed[Server.Time.Hour])
+                return string.Format("hour {0:00}h off", Server.Time.Hour);
+            if (PendingOrders.FindAll(_label, SymbolName).Length > 0) return "limit order working";
             if (IsRolloverWindow()) return "rollover window";
             if (IsNewsBlackout()) return "news blackout";
 
@@ -1374,6 +1619,58 @@ namespace cAlgo.Robots
             return false;
         }
 
+        /// <summary>Accepts "7-11,13-16" or "7,8,9". Empty means every hour is allowed.</summary>
+        private void ParseTradingHours()
+        {
+            bool empty = string.IsNullOrWhiteSpace(TradingHoursMask);
+            for (int h = 0; h < 24; h++) _hourAllowed[h] = empty;
+            if (empty) return;
+
+            string[] parts = TradingHoursMask.Split(new char[] { ',', ';', ' ' },
+                StringSplitOptions.RemoveEmptyEntries);
+
+            int opened = 0;
+            for (int i = 0; i < parts.Length; i++)
+            {
+                string part = parts[i].Trim();
+                string[] range = part.Split('-');
+                int from = 0;
+                int to = 0;
+
+                if (range.Length == 1 && int.TryParse(range[0], out from))
+                    to = from;
+                else if (range.Length == 2 && int.TryParse(range[0], out from) && int.TryParse(range[1], out to))
+                    { }
+                else
+                {
+                    Print("Ignored invalid trading hour: '{0}' (expected 9 or 7-11)", part);
+                    continue;
+                }
+
+                if (from < 0 || from > 23 || to < 0 || to > 23 || to < from)
+                {
+                    Print("Ignored out-of-range trading hour: '{0}'", part);
+                    continue;
+                }
+
+                for (int h = from; h <= to; h++)
+                {
+                    if (!_hourAllowed[h]) opened++;
+                    _hourAllowed[h] = true;
+                }
+            }
+
+            if (opened == 0)
+            {
+                Print("WARNING: 'Trading hours UTC' opened no hour at all. Falling back to every hour.");
+                for (int h = 0; h < 24; h++) _hourAllowed[h] = true;
+            }
+            else
+            {
+                Print("Trading hours restricted to {0} hour(s) UTC.", opened);
+            }
+        }
+
         private static int CircularMinuteDistance(int a, int b)
         {
             int diff = Math.Abs(a - b);
@@ -1418,18 +1715,23 @@ namespace cAlgo.Robots
                 "status      {1}\n" +
                 "score       {2:F0} / min {3:F0}\n" +
                 "spread      {4:F1}p (avg {5:F1}p)\n" +
-                "open        {6} | today {7}/{8}\n" +
-                "day P/L     {9:F2}%\n" +
-                "trades      {10} | win {11:F0}% | PF {12}",
+                "slippage    {6}\n" +
+                "open        {7} | pending {8} | today {9}/{10}\n" +
+                "day P/L     {11:F2}%\n" +
+                "trades      {12} | win {13:F0}% | PF {14} | {15:F2}R avg",
                 _regime,
                 _lastBlocker ?? "ready",
                 _lastQualityScore, MinQualityScore,
                 SpreadPips, _spreadAverage,
-                Positions.FindAll(_label, SymbolName).Length, _tradesToday, MaxTradesPerDay,
+                _slippageCount > 0 ? (_slippageSumPips / _slippageCount).ToString("F2") + "p avg" : "n/a",
+                Positions.FindAll(_label, SymbolName).Length,
+                PendingOrders.FindAll(_label, SymbolName).Length,
+                _tradesToday, MaxTradesPerDay,
                 dayChange,
                 _statTrades,
                 _statTrades > 0 ? 100.0 * _statWins / _statTrades : 0,
-                _statGrossLoss > 0 ? (_statGrossProfit / _statGrossLoss).ToString("F2") : "n/a");
+                Pf(_statGrossProfit, _statGrossLoss),
+                _statTrades > 0 ? _statSumR / _statTrades : 0);
 
             // Top-left is where cTrader stacks the indicator legend, so the panel goes right.
             Chart.DrawStaticText("gsp_dashboard", text, VerticalAlignment.Top, HorizontalAlignment.Right, Color.Gold);
@@ -1482,9 +1784,97 @@ namespace cAlgo.Robots
             Print("Gross profit {0:F2} | gross loss {1:F2} | net {2:F2} {3}",
                 _statGrossProfit, _statGrossLoss, _cumulativeNetProfit, Account.Asset.Name);
             Print("Profit factor {0} | average {1:F2}R | max drawdown {2:F2} {3}",
-                _statGrossLoss > 0 ? (_statGrossProfit / _statGrossLoss).ToString("F2") : "n/a",
+                Pf(_statGrossProfit, _statGrossLoss),
                 _statTrades > 0 ? _statSumR / _statTrades : 0,
                 _statMaxDrawdown, Account.Asset.Name);
+            if (_slippageCount > 0)
+                Print("Entry slippage {0:F2} pips on average over {1} market fills",
+                    _slippageSumPips / _slippageCount, _slippageCount);
+
+            PrintBreakdown();
+        }
+
+        /// <summary>
+        /// Where the performance work actually happens: which setup pays, and at which hour.
+        /// Built from History and grouped by position id, so a laddered exit counts once.
+        /// </summary>
+        private void PrintBreakdown()
+        {
+            Dictionary<int, double> netByPosition = new Dictionary<int, double>();
+            Dictionary<int, DateTime> entryByPosition = new Dictionary<int, DateTime>();
+
+            for (int i = 0; i < History.Count; i++)
+            {
+                HistoricalTrade trade = History[i];
+                if (trade.Label != _label || trade.SymbolName != SymbolName) continue;
+
+                if (netByPosition.ContainsKey(trade.PositionId))
+                {
+                    netByPosition[trade.PositionId] += trade.NetProfit;
+                }
+                else
+                {
+                    netByPosition[trade.PositionId] = trade.NetProfit;
+                    entryByPosition[trade.PositionId] = trade.EntryTime;
+                }
+            }
+
+            if (netByPosition.Count == 0) return;
+
+            Dictionary<string, Bucket> bySetup = new Dictionary<string, Bucket>();
+            Bucket[] byHour = new Bucket[24];
+
+            foreach (KeyValuePair<int, double> pair in netByPosition)
+            {
+                string setup = _setupOf.ContainsKey(pair.Key) ? _setupOf[pair.Key] : "UNKNOWN";
+                if (!bySetup.ContainsKey(setup)) bySetup[setup] = new Bucket();
+                AddToBucket(bySetup[setup], pair.Value);
+
+                int hour = entryByPosition[pair.Key].Hour;
+                if (byHour[hour] == null) byHour[hour] = new Bucket();
+                AddToBucket(byHour[hour], pair.Value);
+            }
+
+            Print("--- by setup ---");
+            foreach (KeyValuePair<string, Bucket> pair in bySetup)
+            {
+                Bucket b = pair.Value;
+                Print("{0,-16} {1,4} trades | win {2,3:F0}% | net {3,9:F2} | PF {4}",
+                    pair.Key, b.Trades, b.Trades > 0 ? 100.0 * b.Wins / b.Trades : 0,
+                    b.Net, Pf(b.GrossProfit, b.GrossLoss));
+            }
+
+            Print("--- by hour (UTC) ---");
+            for (int h = 0; h < 24; h++)
+            {
+                Bucket b = byHour[h];
+                if (b == null) continue;
+                Print("{0:00}h{1,18} trades | win {2,3:F0}% | net {3,9:F2} | PF {4}",
+                    h, b.Trades, b.Trades > 0 ? 100.0 * b.Wins / b.Trades : 0,
+                    b.Net, Pf(b.GrossProfit, b.GrossLoss));
+            }
+
+            Print("Cut the setups and the hours that do not pay, with 'Trading hours UTC' and the mode switches.");
+        }
+
+        private static void AddToBucket(Bucket bucket, double net)
+        {
+            bucket.Trades++;
+            bucket.Net += net;
+            if (net > 0)
+            {
+                bucket.Wins++;
+                bucket.GrossProfit += net;
+            }
+            else if (net < 0)
+            {
+                bucket.GrossLoss += -net;
+            }
+        }
+
+        private static string Pf(double grossProfit, double grossLoss)
+        {
+            return grossLoss > 0 ? (grossProfit / grossLoss).ToString("F2") : "n/a";
         }
 
         #endregion
