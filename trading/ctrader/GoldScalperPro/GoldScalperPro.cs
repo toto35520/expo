@@ -137,7 +137,7 @@ namespace cAlgo.Robots
 
         #region 04 - Execution cost
 
-        [Parameter("Max spread (pips)", Group = "04 - Cost", DefaultValue = 25.0, MinValue = 0.5, Step = 0.5)]
+        [Parameter("Max spread (pips)", Group = "04 - Cost", DefaultValue = 5.0, MinValue = 0.5, Step = 0.5)]
         public double MaxSpreadPips { get; set; }
 
         [Parameter("Max spread / ATR ratio (0=off)", Group = "04 - Cost", DefaultValue = 0.25, MinValue = 0, MaxValue = 2, Step = 0.01)]
@@ -436,6 +436,7 @@ namespace cAlgo.Robots
         private double _lastQualityScore;
         private MarketRegime _regime = MarketRegime.Unknown;
         private string _lastBlocker = "starting";
+        private bool _calibrationPrinted;
 
         private double _cumulativeNetProfit;
         private int _statTrades;
@@ -491,7 +492,7 @@ namespace cAlgo.Robots
             Print("Symbol {0} | entry TF {1} | bias TF {2}", SymbolName, TimeFrame, BiasTimeFrame);
             Print("PipSize {0} | Digits {1} | live spread {2:F1} pips", Symbol.PipSize, Symbol.Digits, SpreadPips);
             Print("Min volume {0} units | equity {1:F2} {2}", Symbol.VolumeInUnitsMin, Account.Equity, Account.Asset.Name);
-            Print("Calibrate 'Max spread (pips)' against the live spread printed above.");
+            Print("The first bar prints a full CALIBRATION block. Read it before trusting any pip-based setting.");
         }
 
         protected override void OnStop()
@@ -518,6 +519,14 @@ namespace cAlgo.Robots
                 return;
             }
 
+            if (!_calibrationPrinted)
+            {
+                PrintCalibration();
+                _calibrationPrinted = true;
+            }
+
+            _regime = ClassifyRegime();
+
             if (CloseOutsideSession && !IsInSession())
             {
                 CloseAll("session end");
@@ -525,8 +534,6 @@ namespace cAlgo.Robots
                 UpdateDashboard();
                 return;
             }
-
-            _regime = ClassifyRegime();
 
             string blocker = EntryBlocker();
             _lastBlocker = blocker;
@@ -1412,7 +1419,47 @@ namespace cAlgo.Robots
                 _statTrades > 0 ? 100.0 * _statWins / _statTrades : 0,
                 _statGrossLoss > 0 ? (_statGrossProfit / _statGrossLoss).ToString("F2") : "n/a");
 
-            Chart.DrawStaticText("gsp_dashboard", text, VerticalAlignment.Top, HorizontalAlignment.Left, Color.Gold);
+            // Top-left is where cTrader stacks the indicator legend, so the panel goes right.
+            Chart.DrawStaticText("gsp_dashboard", text, VerticalAlignment.Top, HorizontalAlignment.Right, Color.Gold);
+        }
+
+        /// <summary>
+        /// Printed once, on the first usable bar. Pip size for gold differs between
+        /// brokers, so every pip-denominated default has to be checked against reality.
+        /// </summary>
+        private void PrintCalibration()
+        {
+            double atr = _atrFast.Result.Last(1);
+            if (double.IsNaN(atr) || atr <= 0) return;
+
+            double atrPips = PriceToPips(atr);
+            double stopPips = Math.Max(atrPips * SlAtrMultiplier,
+                Math.Max(MinStopPips, SpreadPips * StopSpreadBufferMult));
+            double suggestedMaxSpread = Math.Ceiling(Math.Max(_spreadAverage * 2.5, 1.0));
+            double riskAmount = Account.Equity * RiskPercent / 100.0;
+            double units = Symbol.PipValue > 0 && stopPips > 0
+                ? Symbol.NormalizeVolumeInUnits(riskAmount / (stopPips * Symbol.PipValue), RoundingMode.Down)
+                : 0;
+
+            Print("--- CALIBRATION ({0}) ---", SymbolName);
+            Print("1 pip = {0} in price | digits {1} | spread now {2:F1} pips (avg {3:F1})",
+                Symbol.PipSize, Symbol.Digits, SpreadPips, _spreadAverage);
+            Print("ATR({0}) = {1:F1} pips -> stop {2:F1} pips | TP1 {3:F1} | TP2 {4:F1}",
+                AtrFastPeriod, atrPips, stopPips, stopPips * Tp1AtR, stopPips * Tp2AtR);
+            Print("'Max spread (pips)' is set to {0:F1}. Suggested for this broker: {1:F0}",
+                MaxSpreadPips, suggestedMaxSpread);
+            if (MaxSpreadPips > suggestedMaxSpread * 3)
+                Print("WARNING: 'Max spread' is far too permissive here. Lower it to about {0:F0} pips.",
+                    suggestedMaxSpread);
+            Print("Risk {0:F2}% of {1:F2} {2} = {3:F2} -> {4} units ({5:F2} lots), broker minimum {6} units",
+                RiskPercent, Account.Equity, Account.Asset.Name, riskAmount, units,
+                Symbol.VolumeInUnitsToQuantity(units), Symbol.VolumeInUnitsMin);
+            if (units < Symbol.VolumeInUnitsMin)
+                Print("WARNING: account too small for {0:F2}% risk on a {1:F1} pip stop. Trades will be skipped unless 'Use broker min lot if size too small' is enabled.",
+                    RiskPercent, stopPips);
+            Print("Session window is UTC. Server time now: {0:HH:mm} UTC, in session: {1}",
+                Server.Time, IsInSession());
+            Print("--------------------------");
         }
 
         private void PrintStatistics()

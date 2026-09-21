@@ -24,15 +24,28 @@ Copie le dossier dans `Documents/cAlgo/Sources/Robots/GoldScalperPro/` (le `.csp
 puis ouvre-le depuis cTrader.
 
 ### Calibrage obligatoire au premier lancement
-Au démarrage le bot logge :
+
+À la première barre exploitable, le bot écrit un bloc **CALIBRATION** dans le journal :
 
 ```
-PipSize 0.01 | Digits 2 | live spread 18.0 pips
+--- CALIBRATION (XAUUSD) ---
+1 pip = 0.1 in price | digits 2 | spread now 0.9 pips (avg 0.9)
+ATR(14) = 14.2 pips -> stop 17.0 pips | TP1 17.0 | TP2 30.7
+'Max spread (pips)' is set to 5.0. Suggested for this broker: 3
+Risk 0.50% of 910.16 EUR = 4.55 -> 3 units (0.03 lots), broker minimum 1 units
+Session window is UTC. Server time now: 17:20 UTC, in session: False
+----------------------------
 ```
 
-Les courtiers ne définissent pas le pip de l'or pareil (0,01 ou 0,1). **Regarde cette ligne**, puis
-règle `Max spread (pips)` un peu au-dessus de ton spread normal (ex. spread habituel 18 → mets 25).
-Tous les autres réglages en pips (stop plancher, trailing) suivent automatiquement la même échelle.
+Les courtiers ne définissent pas le pip de l'or pareil (0,01 ou 0,1) : sur un broker à
+`1 pip = 0.1`, un spread de 0,9 pip vaut 0,09 $ ; sur un broker à `1 pip = 0.01`, le même
+spread s'affiche 9 pips. **Règle `Max spread (pips)` sur la valeur suggérée**, tout le reste
+(stop plancher, trailing, TP) suit automatiquement la même échelle.
+
+Le défaut est volontairement bas (5) : en cas de mauvaise échelle, le bot refuse de trader
+plutôt que d'entrer dans un spread qui mange le R. Si le dashboard affiche
+`spread 18.0p > 5.0p`, ce n'est pas un bug — c'est ce filtre, et le bloc CALIBRATION te
+donne la valeur à mettre.
 
 ---
 
@@ -150,7 +163,23 @@ Sur un cTrader plus ancien, deux retours en arrière possibles :
 | `'RobotAttribute' does not contain a definition for 'AddIndicators'` | Dans `[Robot(...)]`, supprimer `, AddIndicators = true` |
 | `No overload for 'ModifyPosition' takes 4 arguments` | Ligne ~1089, supprimer `, ProtectionType.Absolute` |
 
-## 8. Limites connues
+## 8. Le dashboard
+
+Le panneau en haut à **droite** du graphique donne l'état en direct :
+
+| Ligne | Ce que ça veut dire |
+|---|---|
+| `regime` | Trend / Range / Chaos / Unknown — le régime détecté à la dernière barre |
+| `status` | **la raison exacte pour laquelle il ne trade pas** (`outside session`, `spread ... > ...`, `quality 38 < 45`, `cooldown active`...) ou `ready` |
+| `score` | dernier score de confluence calculé, face au minimum requis |
+| `spread` | spread instantané et sa moyenne glissante |
+| `open` / `today` | positions ouvertes, et compteur de trades du jour |
+| `day P/L` | variation de l'equity depuis le début de journée (sert aux coupe-circuits) |
+
+Si rien ne se passe, la ligne `status` répond à la question. `outside session` = normal hors
+07:00–17:00 UTC par défaut : le bot reprend tout seul à l'ouverture de la fenêtre.
+
+## 9. Limites connues
 
 - Pas de calendrier économique : cTrader n'y donne pas accès avec `AccessRights.None`. Le filtre
   news est **manuel** (`News blackout times`, en UTC — pense à mettre 12:30/14:00 pour NFP & CPI,
