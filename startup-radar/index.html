@@ -147,6 +147,10 @@ a { color: var(--accent); }
 @media (max-width: 860px) { .tiers { grid-template-columns: 1fr; } }
 .plan table { min-width: 640px; }
 .plan p { max-width: 75ch; }
+.checks { border: 1px solid var(--line); border-radius: 6px; padding: 10px 12px; margin: 0; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px 16px; }
+.checks label { flex-direction: row; align-items: flex-start; gap: 8px; color: var(--ink); font-size: 0.88rem; font-weight: 400; }
+.checks input { width: auto; margin-top: 3px; }
+@media (max-width: 640px) { .checks { grid-template-columns: 1fr; } }
 @media (prefers-reduced-motion: no-preference) { tr.detail td { animation: fade .18s ease-out; } @keyframes fade { from { opacity: .4 } to { opacity: 1 } } }
 </style>
 
@@ -171,6 +175,7 @@ a { color: var(--accent); }
   <nav class="tabs" role="tablist">
     <button role="tab" id="tab-radar" aria-selected="true" data-tab="radar">Radar</button>
     <button role="tab" id="tab-plan" aria-selected="false" data-tab="plan">Quoi investir</button>
+    <button role="tab" id="tab-dos" aria-selected="false" data-tab="dos">Mes dossiers</button>
     <button role="tab" id="tab-pf" aria-selected="false" data-tab="pf">Mon portefeuille</button>
     <button role="tab" id="tab-cal" aria-selected="false" data-tab="cal">Calendrier</button>
     <button role="tab" id="tab-guide" aria-selected="false" data-tab="guide">Comment investir</button>
@@ -257,6 +262,25 @@ a { color: var(--accent); }
 
   <!-- QUOI INVESTIR -->
   <section id="view-plan" class="view plan" hidden>
+    <div class="panel" style="border-color: var(--accent)">
+      <h2>Ton plan : 5 000 € en solo, avec Trade Republic</h2>
+      <p>Hypothèse : tu as déjà une épargne de précaution à côté. Tu choisis toi-même chaque ligne, sans fonds ni club.</p>
+      <div class="alloc" role="img" aria-label="SpaceX 1000, Cerebras 500, réserve IPO 1000, startups 2500">
+        <span class="a1" style="width:20%">SpaceX</span><span class="a2" style="width:10%">CBRS</span><span class="a4" style="width:20%">Réserve IPO</span><span class="a3" style="width:50%">10 startups FR</span>
+      </div>
+      <div class="tablebox" style="border:0">
+        <table>
+          <thead><tr><th>Ligne</th><th class="n">Montant</th><th>Où</th><th>Quand</th></tr></thead>
+          <tbody>
+            <tr><td class="nm">SpaceX (SPCX)</td><td class="n">1 000 €</td><td>Trade Republic, compte-titres (fractions d'action possibles)</td><td>350 € maintenant, le reste en décembre–janvier, après la levée progressive du blocage des premiers investisseurs (180 jours après l’IPO, soit à partir de début décembre)</td></tr>
+            <tr><td class="nm">Cerebras (CBRS)</td><td class="n">500 €</td><td>Trade Republic, compte-titres (vérifie qu'elle est proposée dans l'appli)</td><td>2 × 250 €, à un mois d'écart</td></tr>
+            <tr><td class="nm">Réserve introductions en bourse</td><td class="n">1 000 €</td><td>Reste en espèces sur Trade Republic</td><td>Au moins 30 jours après une IPO (Anthropic en novembre, autres ensuite), seulement si le cours n'a pas flambé</td></tr>
+            <tr><td class="nm">8 à 10 startups françaises</td><td class="n">2 500 €</td><td>WiSEED, Tudigo, Sowefund… (pas sur Trade Republic)</td><td>250 à 300 € par dossier sur 12 à 18 mois, seulement si 6/8 ou plus dans « Mes dossiers »</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p class="meta">Frais Trade Republic : 1 € par ordre, plans d'investissement programmés sans frais. Impôt sur les gains en compte-titres : 31,4 % (flat tax 2026) à la revente. SpaceX et Cerebras ne vont pas dans un PEA.</p>
+    </div>
     <div class="panel">
       <h2>Mon plan : où mettre ton budget startups</h2>
       <p>Le budget startups, c'est au maximum 10 % de ton patrimoine financier, une fois ton épargne de précaution constituée. Ce plan le répartit entre ce qu'un particulier en France peut réellement acheter aujourd'hui, du plus liquide au plus risqué. C'est mon analyse au 29 septembre 2026, pas un conseil personnalisé.</p>
@@ -347,6 +371,33 @@ a { color: var(--accent); }
         <li><b>Accès pour toi</b> : 5 = achetable aujourd'hui à bas coût, 1 = impossible</li>
       </ul>
       <p class="meta">Ces notes sont mon jugement, pas une vérité. Modifie-les avec « Modifier » dans chaque fiche si tu n'es pas d'accord. Comme chez Blast, fais une revue chaque trimestre : mets à jour la valeur de tes lignes dans « Mon portefeuille ».</p>
+    </div>
+  </section>
+
+  <!-- DOSSIERS -->
+  <section id="view-dos" class="view" hidden style="flex-direction:column;gap:12px">
+    <div class="panel">
+      <h2>Analyser un dossier de crowdequity</h2>
+      <p class="meta">Coche seulement ce que tu as vérifié dans le dossier. En dessous de 6 sur 8, passe ton tour : Blast dit garder moins de 1 % des dossiers.</p>
+      <form class="form" id="dosForm">
+        <label>Startup<input id="dos-name" required></label>
+        <label>Plateforme<input id="dos-platform" placeholder="WiSEED, Tudigo, Sowefund…"></label>
+        <label>Montant envisagé (€)<input id="dos-amount" inputmode="decimal" placeholder="250"></label>
+        <fieldset class="wide checks" id="dosChecks">
+          <legend class="meta">Les 8 vérifications</legend>
+        </fieldset>
+        <label>Décision
+          <select id="dos-decision"><option>À creuser</option><option>Investir</option><option>Refuser</option></select>
+        </label>
+        <label class="wide" style="grid-column: span 2">Notes (pourquoi oui ou non)<input id="dos-notes"></label>
+        <div class="actions wide"><span class="msg" id="dosMsg"></span><button class="btn" type="submit">Enregistrer le dossier</button></div>
+      </form>
+    </div>
+    <div class="tablebox">
+      <table>
+        <thead><tr><th>Startup</th><th>Plateforme</th><th class="n">Vérifié</th><th class="n">Montant</th><th>Décision</th><th>Ce qui manque</th><th></th></tr></thead>
+        <tbody id="dosBody"><tr><td colspan="7" class="empty">Aucun dossier analysé. Remplis la grille ci-dessus pour ton premier dossier.</td></tr></tbody>
+      </table>
     </div>
   </section>
 
@@ -686,6 +737,48 @@ a { color: var(--accent); }
     if (await save("events", "e-" + Date.now().toString(36), d, $("evMsg"))) { e.target.reset(); $("evMsg").textContent = "Événement ajouté."; }
   });
 
+  /* ---------- Dossiers ---------- */
+  const CHECKS = [
+    ["ca", "Chiffre d'affaires connu", "Le chiffre d'affaires actuel est donné dans le dossier"],
+    ["croissance", "Croissance forte", "Il progresse d'au moins 50 % sur 12 mois"],
+    ["tresorerie", "Trésorerie suffisante", "Avec cette levée, l'entreprise tient au moins 18 mois"],
+    ["valo", "Prix raisonnable", "Valorisation inférieure à 20 fois le chiffre d'affaires"],
+    ["equipe", "Équipe solide", "Fondateurs à temps plein, avec une expérience ou un succès passé"],
+    ["fonds", "Investisseur pro présent", "Un fonds ou des business angels reconnus investissent aussi dans ce tour"],
+    ["droits", "Mes droits sont clairs", "J'ai lu le pacte : type d'actions, qui est payé en premier en cas de vente"],
+    ["fiscal", "Éligible IR-PME / JEI", "Réduction d'impôt de 18 % (30 % si JEI) confirmée"],
+  ];
+  $("dosChecks").insertAdjacentHTML("beforeend", CHECKS.map(([k, l, d]) => `<label><input type="checkbox" id="chk-${k}"><span><b>${l}</b><br><span class="meta">${d}</span></span></label>`).join(""));
+  let dossiers = [];
+  function renderDos() {
+    const body = $("dosBody");
+    if (!dossiers.length) { body.innerHTML = '<tr><td colspan="7" class="empty">Aucun dossier analysé. Remplis la grille ci-dessus pour ton premier dossier.</td></tr>'; return; }
+    const rows = dossiers.slice().sort((a, b) => (b.created || "").localeCompare(a.created || ""));
+    body.innerHTML = rows.map((d) => {
+      const ok = CHECKS.filter(([k]) => d.checks && d.checks[k]).length;
+      const miss = CHECKS.filter(([k]) => !(d.checks && d.checks[k])).map(([, l]) => l);
+      const cls = d.decision === "Investir" ? "acces" : d.decision === "Refuser" ? "suivre" : "ipo";
+      return `<tr><td class="nm">${esc(d.name)}${d.notes ? `<div class="meta">${esc(d.notes)}</div>` : ""}</td>
+        <td>${esc(d.platform || "")}</td>
+        <td class="n ${ok >= 6 ? "pos" : "neg"}">${ok}/8</td>
+        <td class="n">${d.amount != null ? eur.format(d.amount) : "—"}</td>
+        <td><span class="pill ${cls}">${esc(d.decision || "")}</span>${d.decision === "Investir" && ok < 6 ? '<div class="meta neg">moins de 6/8 : risqué</div>' : ""}</td>
+        <td class="meta">${miss.length ? esc(miss.join(", ")) : "rien"}</td>
+        <td><button class="del" data-ddel="${esc(d.id)}" type="button">Supprimer</button></td></tr>`;
+    }).join("");
+  }
+  $("dosForm").addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const checks = {}; CHECKS.forEach(([k]) => { checks[k] = $("chk-" + k).checked; });
+    const d = { name: $("dos-name").value.trim(), platform: $("dos-platform").value.trim(), amount: toNum($("dos-amount").value),
+      checks, decision: $("dos-decision").value, notes: $("dos-notes").value.trim(), created: new Date().toISOString() };
+    if (await save("dossiers", "d-" + Date.now().toString(36), d, $("dosMsg"))) { e.target.reset(); $("dosMsg").className = "msg"; $("dosMsg").textContent = "Dossier enregistré."; }
+  });
+  $("dosBody").addEventListener("click", (e) => {
+    const b = e.target.closest("[data-ddel]"); if (!b) return;
+    if (b.dataset.armed) removeDoc("dossiers", b.dataset.ddel); else { b.dataset.armed = "1"; b.textContent = "Confirmer"; }
+  });
+
   /* ---------- KPI ---------- */
   function renderKpis() {
     $("kTotal").textContent = startups.length;
@@ -722,6 +815,7 @@ a { color: var(--accent); }
     snap("startups", (d) => { startups = d; renderRadar(); renderKpis(); });
     snap("positions", (d) => { positions = d; renderPf(); });
     snap("events", (d) => { events = d; renderCal(); });
+    snap("dossiers", (d) => { dossiers = d; renderDos(); });
     try { const s = await db.doc("settings/main").get(); if (s.exists && s.data().patrimoine) { $("patrimoine").value = s.data().patrimoine; renderPf(); } } catch (e) {}
   })();
 })();
