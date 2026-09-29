@@ -1,20 +1,27 @@
-import { describeError, runAdvisor } from "./advisor";
+import { describeError, MODEL, runDecision, runResearch } from "./advisor";
 import { getFx, getQuote, resolveIsin } from "./market";
 import { getNews } from "./news";
 import { summarize } from "./portfolio";
-import { getState, pushHistory, savePositions, saveSnapshot } from "./store";
-import type { Quote } from "./types";
+import { getSnapshot, getState, pushHistory, savePositions, saveSnapshot } from "./store";
+import type { Quote, RunLog, Snapshot } from "./types";
 
-/**
- * Mise à jour complète : cours, actus, historique du portefeuille,
- * puis recommandations IA si `withAI` est vrai.
- */
-export async function runUpdate({ withAI }: { withAI: boolean }) {
+export type Step = RunLog["step"];
+export type Trigger = RunLog["trigger"];
+
+async function logRun(step: Step, trigger: Trigger, ok: boolean, message: string, t0: number) {
+  const snap = await getSnapshot();
+  const run: RunLog = { at: new Date().toISOString(), step, trigger, ok, message, seconds: Math.round((Date.now() - t0) / 1000) };
+  snap.runs = [run, ...(snap.runs ?? [])].slice(0, 40);
+  await saveSnapshot(snap);
+}
+
+/** Étape « cours » : cours, taux de change, actus, historique. Quelques secondes. */
+export async function runMarket(trigger: Trigger) {
+  const t0 = Date.now();
   const state = await getState();
-  const snapshot = { ...state.snapshot };
+  const snapshot: Snapshot = { ...state.snapshot };
   const log: string[] = [];
 
-  // Retrouve le ticker des lignes importées qui n'ont qu'un ISIN.
   let changed = false;
   for (const p of state.positions) {
     if (p.kind === "cote" && !p.ticker && p.isin) {
@@ -28,7 +35,6 @@ export async function runUpdate({ withAI }: { withAI: boolean }) {
   }
   if (changed) await savePositions(state.positions);
 
-  // Cours
   const symbols = [
     ...new Set(
       [...state.positions.filter((p) => p.kind === "cote").map((p) => p.ticker), ...state.watchlist.map((w) => w.ticker)].filter(
@@ -56,38 +62,64 @@ export async function runUpdate({ withAI }: { withAI: boolean }) {
   }
   snapshot.quoteErrors = quoteErrors;
 
-  // Actus
   try {
-    const names = [...state.watchlist.map((w) => w.name), ...state.positions.map((p) => p.name)];
-    const news = await getNews(names);
+    const news = await getNews([...state.watchlist.map((w) => w.name), ...state.positions.map((p) => p.name)]);
     if (news.length) snapshot.news = news;
+    else log.push("Aucune actu reçue des flux.");
   } catch (e) {
     log.push(`Actus non mises à jour : ${e instanceof Error ? e.message : "erreur"}`);
   }
 
   snapshot.updatedAt = new Date().toISOString();
-  await saveSnapshot(snapshot);
+  await saveSnapshot({ ...(await getSnapshot()), quotes: snapshot.quotes, fx: snapshot.fx, quoteErrors, news: snapshot.news, updatedAt: snapshot.updatedAt });
 
-  // Historique de la valeur du portefeuille
   const pf = summarize(state.positions, snapshot.quotes);
   if (state.positions.length) {
     await pushHistory({ date: snapshot.updatedAt.slice(0, 10), value: Math.round(pf.value * 100) / 100, invested: Math.round(pf.invested * 100) / 100 });
   }
+  const ok = quoteErrors.length < symbols.length || symbols.length === 0;
+  const msg = `${symbols.length - quoteErrors.length}/${symbols.length} cours, ${snapshot.news.length} actus` + (log.length ? ` · ${log.join(" · ")}` : "");
+  await logRun("cours", trigger, ok, msg, t0);
+  return { ok, quoteErrors, message: msg };
+}
 
-  // Recommandations IA
-  if (withAI) {
-    try {
-      const { reco, model } = await runAdvisor({ ...state, snapshot });
-      snapshot.reco = reco;
-      snapshot.recoAt = new Date().toISOString();
-      snapshot.recoError = null;
-      snapshot.recoModel = model;
-    } catch (e) {
-      snapshot.recoError = describeError(e);
-      log.push(snapshot.recoError);
-    }
-    await saveSnapshot(snapshot);
+/** Étape « veille » : recherche web du jour avec Claude. Moins de 200 s. */
+export async function runResearchStep(trigger: Trigger) {
+  const t0 = Date.now();
+  const state = await getState();
+  try {
+    const { note, sources } = await runResearch(state);
+    const snap = await getSnapshot();
+    snap.research = { note, sources, at: new Date().toISOString() };
+    await saveSnapshot(snap);
+    const msg = `${sources.length} sources consultées`;
+    await logRun("veille", trigger, true, msg, t0);
+    return { ok: true, message: msg };
+  } catch (e) {
+    const msg = describeError(e);
+    await logRun("veille", trigger, false, msg, t0);
+    return { ok: false, message: msg };
   }
+}
 
-  return { ok: true, symbols: symbols.length, quoteErrors, news: snapshot.news.length, reco: Boolean(snapshot.reco), log };
+/** Étape « décision » : recommandations argumentées. Moins de 240 s. */
+export async function runDecisionStep(trigger: Trigger) {
+  const t0 = Date.now();
+  const state = await getState();
+  try {
+    const reco = await runDecision(state);
+    const snap = await getSnapshot();
+    Object.assign(snap, { reco, recoAt: new Date().toISOString(), recoError: null, recoModel: MODEL, recoSeed: false });
+    await saveSnapshot(snap);
+    const msg = `${reco.actions.length} recommandations`;
+    await logRun("decision", trigger, true, msg, t0);
+    return { ok: true, message: msg };
+  } catch (e) {
+    const msg = describeError(e);
+    const snap = await getSnapshot();
+    snap.recoError = msg;
+    await saveSnapshot(snap);
+    await logRun("decision", trigger, false, msg, t0);
+    return { ok: false, message: msg };
+  }
 }

@@ -113,15 +113,36 @@ export interface NewsItem {
 export const ACTION_TYPES = ["ACHETER", "RENFORCER", "ATTENDRE", "ALLÉGER", "VENDRE", "SURVEILLER"] as const;
 export type ActionType = (typeof ACTION_TYPES)[number];
 
+export interface SourceRef {
+  titre: string;
+  url: string;
+}
+
+export interface Argument {
+  /** L'argument, en une phrase */
+  point: string;
+  /** Le chiffre qui le prouve, avec sa date */
+  chiffre: string | null;
+  /** Lien vérifié (présent dans la veille du jour ou tes fiches), sinon null */
+  source: string | null;
+}
+
 export interface RecoAction {
   type: ActionType;
   cible: string;
   ticker: string | null;
   montantEUR: number | null;
-  pourquoi: string;
-  risques: string;
+  /** La recommandation en une phrase */
+  enBref: string;
+  /** Le raisonnement complet, 3 à 6 phrases */
+  these: string;
+  pour: Argument[];
+  contre: Argument[];
+  /** Comment et quand acheter (en plusieurs fois, niveau de prix…) */
+  plan: string;
+  horizon: string;
   confiance: "faible" | "moyenne" | "forte";
-  sources: string[];
+  sources: SourceRef[];
 }
 
 export interface Reco {
@@ -130,6 +151,15 @@ export interface Reco {
   actions: RecoAction[];
   alertes: string[];
   verifications: string[];
+}
+
+export interface RunLog {
+  at: string;
+  step: "cours" | "veille" | "decision";
+  trigger: "auto" | "manuel" | "ouverture";
+  ok: boolean;
+  message: string;
+  seconds: number;
 }
 
 export interface Snapshot {
@@ -142,6 +172,10 @@ export interface Snapshot {
   recoAt: string | null;
   recoError: string | null;
   recoModel: string | null;
+  /** Vrai tant que l'analyse affichée est celle de départ, écrite à la main */
+  recoSeed?: boolean;
+  research: { note: string; sources: SourceRef[]; at: string } | null;
+  runs: RunLog[];
 }
 
 export interface HistoryPoint {
@@ -160,6 +194,7 @@ export interface AppState {
   history: HistoryPoint[];
   storage: "redis" | "memoire";
   aiConfigured: boolean;
+  health: { cronSecret: boolean; password: boolean };
 }
 
 export const DEFAULT_SETTINGS: Settings = {
@@ -181,4 +216,6 @@ export const EMPTY_SNAPSHOT: Snapshot = {
   recoAt: null,
   recoError: null,
   recoModel: null,
+  research: null,
+  runs: [],
 };

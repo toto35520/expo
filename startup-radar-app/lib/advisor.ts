@@ -2,10 +2,20 @@ import Anthropic from "@anthropic-ai/sdk";
 import { betaZodOutputFormat } from "@anthropic-ai/sdk/helpers/beta/zod";
 import { z } from "zod";
 import { summarize } from "./portfolio";
-import { ACTION_TYPES, type ActionType, type AppState, type Reco, type RecoAction } from "./types";
+import { ACTION_TYPES, type ActionType, type AppState, type Argument, type Reco, type RecoAction, type SourceRef } from "./types";
 
 export const MODEL = process.env.CLAUDE_MODEL || "claude-opus-5-5";
 const FALLBACK_BETA = "server-side-fallback-2026-07-01";
+
+// Les fonctions Vercel sont coupées à 300 s : chaque étape garde une marge.
+const RESEARCH_BUDGET_MS = 200_000;
+const DECISION_BUDGET_MS = 240_000;
+
+const ArgumentSchema = z.object({
+  point: z.string(),
+  chiffre: z.string().nullable(),
+  source: z.string().nullable(),
+});
 
 const RecoSchema = z.object({
   resume: z.string(),
@@ -16,10 +26,14 @@ const RecoSchema = z.object({
       cible: z.string(),
       ticker: z.string().nullable(),
       montantEUR: z.number().nullable(),
-      pourquoi: z.string(),
-      risques: z.string(),
+      enBref: z.string(),
+      these: z.string(),
+      pour: z.array(ArgumentSchema),
+      contre: z.array(ArgumentSchema),
+      plan: z.string(),
+      horizon: z.string(),
       confiance: z.string().describe("faible, moyenne ou forte"),
-      sources: z.array(z.string()),
+      sources: z.array(z.object({ titre: z.string(), url: z.string() })),
     }),
   ),
   alertes: z.array(z.string()),
@@ -34,6 +48,8 @@ Méthode, inspirée des clubs d'investissement comme Blast : croissance, marché
 Règles non négociables :
 - Réponds en français simple, phrases courtes, sans jargon non expliqué.
 - Appuie chaque recommandation sur des faits datés (cours, variation, levée, résultat, actualité) tirés des données fournies ou de tes recherches. Si une donnée manque, dis-le au lieu d'inventer.
+- Chaque argument cite sa source : uniquement des liens réellement présents dans la veille ou les données fournies, jamais un lien inventé ou reconstruit.
+- Donne toujours les arguments contre, pas seulement les arguments pour.
 - Respecte son plafond : la part des startups et actions de croissance ne doit pas dépasser le pourcentage maximum de son patrimoine indiqué dans les réglages. Si le patrimoine n'est pas renseigné, rappelle-le dans les vérifications et reste prudent.
 - Ne propose jamais d'investir plus que l'argent disponible indiqué. Étale les achats (plusieurs fois dans le temps) plutôt que tout d'un coup.
 - Diversification : jamais plus de 25 % du budget startups sur une seule ligne.
@@ -116,72 +132,59 @@ function textOf(content: Anthropic.Beta.BetaContentBlock[]): string {
     .trim();
 }
 
-function sourcesOf(content: Anthropic.Beta.BetaContentBlock[]): string[] {
-  const urls: string[] = [];
+function sourcesOf(content: Anthropic.Beta.BetaContentBlock[]): SourceRef[] {
+  const out: SourceRef[] = [];
   for (const b of content) {
     if (b.type === "web_search_tool_result" && Array.isArray(b.content)) {
-      for (const r of b.content) if (r.type === "web_search_result") urls.push(r.url);
+      for (const r of b.content) if (r.type === "web_search_result") out.push({ titre: r.title, url: r.url });
     }
   }
-  return [...new Set(urls)];
+  return out;
 }
 
-/** Étape 1 : recherche web du jour sur ses lignes et son radar. */
-async function research(client: Anthropic, context: string): Promise<{ text: string; sources: string[] }> {
+function client() {
+  if (!process.env.ANTHROPIC_API_KEY) throw new Error("ANTHROPIC_API_KEY n'est pas configurée dans Vercel.");
+  return new Anthropic({ maxRetries: 1 });
+}
+
+/** Étape 1 : veille web du jour sur ses lignes et son radar (moins de 200 s). */
+export async function runResearch(state: AppState): Promise<{ note: string; sources: SourceRef[] }> {
+  const c = client();
+  const context = buildContext(state);
+  const signal = AbortSignal.timeout(RESEARCH_BUDGET_MS);
   const messages: Anthropic.Beta.BetaMessageParam[] = [
     {
       role: "user",
-      content: `Voici ses données du jour (JSON) :\n${context}\n\nFais la veille du jour avant de recommander quoi que ce soit : cherche sur le web les dernières nouvelles (7 derniers jours en priorité) et les cours pour ses lignes en portefeuille, les sociétés cotées de son radar, et les introductions en bourse prévues. Rédige ensuite une note de veille factuelle et datée, avec les liens de tes sources.`,
+      content: `Voici ses données du jour (JSON) :\n${context}\n\nFais la veille du jour avant toute recommandation. Cherche sur le web les nouvelles des 7 derniers jours pour : ses lignes en portefeuille, les sociétés cotées de son radar, les introductions en bourse prévues, et les 2 ou 3 startups du radar les mieux notées. Ensuite rédige une note de veille en français : un paragraphe par société, avec les chiffres datés (cours, variation, levée, chiffre d'affaires, analystes) et le lien de la source après chaque fait.`,
     },
   ];
-  const sources: string[] = [];
-  let text = "";
-  for (let i = 0; i < 5; i++) {
-    const msg = await client.beta.messages
-      .stream({
-        model: MODEL,
-        max_tokens: 32000,
-        betas: [FALLBACK_BETA],
-        fallbacks: "default",
-        system: [{ type: "text", text: SYSTEM, cache_control: { type: "ephemeral" } }],
-        thinking: { type: "adaptive" },
-        output_config: { effort: "high" },
-        tools: [{ type: "web_search_20260209", name: "web_search", max_uses: 8 }],
-        messages,
-      })
+  const sources: SourceRef[] = [];
+  let note = "";
+  for (let i = 0; i < 4; i++) {
+    const msg = await c.beta.messages
+      .stream(
+        {
+          model: MODEL,
+          max_tokens: 16000,
+          betas: [FALLBACK_BETA],
+          fallbacks: "default",
+          system: [{ type: "text", text: SYSTEM, cache_control: { type: "ephemeral" } }],
+          thinking: { type: "adaptive" },
+          output_config: { effort: "medium" },
+          tools: [{ type: "web_search_20260209", name: "web_search", max_uses: 6 }],
+          messages,
+        },
+        { signal },
+      )
       .finalMessage();
     sources.push(...sourcesOf(msg.content));
-    text += "\n" + textOf(msg.content);
-    if (msg.stop_reason === "refusal") throw new Error("La recherche du jour a été refusée par le modèle.");
+    note += "\n" + textOf(msg.content);
+    if (msg.stop_reason === "refusal") throw new Error("La veille du jour a été refusée par le modèle.");
     if (msg.stop_reason !== "pause_turn") break;
     messages.push({ role: "assistant", content: msg.content });
   }
-  return { text: text.trim(), sources: [...new Set(sources)] };
-}
-
-/** Étape 2 : transforme la veille en recommandations structurées. */
-async function decide(client: Anthropic, context: string, note: string, sources: string[]): Promise<Reco> {
-  const res = await client.beta.messages.parse({
-    model: MODEL,
-    max_tokens: 16000,
-    betas: [FALLBACK_BETA],
-    fallbacks: "default",
-    system: [{ type: "text", text: SYSTEM, cache_control: { type: "ephemeral" } }],
-    output_config: { effort: "medium", format: betaZodOutputFormat(RecoSchema) },
-    messages: [
-      {
-        role: "user",
-        content: `Données du jour (JSON) :\n${context}\n\nNote de veille du jour :\n${note || "(pas de veille disponible aujourd'hui)"}\n\nSources consultées :\n${sources.slice(0, 40).join("\n")}\n\nDonne tes recommandations du jour :\n- resume : 2 ou 3 phrases, ce qu'il doit retenir aujourd'hui.\n- marche : l'ambiance du marché tech et startups en 2 phrases, chiffres datés.\n- actions : 2 à 6 actions concrètes, les plus importantes d'abord, avec montant en euros quand c'est un achat (sinon null), le ticker Yahoo si coté, pourquoi (chiffres), risques, confiance, et les liens sources utilisés.\n- alertes : ce qui a bougé fortement ou arrive bientôt (IPO, levée du blocage, résultats).\n- verifications : ce qu'il doit vérifier lui-même avant d'agir.`,
-      },
-    ],
-  });
-  if (res.stop_reason === "refusal") throw new Error("Le modèle a refusé de produire les recommandations.");
-  const raw = res.parsed_output;
-  if (!raw) throw new Error("Réponse du modèle illisible, nouvel essai à la prochaine mise à jour.");
-  return {
-    ...raw,
-    actions: raw.actions.map((a) => ({ ...a, type: normalizeType(a.type), confiance: normalizeConf(a.confiance) })),
-  };
+  const seen = new Set<string>();
+  return { note: note.trim(), sources: sources.filter((s) => !seen.has(s.url) && seen.add(s.url)) };
 }
 
 const plain = (x: string) => x.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toUpperCase().trim();
@@ -196,19 +199,68 @@ function normalizeConf(c: string): RecoAction["confiance"] {
   return p.startsWith("FORT") ? "forte" : p.startsWith("FAIBL") ? "faible" : "moyenne";
 }
 
-/** Garde-fous appliqués après la réponse du modèle. */
-function enforce(reco: Reco, state: AppState): Reco {
+/** Étape 2 : transforme la veille en recommandations argumentées (moins de 240 s). */
+export async function runDecision(state: AppState): Promise<Reco> {
+  const c = client();
+  const context = buildContext(state);
+  const r = state.snapshot.research;
+  const fresh = r && Date.now() - new Date(r.at).getTime() < 20 * 3600e3;
+  const note = fresh ? r.note : "(Pas de veille web récente : appuie-toi seulement sur les données fournies et dis-le.)";
+  const sources = fresh ? r.sources : [];
+  const res = await c.beta.messages.parse(
+    {
+      model: MODEL,
+      max_tokens: 16000,
+      betas: [FALLBACK_BETA],
+      fallbacks: "default",
+      system: [{ type: "text", text: SYSTEM, cache_control: { type: "ephemeral" } }],
+      output_config: { effort: "medium", format: betaZodOutputFormat(RecoSchema) },
+      messages: [
+        {
+          role: "user",
+          content: `Données du jour (JSON) :\n${context}\n\nNote de veille du jour :\n${note}\n\nSources disponibles (les seules que tu peux citer, avec les liens des actus et fiches ci-dessus) :\n${sources
+            .slice(0, 60)
+            .map((s) => `- ${s.titre} : ${s.url}`)
+            .join("\n")}\n\nDonne tes recommandations du jour, en français simple :\n- resume : 2 ou 3 phrases, ce qu'il doit retenir aujourd'hui.\n- marche : l'ambiance du marché tech et startups, avec 1 ou 2 chiffres datés.\n- actions : 3 à 5 actions, la plus importante d'abord. Pour chacune : type, cible, ticker Yahoo si cotée, montantEUR si achat (sinon null), enBref (la décision en une phrase), these (le raisonnement en 3 à 6 phrases), pour (3 à 5 arguments : point, chiffre daté, lien source), contre (2 à 4 risques, même format), plan (quand et comment acheter : en combien de fois, à quel niveau de prix, quel événement attendre), horizon, confiance, sources (titre et lien de chaque source utilisée).\n- alertes : ce qui a bougé fortement ou arrive bientôt (IPO, fin de blocage, résultats), avec la date.\n- verifications : ce qu'il doit vérifier lui-même avant d'agir.`,
+        },
+      ],
+    },
+    { signal: AbortSignal.timeout(DECISION_BUDGET_MS) },
+  );
+  if (res.stop_reason === "refusal") throw new Error("Le modèle a refusé de produire les recommandations.");
+  const raw = res.parsed_output;
+  if (!raw) throw new Error("Réponse du modèle illisible, nouvel essai à la prochaine mise à jour.");
+  const reco: Reco = {
+    ...raw,
+    actions: raw.actions.map((a) => ({ ...a, type: normalizeType(a.type), confiance: normalizeConf(a.confiance) })),
+  };
+  return enforce(reco, state, sources);
+}
+
+/** Garde-fous : liens vérifiés, conflit d'intérêts, budget. */
+function enforce(reco: Reco, state: AppState, research: SourceRef[]): Reco {
+  const known = new Map<string, string>();
+  for (const s of research) known.set(s.url, s.titre);
+  for (const n of state.snapshot.news) known.set(n.link, n.title);
+  for (const w of state.watchlist) if (w.src) known.set(w.src, w.srcl || w.name);
+  const norm = (u: string) => u.replace(/[#?].*$/, "").replace(/\/$/, "");
+  const knownNorm = new Map([...known].map(([u, t]) => [norm(u), { u, t }]));
+  const check = (u: string | null) => (u && knownNorm.has(norm(u)) ? knownNorm.get(norm(u))!.u : null);
+  const fixArgs = (list: Argument[]) => list.map((x) => ({ ...x, source: check(x.source) }));
+
   const alertes = [...reco.alertes];
   const actions = reco.actions.map((a) => {
+    const sources = a.sources.filter((s) => check(s.url)).map((s) => ({ titre: s.titre || knownNorm.get(norm(s.url))!.t, url: check(s.url)! }));
+    let out: RecoAction = { ...a, pour: fixArgs(a.pour), contre: fixArgs(a.contre), sources };
     if (/anthropic/i.test(a.cible) && a.type !== "SURVEILLER" && a.type !== "ATTENDRE") {
-      return {
-        ...a,
-        type: "SURVEILLER" as const,
+      out = {
+        ...out,
+        type: "SURVEILLER",
         montantEUR: null,
-        pourquoi: a.pourquoi + " (Recommandation neutralisée : l'IA de cette app est développée par Anthropic, conflit d'intérêts.)",
+        enBref: "À suivre sans recommandation : l'IA de cette app est développée par Anthropic (conflit d'intérêts).",
       };
     }
-    return a;
+    return out;
   });
   const buys = actions
     .filter((a) => (a.type === "ACHETER" || a.type === "RENFORCER") && a.montantEUR)
@@ -220,25 +272,12 @@ function enforce(reco: Reco, state: AppState): Reco {
   return { ...reco, actions, alertes };
 }
 
-export async function runAdvisor(state: AppState): Promise<{ reco: Reco; model: string }> {
-  if (!process.env.ANTHROPIC_API_KEY) throw new Error("ANTHROPIC_API_KEY n'est pas configurée dans Vercel.");
-  const client = new Anthropic({ timeout: 280_000, maxRetries: 1 });
-  const context = buildContext(state);
-  let note = "";
-  let sources: string[] = [];
-  try {
-    ({ text: note, sources } = await research(client, context));
-  } catch (e) {
-    note = `(Veille web indisponible aujourd'hui : ${e instanceof Error ? e.message : "erreur"})`;
-  }
-  const reco = await decide(client, context, note, sources);
-  return { reco: enforce(reco, state), model: MODEL };
-}
-
 export function describeError(e: unknown): string {
   if (e instanceof Anthropic.AuthenticationError) return "Clé API Anthropic invalide : vérifie ANTHROPIC_API_KEY dans Vercel.";
-  if (e instanceof Anthropic.RateLimitError) return "Limite de l'API Anthropic atteinte, nouvel essai demain.";
+  if (e instanceof Anthropic.RateLimitError) return "Limite de l'API Anthropic atteinte, nouvel essai à la prochaine mise à jour.";
+  if (e instanceof Anthropic.APIUserAbortError) return "Étape trop longue, arrêtée avant la limite de Vercel. Nouvel essai à la prochaine mise à jour.";
   if (e instanceof Anthropic.BadRequestError) return `Requête refusée par l'API Anthropic : ${e.message}`;
   if (e instanceof Anthropic.APIError) return `Erreur de l'API Anthropic (${e.status ?? "réseau"}) : ${e.message}`;
+  if (e instanceof Error && e.name === "TimeoutError") return "Étape trop longue, arrêtée avant la limite de Vercel.";
   return e instanceof Error ? e.message : "Erreur inconnue";
 }

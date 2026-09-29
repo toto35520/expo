@@ -1,5 +1,5 @@
 import { Redis } from "@upstash/redis";
-import { SEED_EVENTS, SEED_WATCHLIST } from "./seed";
+import { SEED_EVENTS, SEED_RECO, SEED_WATCHLIST } from "./seed";
 import {
   DEFAULT_SETTINGS,
   EMPTY_SNAPSHOT,
@@ -89,7 +89,10 @@ export async function getSettings(): Promise<Settings> {
 export const saveSettings = (v: Settings) => set(KEYS.settings, v);
 
 export async function getSnapshot(): Promise<Snapshot> {
-  return { ...EMPTY_SNAPSHOT, ...((await get<Snapshot>(KEYS.snapshot)) ?? {}) };
+  const s = { ...EMPTY_SNAPSHOT, ...((await get<Snapshot>(KEYS.snapshot)) ?? {}) };
+  // Tant qu'aucune analyse automatique n'a abouti, on affiche l'analyse de départ.
+  if (!s.reco) return { ...s, reco: SEED_RECO, recoAt: "2026-09-29T12:00:00.000Z", recoSeed: true, recoModel: "analyse de départ" };
+  return s;
 }
 export const saveSnapshot = (v: Snapshot) => set(KEYS.snapshot, v);
 
@@ -125,5 +128,6 @@ export async function getState(): Promise<AppState> {
     history,
     storage: storageKind,
     aiConfigured: Boolean(process.env.ANTHROPIC_API_KEY),
+    health: { cronSecret: Boolean(process.env.CRON_SECRET), password: Boolean(process.env.APP_PASSWORD) },
   };
 }

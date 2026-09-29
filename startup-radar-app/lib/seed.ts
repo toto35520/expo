@@ -1,4 +1,4 @@
-import type { EventItem, WatchItem } from "./types";
+import type { EventItem, Reco, WatchItem } from "./types";
 
 // Recherche du 29 septembre 2026 (sources dans chaque fiche). Mise à jour ensuite par l'app.
 export const SEED_WATCHLIST: WatchItem[] = [
@@ -841,3 +841,212 @@ export const SEED_EVENTS: EventItem[] = [
     "who": "OpenAI"
   }
 ];
+
+// Analyse de départ (recherche du 29/09/2026), affichée tant que l'analyse automatique n'a pas tourné.
+export const SEED_RECO: Reco = {
+  "resume": "Tu as 5 000 € à placer seul. Priorité : entrer petit à petit sur SpaceX, qui a déjà perdu 35 % depuis son sommet, prendre une petite ligne Cerebras, garder 1 000 € pour les prochaines entrées en bourse et démarrer ta sélection de startups françaises. Rien ne presse : étale tes achats.",
+  "marche": "Les introductions en bourse de 2026 ont été euphoriques puis ont corrigé : SpaceX est passée de 226 $ à 145 $, Cerebras est revenue à son prix d'entrée de 185 $. Côté startups, la French Tech a levé 114 M€ la semaine du 21 septembre, dont 90 M€ dans l'IA.",
+  "actions": [
+    {
+      "type": "ACHETER",
+      "cible": "SpaceX (+ Cursor)",
+      "ticker": "SPCX",
+      "montantEUR": 350,
+      "enBref": "Acheter une première tranche de 350 € maintenant, garder le reste pour décembre.",
+      "these": "SpaceX est la seule « startup en explosion » que tu peux acheter directement sur Trade Republic. Après une entrée en bourse record, l'action a perdu environ 35 % depuis son sommet : tu paies nettement moins cher que les acheteurs de juillet. Elle possède aussi Cursor, un des logiciels à la croissance la plus rapide jamais vue. Mais début décembre, les investisseurs d'avant la cotation pourront vendre leurs actions, ce qui peut faire baisser le cours : d'où un achat en deux fois.",
+      "pour": [
+        {
+          "point": "Le prix a déjà beaucoup baissé depuis l'euphorie de juillet",
+          "chiffre": "Sommet vers 226 $, 145,47 $ le 28/09/2026 (-35 %)",
+          "source": "https://www.fool.com/investing/2026/07/27/spacex-stock-plummets-50-below-its-post-ipo-high-h/"
+        },
+        {
+          "point": "Plus grosse introduction en bourse de l'histoire, preuve d'une demande énorme",
+          "chiffre": "75 Md$ levés le 12/06/2026 à environ 1 770 Md$ de valorisation",
+          "source": "https://dealroom.net/blog/upcoming-recent-ipos"
+        },
+        {
+          "point": "Possède Cursor, l'outil de code par IA qui grandit le plus vite",
+          "chiffre": "Rachat pour 60 Md$ bouclé le 14/08/2026, environ 4 Md$ de revenu annuel estimé",
+          "source": "https://getlatka.com/companies/cursor.com"
+        }
+      ],
+      "contre": [
+        {
+          "point": "Les investisseurs d'avant l'IPO pourront vendre à partir de début décembre",
+          "chiffre": "Blocage de 180 jours, levé par étapes",
+          "source": "https://en.wikipedia.org/wiki/Initial_public_offering_of_SpaceX"
+        },
+        {
+          "point": "L'entreprise s'endette pour financer ses projets",
+          "chiffre": "Emprunt obligataire porté de 20 à 25 Md$",
+          "source": "https://en.wikipedia.org/wiki/Initial_public_offering_of_SpaceX"
+        },
+        {
+          "point": "Valorisation énorme : une grande partie de la croissance future est déjà dans le prix",
+          "chiffre": null,
+          "source": null
+        }
+      ],
+      "plan": "350 € maintenant. 650 € en décembre–janvier, après la levée du blocage, idéalement en 2 fois. Si le cours repasse sous son prix d'entrée (135 $), c'est une meilleure occasion.",
+      "horizon": "3 à 5 ans",
+      "confiance": "moyenne",
+      "sources": [
+        {
+          "titre": "Motley Fool : SpaceX 50 % sous son sommet",
+          "url": "https://www.fool.com/investing/2026/07/27/spacex-stock-plummets-50-below-its-post-ipo-high-h/"
+        },
+        {
+          "titre": "Wikipedia : introduction en bourse de SpaceX",
+          "url": "https://en.wikipedia.org/wiki/Initial_public_offering_of_SpaceX"
+        },
+        {
+          "titre": "Dealroom : IPO 2026",
+          "url": "https://dealroom.net/blog/upcoming-recent-ipos"
+        }
+      ]
+    },
+    {
+      "type": "ACHETER",
+      "cible": "Cerebras",
+      "ticker": "CBRS",
+      "montantEUR": 250,
+      "enBref": "Petite ligne de 250 €, maintenant revenue au prix d'entrée en bourse.",
+      "these": "Cerebras fabrique des puces spécialisées pour l'IA, une alternative à Nvidia. Après son entrée en bourse, le cours a dépassé 300 $ puis est revenu à son prix d'introduction : tu peux entrer au prix des premiers investisseurs plutôt qu'au sommet. C'est un pari plus risqué que SpaceX, donc une petite ligne.",
+      "pour": [
+        {
+          "point": "Cours revenu au prix d'introduction après l'euphorie",
+          "chiffre": "IPO à 185 $ le 14/05/2026, plus de 300 $ ensuite, retour à 185 $ fin août",
+          "source": "https://www.superhero.com.au/learn/upcoming-ipos-2026/"
+        },
+        {
+          "point": "Le marché des puces pour l'IA continue de croître avec les besoins des labos",
+          "chiffre": null,
+          "source": null
+        }
+      ],
+      "contre": [
+        {
+          "point": "Très volatil : il peut encore perdre beaucoup",
+          "chiffre": "-40 % du sommet en 3 mois",
+          "source": "https://www.superhero.com.au/learn/upcoming-ipos-2026/"
+        },
+        {
+          "point": "Face à Nvidia et aux puces maison des géants du cloud",
+          "chiffre": null,
+          "source": null
+        }
+      ],
+      "plan": "250 € maintenant, puis éventuellement 250 € dans un mois si les nouvelles restent bonnes. Vérifie d'abord que CBRS est proposée dans l'appli Trade Republic.",
+      "horizon": "3 à 5 ans",
+      "confiance": "faible",
+      "sources": [
+        {
+          "titre": "Superhero : IPO 2026",
+          "url": "https://www.superhero.com.au/learn/upcoming-ipos-2026/"
+        }
+      ]
+    },
+    {
+      "type": "ATTENDRE",
+      "cible": "Réserve pour les prochaines entrées en bourse",
+      "ticker": null,
+      "montantEUR": null,
+      "enBref": "Garder 1 000 € en espèces pour les introductions en bourse de fin d'année, et ne pas acheter le premier jour.",
+      "these": "Plusieurs grosses sociétés préparent leur entrée en bourse. L'expérience de 2025-2026 montre que le prix grimpe souvent les premiers jours puis redescend. Attendre au moins 30 jours après la cotation évite d'acheter au sommet.",
+      "pour": [
+        {
+          "point": "Plusieurs grosses IPO arrivent (Oura, Notion, OpenEvidence, Kraken…)",
+          "chiffre": "8 candidates à une IPO dans les 6 mois selon Crunchbase (02/09/2026)",
+          "source": "https://news.crunchbase.com/public/startups-to-watch-ipo-ai-chips-fintech-2026/"
+        },
+        {
+          "point": "Les IPO récentes ont souvent reculé après l'euphorie",
+          "chiffre": "SpaceX et Cerebras revenues près de leur prix d'entrée",
+          "source": "https://www.superhero.com.au/learn/upcoming-ipos-2026/"
+        }
+      ],
+      "contre": [
+        {
+          "point": "En attendant, l'argent ne rapporte presque rien",
+          "chiffre": null,
+          "source": null
+        },
+        {
+          "point": "Les dates d'introduction changent souvent (OpenAI repoussée à 2027)",
+          "chiffre": null,
+          "source": "https://www.allocations.com/insights/spacex-openai-anthropic-stripe-databricks-ipo-timeline-2026"
+        }
+      ],
+      "plan": "Laisse 1 000 € sur Trade Republic. Quand une IPO t'intéresse, attends 30 jours après la cotation et compare le cours au prix d'introduction avant d'acheter.",
+      "horizon": "3 à 6 mois",
+      "confiance": "moyenne",
+      "sources": [
+        {
+          "titre": "Crunchbase : 8 startups à surveiller pour une IPO",
+          "url": "https://news.crunchbase.com/public/startups-to-watch-ipo-ai-chips-fintech-2026/"
+        },
+        {
+          "titre": "Allocations : calendrier des IPO 2026",
+          "url": "https://www.allocations.com/insights/spacex-openai-anthropic-stripe-databricks-ipo-timeline-2026"
+        }
+      ]
+    },
+    {
+      "type": "ACHETER",
+      "cible": "Startups françaises (crowdequity)",
+      "ticker": null,
+      "montantEUR": 500,
+      "enBref": "Commencer ta sélection : 2 startups à 250 € ce trimestre, 8 à 10 au total sur 18 mois.",
+      "these": "C'est là que se font les multiplications par 10, et l'État te rembourse une partie en réduction d'impôt. Mais la plupart des jeunes startups échouent : il faut en prendre au moins 8 à 10 et ne garder que les dossiers qui passent ta grille de 8 vérifications (onglet Mes dossiers).",
+      "pour": [
+        {
+          "point": "Réduction d'impôt sur le montant investi",
+          "chiffre": "18 % en 2026, 30 % pour une Jeune Entreprise Innovante, 50 % pour une JEI de rupture",
+          "source": "https://lita.co/fr/defiscaliser-investissement/ir-pme"
+        },
+        {
+          "point": "L'IA française attire beaucoup d'argent professionnel",
+          "chiffre": "90 M€ levés par 9 startups d'IA la semaine du 21/09/2026",
+          "source": "https://www.maddyness.com/2026/09/25/les-startups-francaises-ont-leve-114-millions-deuros-cette-semaine-dont-90-millions-dans-lia/"
+        }
+      ],
+      "contre": [
+        {
+          "point": "Argent bloqué longtemps, sans revente possible",
+          "chiffre": "5 à 10 ans, et 5 ans minimum pour garder la réduction d'impôt",
+          "source": "https://lita.co/fr/defiscaliser-investissement/ir-pme"
+        },
+        {
+          "point": "Une grande partie des jeunes startups ne survit pas",
+          "chiffre": null,
+          "source": null
+        }
+      ],
+      "plan": "250 € par startup, jamais plus de 2 par trimestre. N'investis que si le dossier obtient 6/8 ou plus dans « Mes dossiers » et que la plateforme est sur la liste blanche de l'AMF.",
+      "horizon": "5 à 10 ans",
+      "confiance": "moyenne",
+      "sources": [
+        {
+          "titre": "Lita : réduction d'impôt IR-PME 2026",
+          "url": "https://lita.co/fr/defiscaliser-investissement/ir-pme"
+        },
+        {
+          "titre": "Maddyness : levées de la semaine",
+          "url": "https://www.maddyness.com/2026/09/25/les-startups-francaises-ont-leve-114-millions-deuros-cette-semaine-dont-90-millions-dans-lia/"
+        }
+      ]
+    }
+  ],
+  "alertes": [
+    "30/09/2026 : dernier jour pour la réduction d'impôt de 25 % sur les entreprises solidaires (ESUS). Ensuite, retour à 18 %.",
+    "Novembre 2026 : introduction en bourse d'Anthropic annoncée (repoussée d'octobre). Aucune recommandation ici, l'IA de l'app étant développée par Anthropic.",
+    "Début décembre 2026 : les investisseurs d'avant l'IPO de SpaceX peuvent commencer à vendre."
+  ],
+  "verifications": [
+    "Renseigne ton patrimoine total dans Réglages pour que la jauge et les analyses dosent correctement.",
+    "Vérifie que SPCX et CBRS sont disponibles dans ton appli Trade Republic, et le prix affiché avant de valider.",
+    "Avant toute plateforme de crowdequity, vérifie qu'elle est agréée sur amf-france.org.",
+    "Ces montants sont un exemple de départ : l'analyse automatique du matin les ajuste à tes réglages."
+  ]
+};

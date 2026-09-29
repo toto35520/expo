@@ -1,8 +1,8 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { summarize, type Valued } from "@/lib/portfolio";
-import type { AppState, Dossier, HistoryPoint, Position, Quote, RecoAction, Score, Settings, WatchItem } from "@/lib/types";
+import type { AppState, Dossier, HistoryPoint, Position, Quote, RecoAction, RunLog, Score, Settings, WatchItem } from "@/lib/types";
 
 /* ---------- formats ---------- */
 const eur = new Intl.NumberFormat("fr-FR", { style: "currency", currency: "EUR", maximumFractionDigits: 0 });
@@ -116,7 +116,9 @@ export default function Dashboard({ passwordOn }: { passwordOn: boolean }) {
   const [state, setState] = useState<AppState | null>(null);
   const [tab, setTab] = useState<Tab>("jour");
   const [busy, setBusy] = useState<"" | "cours" | "ia">("");
+  const [progress, setProgress] = useState("");
   const [msg, setMsg] = useState<{ text: string; err?: boolean } | null>(null);
+  const autoTried = useRef(false);
 
   const load = useCallback(async () => {
     try {
@@ -126,22 +128,40 @@ export default function Dashboard({ passwordOn }: { passwordOn: boolean }) {
     }
   }, []);
 
+  const step = useCallback(
+    (name: "cours" | "veille" | "decision", trigger: "manuel" | "ouverture") =>
+      api<{ ok: boolean; message: string }>(`/api/refresh?step=${name}&trigger=${trigger}`, { method: "POST" }),
+    [],
+  );
+
+  /** Cours seuls, ou analyse complète (cours → veille web → décision). */
   const refresh = useCallback(
-    async (withAI: boolean, quiet = false) => {
-      setBusy(withAI ? "ia" : "cours");
-      if (!quiet) setMsg({ text: withAI ? "Analyse en cours : recherche web puis recommandations (1 à 4 minutes)…" : "Mise à jour des cours et des actus…" });
+    async (full: boolean, trigger: "manuel" | "ouverture" = "manuel") => {
+      setBusy(full ? "ia" : "cours");
+      setMsg(null);
       try {
-        const r = await api<{ quoteErrors: string[]; log: string[] }>(`/api/refresh${withAI ? "?ai=1" : ""}`, { method: "POST" });
+        setProgress(full ? "Étape 1/3 · cours et actus…" : "Mise à jour des cours et des actus…");
+        const c = await step("cours", trigger);
         await load();
-        const bad = r.quoteErrors.length ? ` Cours introuvables : ${r.quoteErrors.join(", ")}.` : "";
-        if (!quiet) setMsg({ text: (withAI ? "Analyse terminée." : "Cours et actus à jour.") + bad });
+        if (!full) {
+          setMsg({ text: c.ok ? `À jour : ${c.message}.` : c.message, err: !c.ok });
+          return;
+        }
+        setProgress("Étape 2/3 · veille web : l'IA lit les dernières nouvelles de tes lignes et de ton radar (1 à 3 min)…");
+        const v = await step("veille", trigger);
+        if (!v.ok && trigger === "manuel") setMsg({ text: `Veille web : ${v.message} L'analyse continue avec les données disponibles.`, err: true });
+        setProgress("Étape 3/3 · rédaction des recommandations argumentées (1 à 2 min)…");
+        const d = await step("decision", trigger);
+        await load();
+        setMsg(d.ok ? { text: `Analyse du jour prête : ${d.message}.` } : { text: `Analyse : ${d.message}`, err: true });
       } catch (e) {
         setMsg({ text: e instanceof Error ? e.message : "Mise à jour impossible.", err: true });
       } finally {
         setBusy("");
+        setProgress("");
       }
     },
-    [load],
+    [load, step],
   );
 
   useEffect(() => {
@@ -152,13 +172,17 @@ export default function Dashboard({ passwordOn }: { passwordOn: boolean }) {
     load();
   }, [load]);
 
-  // Cours de plus de 6 h : mise à jour discrète à l'ouverture.
+  // Rattrapage à l'ouverture : si la tâche du matin n'a pas tourné, l'app la lance elle-même.
   useEffect(() => {
-    if (!state || busy) return;
-    const u = state.snapshot.updatedAt;
-    if (!u || Date.now() - new Date(u).getTime() > 6 * 3600e3) refresh(false, true);
+    if (!state || busy || autoTried.current) return;
+    autoTried.current = true;
+    const snap = state.snapshot;
+    const recoOld = snap.recoSeed || !snap.recoAt || Date.now() - new Date(snap.recoAt).getTime() > 26 * 3600e3;
+    const coursOld = !snap.updatedAt || Date.now() - new Date(snap.updatedAt).getTime() > 6 * 3600e3;
+    if (state.aiConfigured && recoOld) refresh(true, "ouverture");
+    else if (coursOld) refresh(false, "ouverture");
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [state?.snapshot.updatedAt]);
+  }, [state]);
 
   const pf = useMemo(() => (state ? summarize(state.positions, state.snapshot.quotes) : null), [state]);
 
@@ -180,26 +204,30 @@ export default function Dashboard({ passwordOn }: { passwordOn: boolean }) {
 
   const s = state.settings;
   const share = s.patrimoine ? (pf.value / s.patrimoine) * 100 : null;
+  const fresh = state.snapshot.recoAt && !state.snapshot.recoSeed && Date.now() - new Date(state.snapshot.recoAt).getTime() < 26 * 3600e3;
 
   return (
     <main className="wrap">
       <header className="top">
-        <div>
+        <div className="stack" style={{ gap: 4 }}>
           <h1>Radar Startups</h1>
-          <p className="small muted">
-            Cours et actus mis à jour {ago(state.snapshot.updatedAt)} · analyse IA {ago(state.snapshot.recoAt)} · mise à jour automatique chaque matin
-          </p>
+          <span className={`status ${fresh ? "ok" : "late"}`}>
+            <i />
+            {fresh ? `Analyse du jour à jour (${ago(state.snapshot.recoAt)})` : state.snapshot.recoSeed ? "Analyse de départ, en attente de la première analyse automatique" : `Dernière analyse ${ago(state.snapshot.recoAt)}`}
+            {" · cours "}{ago(state.snapshot.updatedAt)}
+          </span>
         </div>
         <div className="row">
           <button className="btn ghost" disabled={!!busy} onClick={() => refresh(false)}>
-            {busy === "cours" ? <span className="spin">↻</span> : "↻"} Actualiser les cours
+            {busy === "cours" ? <span className="spin">↻</span> : "↻"} Cours
           </button>
           <button className="btn" disabled={!!busy || !state.aiConfigured} onClick={() => refresh(true)} title={state.aiConfigured ? "" : "Ajoute ANTHROPIC_API_KEY dans Vercel"}>
-            {busy === "ia" ? "Analyse en cours…" : "Nouvelle analyse IA"}
+            {busy === "ia" ? "Analyse en cours…" : "Relancer l'analyse"}
           </button>
         </div>
       </header>
 
+      {progress && <p className="warn progress" role="status"><span className="spin">↻</span> {progress}</p>}
       {msg && <p className={msg.err ? "warn err" : "warn"} role="status">{msg.text}</p>}
       {state.storage === "memoire" && (
         <p className="warn"><b>Base de données non connectée.</b> Tes données seront perdues au prochain redémarrage : ajoute Upstash Redis dans Vercel (voir le README).</p>
@@ -230,8 +258,6 @@ export default function Dashboard({ passwordOn }: { passwordOn: boolean }) {
         </div>
       </section>
 
-      <p className="warn"><b>Ce n'est pas un conseil en investissement.</b> Les recommandations sont générées par une IA à partir de données publiques qui peuvent être incomplètes ou fausses. Tu peux perdre tout l'argent investi en startups. Décide toujours toi-même.</p>
-
       <nav className="tabs" role="tablist">
         {TABS.map(([k, l]) => (
           <button key={k} role="tab" aria-selected={tab === k} onClick={() => go(k)}>{l}</button>
@@ -244,6 +270,10 @@ export default function Dashboard({ passwordOn }: { passwordOn: boolean }) {
       {tab === "actus" && <News state={state} />}
       {tab === "dos" && <Dossiers state={state} reload={load} setMsg={setMsg} />}
       {tab === "reglages" && <SettingsTab state={state} reload={load} setMsg={setMsg} passwordOn={passwordOn} />}
+
+      <p className="small muted" style={{ maxWidth: "80ch" }}>
+        Ce n'est pas un conseil en investissement. Les analyses sont produites par une IA à partir de données publiques qui peuvent être incomplètes ou fausses. Tu peux perdre tout l'argent investi. Décide toujours toi-même.
+      </p>
     </main>
   );
 }
@@ -251,53 +281,96 @@ export default function Dashboard({ passwordOn }: { passwordOn: boolean }) {
 type SetMsg = (m: { text: string; err?: boolean } | null) => void;
 
 /* ---------- Aujourd'hui ---------- */
+const DAYS = new Intl.DateTimeFormat("fr-FR", { weekday: "long", day: "numeric", month: "long" });
+const host = (u: string) => {
+  try {
+    return new URL(u).hostname.replace(/^www\./, "");
+  } catch {
+    return u;
+  }
+};
+
+function Linkified({ text }: { text: string }) {
+  const parts = text.split(/(https?:\/\/[^\s)\]]+)/g);
+  return (
+    <>
+      {parts.map((p, i) =>
+        /^https?:\/\//.test(p) ? (
+          <a key={i} href={p} target="_blank" rel="noopener noreferrer">{host(p)}</a>
+        ) : (
+          <span key={i}>{p}</span>
+        ),
+      )}
+    </>
+  );
+}
+
 function Today({ state, valued, busy, onRun }: { state: AppState; valued: Valued[]; busy: string; onRun: () => void }) {
-  const { reco, recoAt, recoError, recoModel, quotes } = state.snapshot;
+  const { reco, recoAt, recoError, recoModel, recoSeed, quotes, research, runs } = state.snapshot;
   const movers = Object.values(quotes)
     .filter((q) => q.change1d != null)
     .sort((a, b) => Math.abs(b.change1d ?? 0) - Math.abs(a.change1d ?? 0));
   const nameOf = (q: Quote) =>
     valued.find((p) => p.ticker === q.symbol)?.name ?? state.watchlist.find((w) => w.ticker === q.symbol)?.name ?? q.name ?? q.symbol;
+  const buys = reco?.actions.filter((a) => (a.type === "ACHETER" || a.type === "RENFORCER") && a.montantEUR) ?? [];
+  const total = buys.reduce((t, a) => t + (a.montantEUR ?? 0), 0);
+  const nSources = new Set(reco?.actions.flatMap((a) => a.sources.map((x) => x.url)) ?? []).size;
+
   return (
     <section className="stack">
-      {recoError && <p className="warn err">Dernière analyse IA en échec : {recoError}</p>}
-      {!reco ? (
-        <div className="panel">
-          <h2>Pas encore de recommandations</h2>
-          <p className="muted">
-            {state.aiConfigured
-              ? "La première analyse arrive demain matin automatiquement, ou lance-la maintenant. Elle cherche les dernières nouvelles de tes lignes et de ton radar, puis te dit quoi acheter, quoi attendre et pourquoi."
-              : "Ajoute ta clé ANTHROPIC_API_KEY dans les variables d'environnement Vercel pour activer les recommandations quotidiennes."}
-          </p>
-          {state.aiConfigured && (
-            <div><button className="btn" disabled={!!busy} onClick={onRun}>{busy === "ia" ? "Analyse en cours…" : "Lancer l'analyse maintenant"}</button></div>
+      {recoError && !busy && <p className="warn err">La dernière analyse automatique a échoué : {recoError}</p>}
+
+      {reco && (
+        <div className="brief">
+          <div className="row spread">
+            <span className="eyebrow">{DAYS.format(recoAt ? new Date(recoAt) : new Date())} · ton brief</span>
+            <span className="small muted">{recoSeed ? "Analyse de départ, faite à la main le 29/09" : `${recoModel} · ${recoAt ? new Date(recoAt).toLocaleTimeString("fr-FR", { hour: "2-digit", minute: "2-digit" }) : ""}`}</span>
+          </div>
+          <p className="lead">{reco.resume}</p>
+          <p className="small"><b>Marché :</b> {reco.marche}</p>
+          <div className="row">
+            {buys.length > 0 && <span className="chip strong">{buys.length} achat{buys.length > 1 ? "s" : ""} proposé{buys.length > 1 ? "s" : ""} · {eur.format(total)}</span>}
+            <span className="chip">{reco.actions.length} décisions argumentées</span>
+            <span className="chip">{nSources} sources vérifiées</span>
+            {reco.alertes.length > 0 && <span className="chip warnchip">{reco.alertes.length} alerte{reco.alertes.length > 1 ? "s" : ""}</span>}
+          </div>
+          {recoSeed && (
+            <p className="small muted">
+              {state.aiConfigured
+                ? "L'analyse automatique remplacera celle-ci dès la première mise à jour du matin, ou tout de suite si tu cliques sur « Relancer l'analyse »."
+                : "Pour une analyse automatique chaque matin, ajoute ANTHROPIC_API_KEY dans Vercel."}
+            </p>
           )}
         </div>
-      ) : (
-        <>
-          <div className="panel">
-            <div className="row spread">
-              <h2>Ce que je retiens aujourd'hui</h2>
-              <span className="small muted">{recoAt ? new Date(recoAt).toLocaleString("fr-FR") : ""} · {recoModel}</span>
-            </div>
-            <p>{reco.resume}</p>
-            <p className="small muted"><b>Marché :</b> {reco.marche}</p>
-          </div>
-          <div className="reco">
-            {reco.actions.map((a, i) => <ActionCard key={i} a={a} />)}
-          </div>
-          <div className="grid2">
-            <div className="panel">
-              <h3>Alertes</h3>
-              {reco.alertes.length ? <ul className="small">{reco.alertes.map((x, i) => <li key={i}>{x}</li>)}</ul> : <p className="small muted">Rien de particulier.</p>}
-            </div>
-            <div className="panel">
-              <h3>À vérifier toi-même avant d'agir</h3>
-              <ul className="small">{reco.verifications.map((x, i) => <li key={i}>{x}</li>)}</ul>
-            </div>
-          </div>
-        </>
       )}
+
+      {reco?.actions.map((a, i) => <ActionCard key={i} a={a} rank={i + 1} quote={a.ticker ? quotes[a.ticker] : undefined} />)}
+
+      {reco && (
+        <div className="grid2">
+          <div className="panel">
+            <h3>Alertes et dates à retenir</h3>
+            {reco.alertes.length ? <ul className="small list">{reco.alertes.map((x, i) => <li key={i}>{x}</li>)}</ul> : <p className="small muted">Rien de particulier.</p>}
+          </div>
+          <div className="panel">
+            <h3>À vérifier toi-même avant d'agir</h3>
+            <ul className="small list">{reco.verifications.map((x, i) => <li key={i}>{x}</li>)}</ul>
+          </div>
+        </div>
+      )}
+
+      {research && (
+        <details className="panel">
+          <summary><h3 style={{ display: "inline" }}>La veille complète du jour</h3> <span className="small muted">· {research.sources.length} sources lues {ago(research.at)}</span></summary>
+          <div className="note"><Linkified text={research.note} /></div>
+          {research.sources.length > 0 && (
+            <ul className="small list">
+              {research.sources.map((x) => <li key={x.url}><a href={x.url} target="_blank" rel="noopener noreferrer">{x.titre || host(x.url)}</a> <span className="muted">{host(x.url)}</span></li>)}
+            </ul>
+          )}
+        </details>
+      )}
+
       <div className="panel">
         <h3>Ce qui a bougé depuis hier</h3>
         {movers.length ? (
@@ -321,27 +394,112 @@ function Today({ state, valued, busy, onRun }: { state: AppState; valued: Valued
           <p className="small muted">Les cours apparaîtront après la première mise à jour.</p>
         )}
       </div>
+
+      <Health state={state} runs={runs ?? []} busy={busy} onRun={onRun} />
     </section>
   );
 }
 
-function ActionCard({ a }: { a: RecoAction }) {
+const CONF = { faible: 1, moyenne: 2, forte: 3 } as const;
+
+function ActionCard({ a, rank, quote }: { a: RecoAction; rank: number; quote?: Quote }) {
   return (
-    <article className="card">
+    <article className={`card action ${a.type}`}>
       <div className="row spread">
-        <span className="row"><span className={`pill ${a.type}`}>{a.type}</span><b>{a.cible}</b>{a.ticker && <span className="small muted mono">{a.ticker}</span>}</span>
+        <div className="row">
+          <span className="rank mono">{rank}</span>
+          <span className={`pill ${a.type}`}>{a.type}</span>
+          <h3 style={{ fontSize: "1.15rem" }}>{a.cible}</h3>
+          {a.ticker && <span className="small muted mono">{a.ticker}</span>}
+        </div>
         {a.montantEUR != null && <span className="amount">{eur.format(a.montantEUR)}</span>}
       </div>
-      <p>{a.pourquoi}</p>
-      <p className="small muted"><b>Risques :</b> {a.risques}</p>
-      <span className="conf">Confiance : {a.confiance}</span>
-      {a.sources.length > 0 && (
-        <details className="small">
-          <summary className="muted">Sources ({a.sources.length})</summary>
-          <ul>{a.sources.map((u, i) => <li key={i}>{/^https?:\/\//.test(u) ? <a href={u} target="_blank" rel="noopener noreferrer">{u.replace(/^https?:\/\/(www\.)?/, "").slice(0, 70)}</a> : u}</li>)}</ul>
-        </details>
+      {quote && (
+        <div className="row small">
+          <span className="mono">{nf2.format(quote.price)} {quote.currency === "GBp" ? "p" : quote.currency}</span>
+          <span className={`mono ${cls(quote.change1d)}`}>{signPct(quote.change1d)} sur 1 jour</span>
+          <span className={`mono ${cls(quote.change1m)}`}>{signPct(quote.change1m)} sur 1 mois</span>
+          <Spark data={quote.closes} w={120} h={28} />
+        </div>
       )}
+      <p className="enbref">{a.enBref}</p>
+      <p>{a.these}</p>
+      <div className="grid2">
+        <div className="stack" style={{ gap: 6 }}>
+          <span className="lab pos">Pourquoi</span>
+          <ul className="args">
+            {a.pour.map((x, i) => (
+              <li key={i} className="yes">
+                {x.point}
+                {x.chiffre && <> : <b>{x.chiffre}</b></>}
+                {x.source && <> <a className="src" href={x.source} target="_blank" rel="noopener noreferrer">{host(x.source)}</a></>}
+              </li>
+            ))}
+          </ul>
+        </div>
+        <div className="stack" style={{ gap: 6 }}>
+          <span className="lab neg">Ce qui peut mal tourner</span>
+          <ul className="args">
+            {a.contre.map((x, i) => (
+              <li key={i} className="no">
+                {x.point}
+                {x.chiffre && <> : <b>{x.chiffre}</b></>}
+                {x.source && <> <a className="src" href={x.source} target="_blank" rel="noopener noreferrer">{host(x.source)}</a></>}
+              </li>
+            ))}
+          </ul>
+        </div>
+      </div>
+      <div className="plan"><span className="lab">Plan</span><p>{a.plan}</p></div>
+      <div className="row spread small">
+        <span className="row">
+          <span className="muted">Horizon : <b>{a.horizon}</b></span>
+          <span className="conf" aria-label={`Confiance ${a.confiance}`}>
+            Confiance
+            {[1, 2, 3].map((n) => <i key={n} className={n <= CONF[a.confiance] ? "on" : ""} />)}
+            {a.confiance}
+          </span>
+        </span>
+        <span className="row">{a.sources.map((x) => <a key={x.url} className="src" href={x.url} target="_blank" rel="noopener noreferrer" title={x.titre}>{host(x.url)}</a>)}</span>
+      </div>
     </article>
+  );
+}
+
+const STEP_LABEL = { cours: "Cours et actus", veille: "Veille web", decision: "Recommandations" } as const;
+const TRIGGER_LABEL = { auto: "automatique", manuel: "à la main", ouverture: "rattrapage à l'ouverture" } as const;
+
+function Health({ state, runs, busy, onRun }: { state: AppState; runs: RunLog[]; busy: string; onRun: () => void }) {
+  const last = (st: RunLog["step"]) => runs.find((r) => r.step === st);
+  const lastAuto = runs.find((r) => r.trigger === "auto");
+  const problems: string[] = [];
+  if (!state.aiConfigured) problems.push("ANTHROPIC_API_KEY manquante : pas d'analyse IA.");
+  if (state.storage === "memoire") problems.push("Base Upstash non connectée : rien n'est sauvegardé entre deux mises à jour.");
+  if (!lastAuto) problems.push("Aucune mise à jour automatique reçue de Vercel pour l'instant. Vérifie Settings → Cron Jobs dans ton projet Vercel (les tâches tournent entre 5 h et 7 h, heure de Paris).");
+  return (
+    <details className="panel" open={problems.length > 0}>
+      <summary><h3 style={{ display: "inline" }}>Mises à jour automatiques</h3> <span className={`small ${problems.length ? "neg" : "pos"}`}>· {problems.length ? `${problems.length} point${problems.length > 1 ? "s" : ""} à régler` : "tout fonctionne"}</span></summary>
+      {problems.length > 0 && <ul className="small list neg">{problems.map((p) => <li key={p}>{p}</li>)}</ul>}
+      <div className="tablebox" style={{ border: 0 }}>
+        <table style={{ minWidth: 480 }}>
+          <thead><tr><th>Étape</th><th>Dernier passage</th><th>Résultat</th></tr></thead>
+          <tbody>
+            {(["cours", "veille", "decision"] as const).map((st) => {
+              const r = last(st);
+              return (
+                <tr key={st}>
+                  <td className="nm">{STEP_LABEL[st]}</td>
+                  <td className="small">{r ? `${new Date(r.at).toLocaleString("fr-FR")} · ${TRIGGER_LABEL[r.trigger]} · ${r.seconds} s` : "jamais"}</td>
+                  <td className={`small ${r ? (r.ok ? "pos" : "neg") : "muted"}`}>{r ? r.message : "—"}</td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+      <p className="small muted">Chaque matin : cours vers 5 h, veille web vers 6 h, recommandations vers 7 h (heure de Paris), cours à nouveau vers 18 h. Si une tâche n'a pas tourné, l'app la rattrape quand tu l'ouvres.</p>
+      {state.aiConfigured && <div><button className="btn ghost" disabled={!!busy} onClick={onRun}>Lancer l'analyse complète maintenant</button></div>}
+    </details>
   );
 }
 
