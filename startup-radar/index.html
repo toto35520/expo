@@ -122,7 +122,31 @@ a { color: var(--accent); }
 .guide .panel p, .guide .panel li { font-size: 0.92rem; max-width: 65ch; }
 .guide ul { margin: 0; padding-left: 18px; display: flex; flex-direction: column; gap: 6px; }
 @media (max-width: 760px) { .guide { grid-template-columns: 1fr; } }
-.rules { counter-reset: r; }
+.score { display: inline-flex; align-items: center; gap: 8px; justify-content: flex-end; }
+.score .mini { width: 44px; height: 6px; background: var(--follow-bg); border-radius: 3px; overflow: hidden; }
+.score .mini i { display: block; height: 100%; background: var(--accent); }
+.grid6 { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 10px; }
+.crit { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+.crit .lab { font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.05em; color: var(--muted); font-weight: 600; }
+.dots { display: flex; gap: 3px; }
+.dots i { width: 14px; height: 6px; border-radius: 2px; background: var(--follow-bg); }
+.dots i.on { background: var(--accent); }
+.verdict { display: flex; flex-wrap: wrap; gap: 8px 16px; align-items: baseline; padding: 12px 14px; border: 1px solid var(--line); border-radius: 6px; background: var(--surface); margin-bottom: 14px; }
+.verdict .big { font-family: var(--f-mono); font-size: 1.3rem; }
+@media (max-width: 760px) { .grid6 { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
+.plan { display: flex; flex-direction: column; gap: 16px; }
+.alloc { display: flex; height: 28px; border-radius: 6px; overflow: hidden; font-size: 0.78rem; font-weight: 600; }
+.alloc span { display: flex; align-items: center; justify-content: center; color: var(--surface); white-space: nowrap; overflow: hidden; padding-inline: 4px; }
+.a1 { background: var(--accent); } .a2 { background: var(--go); } .a3 { background: var(--watch); } .a4 { background: var(--follow); }
+.key { display: flex; flex-wrap: wrap; gap: 6px 16px; font-size: 0.84rem; color: var(--muted); }
+.key b { display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin-right: 6px; vertical-align: -1px; }
+.tiers { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; }
+.tier { border: 1px solid var(--line); border-radius: 8px; padding: 14px; display: flex; flex-direction: column; gap: 8px; min-width: 0; }
+.tier h3 { font-size: 0.98rem; }
+.tier ul { margin: 0; padding-left: 18px; font-size: 0.9rem; display: flex; flex-direction: column; gap: 4px; }
+@media (max-width: 860px) { .tiers { grid-template-columns: 1fr; } }
+.plan table { min-width: 640px; }
+.plan p { max-width: 75ch; }
 @media (prefers-reduced-motion: no-preference) { tr.detail td { animation: fade .18s ease-out; } @keyframes fade { from { opacity: .4 } to { opacity: 1 } } }
 </style>
 
@@ -146,6 +170,7 @@ a { color: var(--accent); }
 
   <nav class="tabs" role="tablist">
     <button role="tab" id="tab-radar" aria-selected="true" data-tab="radar">Radar</button>
+    <button role="tab" id="tab-plan" aria-selected="false" data-tab="plan">Quoi investir</button>
     <button role="tab" id="tab-pf" aria-selected="false" data-tab="pf">Mon portefeuille</button>
     <button role="tab" id="tab-cal" aria-selected="false" data-tab="cal">Calendrier</button>
     <button role="tab" id="tab-guide" aria-selected="false" data-tab="guide">Comment investir</button>
@@ -176,6 +201,18 @@ a { color: var(--accent); }
         </label>
         <label>Revenu annuel récurrent (Md)<input id="fs-arr" inputmode="decimal" placeholder="0.375"></label>
         <label class="wide">Croissance / chiffres clés<input id="fs-growth"></label>
+        <div class="wide grid6">
+          <label>Croissance<input id="sc-croissance" type="number" min="1" max="5"></label>
+          <label>Marché<input id="sc-marche" type="number" min="1" max="5"></label>
+          <label>Prix / valo<input id="sc-valo" type="number" min="1" max="5"></label>
+          <label>Solidité<input id="sc-solidite" type="number" min="1" max="5"></label>
+          <label>Sortie proche<input id="sc-sortie" type="number" min="1" max="5"></label>
+          <label>Accès pour toi<input id="sc-acces" type="number" min="1" max="5"></label>
+        </div>
+        <label>Profil
+          <select id="fs-profil"><option value="">—</option><option>Coté (post-IPO)</option><option>Véhicule coté pré-IPO</option><option>Licorne privée</option><option>Early-stage Europe</option></select>
+        </label>
+        <label class="wide" style="grid-column: span 2">Verdict<input id="fs-verdict" placeholder="Ce que tu en fais : acheter, attendre, surveiller…"></label>
         <label class="wide">Pourquoi la suivre<textarea id="fs-why"></textarea></label>
         <label class="wide">Risques<textarea id="fs-risks"></textarea></label>
         <label class="wide">Comment y investir<textarea id="fs-how"></textarea></label>
@@ -204,6 +241,7 @@ a { color: var(--accent); }
       <table>
         <thead><tr>
           <th data-s="name">Startup</th>
+          <th class="n" data-s="score" title="Note d'analyse sur 30 (6 critères notés de 1 à 5)">Note /30</th>
           <th data-s="status">Statut</th>
           <th data-s="round">Dernière levée</th>
           <th class="n" data-s="val">Valorisation</th>
@@ -211,10 +249,105 @@ a { color: var(--accent); }
           <th class="n" data-s="mult" title="Valorisation divisée par le revenu annuel récurrent">Multiple</th>
           <th data-s="date">Date</th>
         </tr></thead>
-        <tbody id="radarBody"><tr><td colspan="7" class="empty">Chargement de ta liste… Les startups que tu ajoutes avec « + Ajouter une startup » apparaîtront ici.</td></tr></tbody>
+        <tbody id="radarBody"><tr><td colspan="8" class="empty">Chargement de ta liste… Les startups que tu ajoutes avec « + Ajouter une startup » apparaîtront ici.</td></tr></tbody>
       </table>
     </div>
     <p class="meta">Clique sur une ligne pour voir pourquoi la suivre, les risques et comment y investir. Multiple = valorisation ÷ revenu annuel récurrent : plus il est bas, moins tu paies cher chaque dollar de revenu.</p>
+  </section>
+
+  <!-- QUOI INVESTIR -->
+  <section id="view-plan" class="view plan" hidden>
+    <div class="panel">
+      <h2>Mon plan : où mettre ton budget startups</h2>
+      <p>Le budget startups, c'est au maximum 10 % de ton patrimoine financier, une fois ton épargne de précaution constituée. Ce plan le répartit entre ce qu'un particulier en France peut réellement acheter aujourd'hui, du plus liquide au plus risqué. C'est mon analyse au 29 septembre 2026, pas un conseil personnalisé.</p>
+      <div class="alloc" role="img" aria-label="Répartition : 40 % véhicules cotés, 25 % actions post-IPO, 25 % startups européennes, 10 % licornes privées via un club">
+        <span class="a1" style="width:40%">40 %</span><span class="a2" style="width:25%">25 %</span><span class="a3" style="width:25%">25 %</span><span class="a4" style="width:10%">10 %</span>
+      </div>
+      <div class="key">
+        <span><b class="a1"></b>Véhicules cotés qui détiennent des licornes</span>
+        <span><b class="a2"></b>Actions après introduction en bourse</span>
+        <span><b class="a3"></b>Startups européennes (crowdequity)</span>
+        <span><b class="a4"></b>Licornes privées via un club (gros budgets)</span>
+      </div>
+    </div>
+
+    <div class="panel">
+      <h2>Ce que je ferais maintenant</h2>
+      <div class="tablebox" style="border:0">
+        <table>
+          <thead><tr><th>Priorité</th><th>Quoi</th><th>Pourquoi</th><th>Comment</th></tr></thead>
+          <tbody>
+            <tr><td class="mono">1</td><td class="nm">Scottish Mortgage (SMT)</td><td>Fonds coté à Londres qui détient 7 des 10 plus grosses sociétés privées au monde. SpaceX est sa 1re ligne, il détient aussi Anthropic (2,8 %), Databricks, ByteDance. Diversifié et revendable à tout moment.</td><td>Compte-titres, marché de Londres. Environ 15 £ l'action (1 500 pence le 9 sept.).</td></tr>
+            <tr><td class="mono">2</td><td class="nm">SpaceX (+ Cursor)</td><td>Seule « startup en explosion » achetable en direct. Mais valorisation énorme : prends une petite ligne, achetée en plusieurs fois.</td><td>Compte-titres, Nasdaq. Achats mensuels plutôt qu'en une fois.</td></tr>
+            <tr><td class="mono">3</td><td class="nm">10 startups françaises minimum</td><td>Là où se font les multiplications par 10, et avec 18 à 30 % de réduction d'impôt. Vise des Jeunes Entreprises Innovantes (30 %).</td><td>WiSEED, Tudigo, Sowefund, Anaxago : 100 à 500 € par dossier, étalé sur 12 à 24 mois.</td></tr>
+            <tr><td class="mono">4</td><td class="nm">Anthropic : attendre</td><td>IPO repoussée à novembre. Les IPO de 2025-26 ont souvent chuté après l'euphorie : Klarna de 40 $ à environ 20 $ en 9 mois, Cerebras au-dessus de 300 $ puis revenue à son prix d'IPO de 185 $. Je suis développé par Anthropic : conflit d'intérêts, décide sans moi.</td><td>Attendre au moins 30 jours après la cotation et comparer au prix d'introduction.</td></tr>
+            <tr><td class="mono">5</td><td class="nm">Databricks, Stripe, Revolut</td><td>Les licornes les plus solides pas encore cotées : Databricks 134 Md$ (4,8 Md$ de revenu, +55 % par an), Stripe 159 Md$, Revolut environ 75 Md$. Aucune IPO datée.</td><td>À surveiller. Accessibles seulement via un club comme Blast (dès 500 €, gros frais) ou indirectement via SMT.</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <div class="panel">
+      <h2>Selon ton budget startups</h2>
+      <div class="tiers">
+        <div class="tier">
+          <h3>Moins de 2 000 €</h3>
+          <ul>
+            <li>60 % Scottish Mortgage</li>
+            <li>40 % SpaceX, acheté en 3 ou 4 fois</li>
+            <li>Pas de crowdequity : trop peu pour diversifier sur 10 dossiers</li>
+            <li>Pas de club payant : l'adhésion mangerait ton capital</li>
+          </ul>
+        </div>
+        <div class="tier">
+          <h3>2 000 à 15 000 €</h3>
+          <ul>
+            <li>40 % Scottish Mortgage</li>
+            <li>25 % actions post-IPO (SpaceX, puis Anthropic ou autres après 30 jours)</li>
+            <li>35 % crowdequity : 10 à 15 startups à 100–500 €</li>
+            <li>Toujours pas de club : les frais fixes pèsent trop</li>
+          </ul>
+        </div>
+        <div class="tier">
+          <h3>Plus de 15 000 €</h3>
+          <ul>
+            <li>La répartition 40 / 25 / 25 / 10 complète</li>
+            <li>Les 10 % via un club type Blast : licornes pré-IPO (Databricks, Stripe, Revolut…) ou panier Y Combinator</li>
+            <li>C'est le seuil où ses frais deviennent supportables (15 à 20 k€ conseillés)</li>
+          </ul>
+        </div>
+      </div>
+    </div>
+
+    <div class="panel">
+      <h2>Combien coûte chaque porte d'entrée</h2>
+      <div class="tablebox" style="border:0">
+        <table>
+          <thead><tr><th>Véhicule</th><th>Mise minimale</th><th>Frais</th><th>Revente</th><th>Ce que tu obtiens</th></tr></thead>
+          <tbody>
+            <tr><td class="nm">Action cotée</td><td>1 action</td><td>Courtage, souvent moins de 1 %</td><td>Immédiate</td><td>Une seule entreprise</td></tr>
+            <tr><td class="nm">Scottish Mortgage</td><td>1 action (~15 £)</td><td>Courtage + frais annuels du fonds (voir son document d'informations clés)</td><td>Immédiate</td><td>Un panier de licornes cotées et non cotées</td></tr>
+            <tr><td class="nm">Destiny Tech100 (DXYZ)</td><td>~31 $</td><td>Frais de gestion élevés</td><td>Immédiate</td><td>SpaceX, OpenAI, Anthropic… Décote de 9 % sur sa valeur réelle le 18 sept., mais 31 % de trésorerie. Souvent bloqué chez les courtiers européens.</td></tr>
+            <tr><td class="nm">Crowdequity</td><td>100 €</td><td>Variables selon la plateforme</td><td>5 à 10 ans</td><td>Une PME, réduction d'impôt 18 à 50 %</td></tr>
+            <tr><td class="nm">Blast Club</td><td>500 € par dossier + adhésion</td><td>Adhésion de 1 000 à 10 000 € (non récupérable) + 3 à 5 % par dossier + 1 %/an (5 ans max) + 20 % des gains</td><td>1 à 10 ans, ou Blast Market</td><td>Accès aux licornes privées et à Y Combinator. Sur 10 000 € en formule Bronze, environ 16 % partent en frais au départ.</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <div class="panel">
+      <h2>Ma méthode d'analyse, inspirée de Blast</h2>
+      <p>Blast dit retenir moins de 1 % des dossiers, sur la croissance, la valorisation, la gouvernance et la trajectoire vers l'introduction en bourse. Chaque startup du Radar est notée de 1 à 5 sur six critères, soit une note sur 30 :</p>
+      <ul>
+        <li><b>Croissance</b> : vitesse de progression du revenu</li>
+        <li><b>Marché</b> : taille et tendance de fond (IA, cyber, spatial…)</li>
+        <li><b>Prix / valo</b> : 5 = pas cher par rapport au revenu, 1 = très cher</li>
+        <li><b>Solidité</b> : qualité des investisseurs, trésorerie, gouvernance</li>
+        <li><b>Sortie proche</b> : 5 = déjà cotée ou IPO imminente, 1 = 8 ans et plus</li>
+        <li><b>Accès pour toi</b> : 5 = achetable aujourd'hui à bas coût, 1 = impossible</li>
+      </ul>
+      <p class="meta">Ces notes sont mon jugement, pas une vérité. Modifie-les avec « Modifier » dans chaque fiche si tu n'es pas d'accord. Comme chez Blast, fais une revue chaque trimestre : mets à jour la valeur de tes lignes dans « Mon portefeuille ».</p>
+    </div>
   </section>
 
   <!-- PORTEFEUILLE -->
@@ -334,7 +467,7 @@ a { color: var(--accent); }
 
   let db = null;
   let startups = [], positions = [], events = [];
-  let filter = "all", query = "", sortKey = "date", sortDir = -1, openId = null, editId = null;
+  let filter = "all", query = "", sortKey = "score", sortDir = -1, openId = null, editId = null;
 
   function fmtBig(v, cur) {
     if (v == null) return "—";
@@ -343,6 +476,14 @@ a { color: var(--accent); }
     return nf.format(v) + " Md" + cur;
   }
   function mult(s) { return s.val != null && s.arr ? s.val / s.arr : null; }
+  const CRIT = [["croissance", "Croissance"], ["marche", "Marché"], ["valo", "Prix / valo"], ["solidite", "Solidité"], ["sortie", "Sortie proche"], ["acces", "Accès pour toi"]];
+  function total(s) {
+    if (!s.score) return null;
+    let t = 0;
+    for (const [k] of CRIT) { const v = Number(s.score[k]); if (!v) return null; t += v; }
+    return t;
+  }
+  function dots(v) { let h = ""; for (let i = 1; i <= 5; i++) h += `<i class="${i <= v ? "on" : ""}"></i>`; return `<span class="dots" aria-label="${v} sur 5">${h}</span>`; }
   function fmtMonth(d) {
     if (!d) return "—";
     const [y, m] = d.split("-");
@@ -374,6 +515,7 @@ a { color: var(--accent); }
 
   function sortVal(s, k) {
     if (k === "mult") return mult(s);
+    if (k === "score") return total(s);
     if (k === "val" || k === "arr") return s[k];
     if (k === "status") return ["acces", "ipo", "suivre"].indexOf(s.status);
     return (s[k] || "").toString().toLowerCase();
@@ -388,12 +530,13 @@ a { color: var(--accent); }
       if (x == null && y == null) return 0; if (x == null) return 1; if (y == null) return -1;
       return (x > y ? 1 : x < y ? -1 : 0) * sortDir;
     });
-    if (!startups.length) { body.innerHTML = '<tr><td colspan="7" class="empty">Ta liste est vide. Ajoute une startup avec « + Ajouter une startup ».</td></tr>'; return; }
-    if (!rows.length) { body.innerHTML = '<tr><td colspan="7" class="empty">Aucune startup ne correspond à ce filtre.</td></tr>'; return; }
+    if (!startups.length) { body.innerHTML = '<tr><td colspan="8" class="empty">Ta liste est vide. Ajoute une startup avec « + Ajouter une startup ».</td></tr>'; return; }
+    if (!rows.length) { body.innerHTML = '<tr><td colspan="8" class="empty">Aucune startup ne correspond à ce filtre.</td></tr>'; return; }
     body.innerHTML = rows.map((s) => {
-      const m = mult(s);
+      const m = mult(s), tot = total(s);
       const main = `<tr class="row" tabindex="0" data-id="${esc(s.id)}" aria-expanded="${openId === s.id}">
         <td><div class="nm">${esc(s.name)}</div><div class="meta">${esc([s.sector, s.country].filter(Boolean).join(" · "))}</div></td>
+        <td class="n">${tot == null ? `<span class="meta">${s.noScore ? "non notée" : "—"}</span>` : `<span class="score mono">${tot}<span class="mini"><i style="width:${Math.round((tot / 30) * 100)}%"></i></span></span>`}</td>
         <td><span class="pill ${esc(s.status)}">${esc(STATUS[s.status] || s.status)}</span>${s.next ? `<div class="meta">${esc(s.next)}</div>` : ""}</td>
         <td>${esc(s.round || "—")}</td>
         <td class="n">${fmtBig(s.val, s.cur || "$")}</td>
@@ -402,7 +545,14 @@ a { color: var(--accent); }
         <td class="mono">${esc(fmtMonth(s.date))}</td></tr>`;
       if (openId !== s.id) return main;
       const src = safeUrl(s.src);
-      return main + `<tr class="detail"><td colspan="7">
+      const verdict = (tot != null || s.verdict || s.noScore) ? `<div class="verdict">
+          <span class="big">${tot == null ? "—" : tot + "/30"}</span>
+          ${s.profil ? `<span class="pill suivre">${esc(s.profil)}</span>` : ""}
+          <span style="flex:1 1 240px;min-width:0"><b>Verdict :</b> ${esc(s.verdict || "—")}</span>
+          ${tot != null ? `<div class="grid6" style="flex-basis:100%">${CRIT.map(([k, l]) => `<div class="crit"><span class="lab">${l}</span>${dots(Number(s.score[k]))}</div>`).join("")}</div>` : ""}
+        </div>` : "";
+      return main + `<tr class="detail"><td colspan="8">
+        ${verdict}
         <div class="dgrid">
           <div><span class="lab">Pourquoi la suivre</span><p>${esc(s.why || "—")}</p>${s.growth ? `<p class="meta"><b>Chiffres :</b> ${esc(s.growth)}</p>` : ""}</div>
           <div><span class="lab">Risques</span><p>${esc(s.risks || "—")}</p></div>
@@ -431,13 +581,14 @@ a { color: var(--accent); }
     const again = document.querySelector(`tr.row[data-id="${CSS.escape(r.dataset.id)}"]`); if (again) again.focus();
   });
 
-  const F = ["name", "sector", "country", "status", "round", "date", "val", "cur", "arr", "growth", "why", "risks", "how", "src", "srcl", "next"];
+  const F = ["name", "sector", "country", "status", "round", "date", "val", "cur", "arr", "growth", "why", "risks", "how", "src", "srcl", "next", "profil", "verdict"];
   const FID = { val: "fs-val", arr: "fs-arr", src: "fs-src", srcl: "fs-srcl", round: "fs-round" };
   const fid = (k) => FID[k] || "fs-" + k;
   function openForm(id) {
     editId = id || null;
     const s = startups.find((x) => x.id === id) || { status: "suivre", cur: "$" };
     F.forEach((k) => { const el = $(fid(k)); if (el) el.value = s[k] ?? ""; });
+    CRIT.forEach(([k]) => { $("sc-" + k).value = (s.score && s.score[k]) || ""; });
     $("fsTitle").textContent = id ? "Modifier " + s.name : "Ajouter une startup";
     $("fsMsg").textContent = "";
     showTab("radar"); $("formStartup").hidden = false; $("fs-name").focus();
@@ -449,6 +600,11 @@ a { color: var(--accent); }
     const d = {};
     F.forEach((k) => { const el = $(fid(k)); if (el) d[k] = el.value.trim(); });
     d.val = toNum(d.val); d.arr = toNum(d.arr);
+    const sc = {}; let any = false;
+    CRIT.forEach(([k]) => { const v = Math.round(toNum($("sc-" + k).value) || 0); if (v) { sc[k] = Math.max(1, Math.min(5, v)); any = true; } });
+    d.score = any ? sc : null;
+    const prev = startups.find((x) => x.id === editId);
+    if (prev && prev.noScore && !any) d.noScore = true;
     d.updated = new Date().toISOString().slice(0, 10);
     const id = editId || d.name.toLowerCase().normalize("NFD").replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "") + "-" + Date.now().toString(36);
     if (await save("startups", id, d, $("fsMsg"))) { $("formStartup").hidden = true; openId = id; }
@@ -560,7 +716,7 @@ a { color: var(--accent); }
   (async () => {
     db = window.claude && window.claude.use ? await window.claude.use("db") : null;
     if (!db) {
-      $("radarBody").innerHTML = '<tr><td colspan="7" class="empty">Les données ne sont pas disponibles dans cette vue. Ouvre la page depuis ton compte Claude pour voir et modifier ta liste.</td></tr>';
+      $("radarBody").innerHTML = '<tr><td colspan="8" class="empty">Les données ne sont pas disponibles dans cette vue. Ouvre la page depuis ton compte Claude pour voir et modifier ta liste.</td></tr>';
       return;
     }
     snap("startups", (d) => { startups = d; renderRadar(); renderKpis(); });
