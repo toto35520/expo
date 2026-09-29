@@ -3,3 +3,9 @@ data/
 *.log
 __pycache__/
 .venv/
+ctrader-cbot/bin/
+ctrader-cbot/obj/
+ctrader-cbot/research/bin/
+ctrader-cbot/research/obj/
+ctrader-cbot/research/report.md
+ctrader-cbot/cAlgo/

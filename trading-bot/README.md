@@ -1,5 +1,8 @@
 # Bot de trading cTrader (or / forex / indices)
 
+> **Nouveau : `ctrader-cbot/GoldLiveEngine.cs`** — cBot C# multi-setups pour XAUUSD, avec outil de recherche statistique. Voir [`ctrader-cbot/README.md`](ctrader-cbot/README.md).
+> Le bot Python ci-dessous reste utile pour **télécharger l'historique** de ton broker (`python bot.py --download`).
+
 Bot Python branché sur l'**API officielle cTrader Open API**. Par défaut il trade l'or (XAUUSD) en H1.
 
 > ⚠️ Aucune stratégie ne garantit un gain. Ce bot peut perdre de l'argent.

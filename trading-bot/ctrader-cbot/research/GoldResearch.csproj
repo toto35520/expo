@@ -1,0 +1,14 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!-- Outil de recherche : compile le MÊME GoldLiveEngine.cs que le cBot, sans l'adaptateur cTrader. -->
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net8.0</TargetFramework>
+    <LangVersion>10</LangVersion>
+    <Nullable>disable</Nullable>
+    <DefineConstants>$(DefineConstants);GLE_OFFLINE</DefineConstants>
+    <InvariantGlobalization>false</InvariantGlobalization>
+  </PropertyGroup>
+  <ItemGroup>
+    <Compile Include="../GoldLiveEngine.cs" Link="GoldLiveEngine.cs" />
+  </ItemGroup>
+</Project>
