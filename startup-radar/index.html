@@ -1,0 +1,572 @@
+<title>Radar Startups</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,600;12..96,700&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<style>
+/* Layout: un poste de veille — bandeau KPI, onglets, tableau dense qui s'ouvre en fiche détaillée */
+:root {
+  --bg: #F3F5F8;
+  --surface: #FFFFFF;
+  --ink: #131C27;
+  --muted: #5B6778;
+  --line: #DCE1E8;
+  --accent: #2F4BD8;
+  --accent-soft: #E6EAFB;
+  --go: #15803D; --go-bg: #E3F4E8;
+  --watch: #B45309; --watch-bg: #FBEEDC;
+  --follow: #475569; --follow-bg: #E8ECF1;
+  --bad: #B91C1C;
+  --f-display: "Bricolage Grotesque", "Segoe UI", system-ui, sans-serif;
+  --f-body: "IBM Plex Sans", "Segoe UI", system-ui, sans-serif;
+  --f-mono: "IBM Plex Mono", ui-monospace, "SFMono-Regular", Menlo, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #0E141C; --surface: #151D28; --ink: #E6EBF2; --muted: #93A0B2; --line: #263243;
+    --accent: #8DA2FF; --accent-soft: #1E2A52;
+    --go: #4ADE80; --go-bg: #12301E; --watch: #FBBF24; --watch-bg: #3A2A0E; --follow: #A7B4C6; --follow-bg: #222D3B; --bad: #F87171;
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #0E141C; --surface: #151D28; --ink: #E6EBF2; --muted: #93A0B2; --line: #263243;
+  --accent: #8DA2FF; --accent-soft: #1E2A52;
+  --go: #4ADE80; --go-bg: #12301E; --watch: #FBBF24; --watch-bg: #3A2A0E; --follow: #A7B4C6; --follow-bg: #222D3B; --bad: #F87171;
+  color-scheme: dark;
+}
+* { box-sizing: border-box; }
+body { background: var(--bg); color: var(--ink); font-family: var(--f-body); font-size: 15px; line-height: 1.5; }
+.wrap { max-width: 1180px; margin: 0 auto; padding-inline: 16px; padding-block: 24px 64px; display: flex; flex-direction: column; gap: 20px; }
+h1, h2, h3 { font-family: var(--f-display); text-wrap: balance; margin: 0; }
+h1 { font-size: clamp(1.7rem, 3.5vw, 2.3rem); letter-spacing: -0.01em; }
+h2 { font-size: 1.25rem; }
+h3 { font-size: 1.02rem; }
+p { margin: 0; }
+.num, td.n, .mono { font-family: var(--f-mono); font-variant-numeric: tabular-nums; }
+header.top { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: end; gap: 12px; }
+.asof { font-size: 0.82rem; color: var(--muted); }
+.warn { background: var(--surface); border: 1px solid var(--line); border-left: 3px solid var(--watch); padding: 10px 14px; font-size: 0.86rem; color: var(--muted); border-radius: 6px; }
+.warn b { color: var(--ink); }
+
+.kpis { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; }
+.kpi { background: var(--surface); border: 1px solid var(--line); border-radius: 8px; padding: 12px 14px; display: flex; flex-direction: column; gap: 2px; }
+.kpi .lab { font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.06em; color: var(--muted); }
+.kpi .val { font-family: var(--f-mono); font-size: 1.5rem; font-weight: 500; }
+.kpi .sub { font-size: 0.8rem; color: var(--muted); }
+@media (max-width: 720px) { .kpis { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+
+nav.tabs { display: flex; gap: 4px; border-bottom: 1px solid var(--line); overflow-x: auto; }
+nav.tabs button { background: none; border: 0; border-bottom: 2px solid transparent; padding: 10px 14px; font: 600 0.92rem var(--f-body); color: var(--muted); cursor: pointer; white-space: nowrap; }
+nav.tabs button[aria-selected="true"] { color: var(--ink); border-bottom-color: var(--accent); }
+button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-visible, tr:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+.bar { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; justify-content: space-between; }
+.chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.chip { border: 1px solid var(--line); background: var(--surface); color: var(--ink); border-radius: 999px; padding: 5px 12px; font: 500 0.84rem var(--f-body); cursor: pointer; }
+.chip[aria-pressed="true"] { background: var(--accent-soft); border-color: var(--accent); color: var(--accent); }
+input, select, textarea { font: inherit; color: var(--ink); background: var(--surface); border: 1px solid var(--line); border-radius: 6px; padding: 7px 10px; width: 100%; }
+textarea { min-height: 64px; resize: vertical; }
+.search { max-width: 240px; }
+.btn { border: 1px solid var(--accent); background: var(--accent); color: var(--surface); border-radius: 6px; padding: 7px 14px; font: 600 0.88rem var(--f-body); cursor: pointer; }
+.btn.ghost { background: transparent; color: var(--accent); }
+.btn.danger { background: transparent; color: var(--bad); border-color: var(--bad); }
+
+.tablebox { overflow-x: auto; background: var(--surface); border: 1px solid var(--line); border-radius: 8px; }
+table { border-collapse: collapse; width: 100%; min-width: 760px; font-size: 0.9rem; }
+th { text-align: left; font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.06em; color: var(--muted); font-weight: 600; padding: 10px 12px; border-bottom: 1px solid var(--line); cursor: pointer; user-select: none; white-space: nowrap; }
+th.n, td.n { text-align: right; }
+td { padding: 10px 12px; border-bottom: 1px solid var(--line); vertical-align: top; }
+tbody tr.row { cursor: pointer; }
+tbody tr.row:hover { background: var(--bg); }
+tr.detail td { background: var(--bg); padding: 16px; }
+.nm { font-weight: 600; }
+.meta { font-size: 0.8rem; color: var(--muted); }
+.pill { display: inline-block; font-size: 0.74rem; font-weight: 600; padding: 2px 9px; border-radius: 999px; white-space: nowrap; }
+.pill.acces { color: var(--go); background: var(--go-bg); }
+.pill.ipo { color: var(--watch); background: var(--watch-bg); }
+.pill.suivre { color: var(--follow); background: var(--follow-bg); }
+.pos { color: var(--go); } .neg { color: var(--bad); }
+.dgrid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 16px; }
+.dgrid > div { min-width: 0; display: flex; flex-direction: column; gap: 4px; }
+.dgrid .lab { font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.06em; color: var(--muted); font-weight: 600; }
+.dfoot { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; justify-content: space-between; margin-top: 14px; }
+@media (max-width: 760px) { .dgrid { grid-template-columns: 1fr; } }
+a { color: var(--accent); }
+
+.panel { background: var(--surface); border: 1px solid var(--line); border-radius: 8px; padding: 16px; display: flex; flex-direction: column; gap: 12px; }
+.form { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px 12px; }
+.form label { display: flex; flex-direction: column; gap: 4px; font-size: 0.8rem; color: var(--muted); font-weight: 500; min-width: 0; }
+.form .wide { grid-column: 1 / -1; }
+.actions { display: flex; gap: 8px; justify-content: flex-end; flex-wrap: wrap; }
+@media (max-width: 640px) { .form { grid-template-columns: 1fr; } }
+.msg { font-size: 0.86rem; color: var(--muted); }
+.msg.err { color: var(--bad); }
+.empty { padding: 28px 16px; text-align: center; color: var(--muted); }
+
+.gauge { display: flex; flex-direction: column; gap: 6px; }
+.gauge .track { position: relative; height: 12px; background: var(--follow-bg); border-radius: 6px; overflow: hidden; }
+.gauge .fill { position: absolute; inset: 0 auto 0 0; background: var(--accent); border-radius: 6px; }
+.gauge .fill.over { background: var(--bad); }
+.gauge .limit { position: absolute; top: -3px; bottom: -3px; width: 2px; background: var(--ink); }
+.gauge .legend { display: flex; justify-content: space-between; font-size: 0.8rem; color: var(--muted); }
+
+.timeline { display: flex; flex-direction: column; }
+.ev { display: grid; grid-template-columns: 110px 110px minmax(0, 1fr) auto; gap: 12px; padding: 12px 4px; border-bottom: 1px solid var(--line); align-items: baseline; }
+.ev.future .date { color: var(--accent); font-weight: 600; }
+.ev .date { font-family: var(--f-mono); font-size: 0.86rem; }
+@media (max-width: 640px) { .ev { grid-template-columns: 1fr; gap: 4px; } }
+.del { background: none; border: 0; color: var(--muted); cursor: pointer; font-size: 0.8rem; }
+.del:hover { color: var(--bad); }
+
+.guide { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; }
+.guide .panel p, .guide .panel li { font-size: 0.92rem; max-width: 65ch; }
+.guide ul { margin: 0; padding-left: 18px; display: flex; flex-direction: column; gap: 6px; }
+@media (max-width: 760px) { .guide { grid-template-columns: 1fr; } }
+.rules { counter-reset: r; }
+@media (prefers-reduced-motion: no-preference) { tr.detail td { animation: fade .18s ease-out; } @keyframes fade { from { opacity: .4 } to { opacity: 1 } } }
+</style>
+
+<div class="wrap">
+  <header class="top">
+    <div>
+      <h1>Radar Startups</h1>
+      <p class="asof">Veille des startups en forte croissance, suivi de tes investissements. Données recherchées au 29 septembre 2026.</p>
+    </div>
+    <button class="btn" id="btnAddStartup" type="button">+ Ajouter une startup</button>
+  </header>
+
+  <p class="warn"><b>Ceci n'est pas un conseil en investissement.</b> Les startups non cotées sont illiquides (5 à 10 ans bloqués) et beaucoup échouent : n'y mets que de l'argent que tu peux perdre en totalité. Vérifie chaque chiffre à la source avant d'agir.</p>
+
+  <section class="kpis" aria-label="Résumé">
+    <div class="kpi"><span class="lab">Startups suivies</span><span class="val" id="kTotal">0</span><span class="sub" id="kSectors">—</span></div>
+    <div class="kpi"><span class="lab">Accessibles maintenant</span><span class="val" id="kAcces">0</span><span class="sub">cotées ou ouvertes aux particuliers</span></div>
+    <div class="kpi"><span class="lab">IPO à surveiller</span><span class="val" id="kIpo">0</span><span class="sub" id="kNextIpo">—</span></div>
+    <div class="kpi"><span class="lab">Mon portefeuille</span><span class="val" id="kPf">0 €</span><span class="sub" id="kPfSub">aucune ligne</span></div>
+  </section>
+
+  <nav class="tabs" role="tablist">
+    <button role="tab" id="tab-radar" aria-selected="true" data-tab="radar">Radar</button>
+    <button role="tab" id="tab-pf" aria-selected="false" data-tab="pf">Mon portefeuille</button>
+    <button role="tab" id="tab-cal" aria-selected="false" data-tab="cal">Calendrier</button>
+    <button role="tab" id="tab-guide" aria-selected="false" data-tab="guide">Comment investir</button>
+  </nav>
+
+  <p class="msg err" id="dbMsg" hidden></p>
+
+  <!-- RADAR -->
+  <section id="view-radar" class="view" style="display:flex;flex-direction:column;gap:12px">
+    <div class="panel" id="formStartup" hidden>
+      <h3 id="fsTitle">Ajouter une startup</h3>
+      <form class="form" id="fsForm">
+        <label>Nom<input id="fs-name" required></label>
+        <label>Secteur<input id="fs-sector" placeholder="IA, cyber, fintech…"></label>
+        <label>Pays<input id="fs-country" placeholder="FR, US…"></label>
+        <label>Statut
+          <select id="fs-status">
+            <option value="acces">Accessible maintenant</option>
+            <option value="ipo">IPO à surveiller</option>
+            <option value="suivre" selected>À suivre</option>
+          </select>
+        </label>
+        <label>Dernière levée<input id="fs-round" placeholder="400 M$ série F"></label>
+        <label>Date (AAAA-MM)<input id="fs-date" placeholder="2026-09"></label>
+        <label>Valorisation (Md, nombre)<input id="fs-val" inputmode="decimal" placeholder="6.4"></label>
+        <label>Devise
+          <select id="fs-cur"><option value="$">$</option><option value="€">€</option></select>
+        </label>
+        <label>Revenu annuel récurrent (Md)<input id="fs-arr" inputmode="decimal" placeholder="0.375"></label>
+        <label class="wide">Croissance / chiffres clés<input id="fs-growth"></label>
+        <label class="wide">Pourquoi la suivre<textarea id="fs-why"></textarea></label>
+        <label class="wide">Risques<textarea id="fs-risks"></textarea></label>
+        <label class="wide">Comment y investir<textarea id="fs-how"></textarea></label>
+        <label>Source (lien)<input id="fs-src" type="url"></label>
+        <label>Nom de la source<input id="fs-srcl"></label>
+        <label>Prochain événement<input id="fs-next" placeholder="IPO nov. 2026"></label>
+        <div class="actions wide">
+          <span class="msg" id="fsMsg"></span>
+          <button type="button" class="btn ghost" id="fsCancel">Annuler</button>
+          <button type="submit" class="btn" id="fsSave">Enregistrer</button>
+        </div>
+      </form>
+    </div>
+
+    <div class="bar">
+      <div class="chips" id="statusChips">
+        <button class="chip" aria-pressed="true" data-f="all">Toutes</button>
+        <button class="chip" aria-pressed="false" data-f="acces">Accessibles maintenant</button>
+        <button class="chip" aria-pressed="false" data-f="ipo">IPO à surveiller</button>
+        <button class="chip" aria-pressed="false" data-f="suivre">À suivre</button>
+      </div>
+      <input class="search" id="q" type="search" placeholder="Chercher un nom, un secteur…" aria-label="Rechercher">
+    </div>
+
+    <div class="tablebox">
+      <table>
+        <thead><tr>
+          <th data-s="name">Startup</th>
+          <th data-s="status">Statut</th>
+          <th data-s="round">Dernière levée</th>
+          <th class="n" data-s="val">Valorisation</th>
+          <th class="n" data-s="arr">Revenu récurrent</th>
+          <th class="n" data-s="mult" title="Valorisation divisée par le revenu annuel récurrent">Multiple</th>
+          <th data-s="date">Date</th>
+        </tr></thead>
+        <tbody id="radarBody"><tr><td colspan="7" class="empty">Chargement de ta liste… Les startups que tu ajoutes avec « + Ajouter une startup » apparaîtront ici.</td></tr></tbody>
+      </table>
+    </div>
+    <p class="meta">Clique sur une ligne pour voir pourquoi la suivre, les risques et comment y investir. Multiple = valorisation ÷ revenu annuel récurrent : plus il est bas, moins tu paies cher chaque dollar de revenu.</p>
+  </section>
+
+  <!-- PORTEFEUILLE -->
+  <section id="view-pf" class="view" hidden style="flex-direction:column;gap:12px">
+    <div class="panel">
+      <div class="bar">
+        <h2>Part des startups dans ton patrimoine</h2>
+        <label class="meta" style="display:flex;gap:8px;align-items:center">Patrimoine financier total (€)
+          <input id="patrimoine" inputmode="decimal" style="width:140px" placeholder="ex. 30000">
+        </label>
+      </div>
+      <div class="gauge">
+        <div class="track"><div class="fill" id="gFill" style="width:0%"></div><div class="limit" style="left:40%" title="Limite conseillée : 10 %"></div></div>
+        <div class="legend"><span id="gText">Renseigne ton patrimoine pour voir la jauge</span><span>limite prudente 10 % (échelle 0–25 %)</span></div>
+      </div>
+    </div>
+
+    <div class="panel">
+      <h3>Enregistrer un investissement</h3>
+      <form class="form" id="pfForm">
+        <label>Startup<input id="pf-name" list="startupNames" required></label>
+        <datalist id="startupNames"></datalist>
+        <label>Plateforme / courtier<input id="pf-platform" placeholder="Tudigo, Boursorama…"></label>
+        <label>Date<input id="pf-date" type="date"></label>
+        <label>Montant investi (€)<input id="pf-amount" inputmode="decimal" required></label>
+        <label>Valeur actuelle estimée (€)<input id="pf-current" inputmode="decimal" placeholder="laisser vide = montant"></label>
+        <label>Type
+          <select id="pf-type"><option>Action cotée</option><option>Crowdequity</option><option>FCPI / FIP</option><option>Pré-IPO / secondaire</option><option>Autre</option></select>
+        </label>
+        <label class="wide">Notes (valo d'entrée, clauses, réduction d'impôt…)<input id="pf-notes"></label>
+        <div class="actions wide"><span class="msg" id="pfMsg"></span><button class="btn" type="submit">Ajouter</button></div>
+      </form>
+    </div>
+
+    <div class="tablebox">
+      <table>
+        <thead><tr><th>Startup</th><th>Type</th><th>Plateforme</th><th>Date</th><th class="n">Investi</th><th class="n">Valeur</th><th class="n">+/-</th><th></th></tr></thead>
+        <tbody id="pfBody"><tr><td colspan="8" class="empty">Aucun investissement enregistré. Ajoute ton premier avec le formulaire ci-dessus.</td></tr></tbody>
+        <tfoot id="pfFoot"></tfoot>
+      </table>
+    </div>
+  </section>
+
+  <!-- CALENDRIER -->
+  <section id="view-cal" class="view" hidden style="flex-direction:column;gap:12px">
+    <div class="panel">
+      <h3>Ajouter un événement</h3>
+      <form class="form" id="evForm">
+        <label>Date<input id="ev-date" type="date" required></label>
+        <label>Type
+          <select id="ev-type"><option>Levée</option><option>IPO</option><option>Rachat</option><option>Résultats</option><option>Autre</option></select>
+        </label>
+        <label>Startup<input id="ev-who" list="startupNames" required></label>
+        <label class="wide">Ce qui se passe<input id="ev-what" required></label>
+        <div class="actions wide"><span class="msg" id="evMsg"></span><button class="btn" type="submit">Ajouter</button></div>
+      </form>
+    </div>
+    <div class="panel">
+      <h3>Fil des événements</h3>
+      <div class="timeline" id="timeline"><p class="empty">Aucun événement pour l'instant.</p></div>
+    </div>
+  </section>
+
+  <!-- GUIDE -->
+  <section id="view-guide" class="view" hidden>
+    <div class="guide">
+      <div class="panel">
+        <h2>Les 4 portes d'entrée pour un particulier</h2>
+        <ul>
+          <li><b>Actions cotées après introduction en bourse.</b> Le plus simple et le plus liquide : un compte-titres ou un PEA (si éligible) chez ton courtier. Ex. SpaceX, cotée depuis juin 2026. Attention à la volatilité des premiers jours.</li>
+          <li><b>Crowdequity (financement participatif en capital).</b> Plateformes agréées PSFP par l'AMF : WiSEED, Tudigo, Sowefund, Anaxago, Lita… Tickets dès 100 €. Surtout des PME et jeunes pousses françaises, pas les licornes.</li>
+          <li><b>FCPI / FIP.</b> Fonds gérés par des professionnels qui investissent dans des dizaines de PME innovantes. Diversification immédiate, frais élevés, blocage 6 à 10 ans.</li>
+          <li><b>Pré-IPO / marché secondaire</b> (Forge, EquityZen…). Donne accès aux grandes licornes, mais surtout réservé aux investisseurs « accrédités » américains et avec des tickets élevés.</li>
+        </ul>
+      </div>
+      <div class="panel">
+        <h2>Fiscalité en France (2026)</h2>
+        <ul>
+          <li><b>IR-PME</b> : réduction d'impôt de <b>18 %</b> du montant souscrit au capital d'une PME (cas général en 2026).</li>
+          <li><b>25 %</b> pour une entreprise solidaire (ESUS) ou foncière solidaire, pour les versements jusqu'au 30 septembre 2026.</li>
+          <li><b>30 %</b> pour une Jeune Entreprise Innovante dont la R&amp;D atteint au moins 20 % des charges, <b>50 %</b> pour une JEI de rupture (JEIR).</li>
+          <li>Condition : garder les titres au moins 5 ans. Plafonds annuels à vérifier sur impots.gouv.fr ou auprès de la plateforme.</li>
+        </ul>
+      </div>
+      <div class="panel">
+        <h2>Règles de prudence</h2>
+        <ul>
+          <li>Pas plus de <b>5 à 10 %</b> de ton patrimoine financier dans les startups. La jauge de l'onglet Portefeuille le suit pour toi.</li>
+          <li><b>Diversifie</b> : 10 à 20 lignes minimum. Dans un portefeuille type, la majorité des startups ne rapportent rien et une ou deux font toute la performance.</li>
+          <li>Garde d'abord une <b>épargne de précaution</b> (3 à 6 mois de dépenses) disponible.</li>
+          <li>Une grosse levée n'est pas une garantie : elle signifie aussi une valorisation plus chère pour ceux qui entrent tard.</li>
+          <li>Pour une IPO, attends souvent quelques semaines : le prix des premiers jours est très volatil.</li>
+        </ul>
+      </div>
+      <div class="panel">
+        <h2>Où suivre l'actualité</h2>
+        <ul>
+          <li><a href="https://news.crunchbase.com/" target="_blank" rel="noopener">Crunchbase News</a> : chaque vendredi, les 10 plus grosses levées aux États-Unis.</li>
+          <li><a href="https://www.maddyness.com/" target="_blank" rel="noopener">Maddyness</a> (MaddyMoney) et <a href="https://www.frenchweb.fr/" target="_blank" rel="noopener">FrenchWeb</a> : toutes les levées de la French Tech chaque semaine.</li>
+          <li><a href="https://forgeglobal.com/tech-ipo-calendar-2026/" target="_blank" rel="noopener">Forge</a> : calendrier des introductions en bourse tech.</li>
+          <li><a href="https://www.amf-france.org/" target="_blank" rel="noopener">AMF</a> : liste blanche des plateformes agréées, à vérifier avant d'y verser un euro.</li>
+        </ul>
+      </div>
+    </div>
+  </section>
+</div>
+
+<script>
+(function () {
+  const $ = (id) => document.getElementById(id);
+  const STATUS = { acces: "Accessible maintenant", ipo: "IPO à surveiller", suivre: "À suivre" };
+  const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+  const nf = new Intl.NumberFormat("fr-FR", { maximumFractionDigits: 1 });
+  const eur = new Intl.NumberFormat("fr-FR", { style: "currency", currency: "EUR", maximumFractionDigits: 0 });
+  const toNum = (v) => { if (v === "" || v == null) return null; const n = parseFloat(String(v).replace(/\s/g, "").replace(",", ".")); return isFinite(n) ? n : null; };
+  const safeUrl = (u) => /^https?:\/\//i.test(u || "") ? u : "";
+
+  let db = null;
+  let startups = [], positions = [], events = [];
+  let filter = "all", query = "", sortKey = "date", sortDir = -1, openId = null, editId = null;
+
+  function fmtBig(v, cur) {
+    if (v == null) return "—";
+    if (v >= 1000) return nf.format(v / 1000) + " 000 Md" + cur;
+    if (v < 1) return nf.format(v * 1000) + " M" + cur;
+    return nf.format(v) + " Md" + cur;
+  }
+  function mult(s) { return s.val != null && s.arr ? s.val / s.arr : null; }
+  function fmtMonth(d) {
+    if (!d) return "—";
+    const [y, m] = d.split("-");
+    const names = ["janv.", "févr.", "mars", "avr.", "mai", "juin", "juil.", "août", "sept.", "oct.", "nov.", "déc."];
+    return (m ? names[+m - 1] + " " : "") + y;
+  }
+
+  /* ---------- Onglets ---------- */
+  document.querySelectorAll("nav.tabs button").forEach((b) => b.addEventListener("click", () => showTab(b.dataset.tab)));
+  function showTab(t) {
+    document.querySelectorAll("nav.tabs button").forEach((b) => b.setAttribute("aria-selected", String(b.dataset.tab === t)));
+    document.querySelectorAll(".view").forEach((v) => { const on = v.id === "view-" + t; v.hidden = !on; if (on && v.id !== "view-guide") v.style.display = "flex"; });
+    try { localStorage.setItem("radar.tab", t); } catch (e) {}
+  }
+  try { const t = localStorage.getItem("radar.tab"); if (t) showTab(t); } catch (e) {}
+
+  /* ---------- Radar ---------- */
+  $("statusChips").addEventListener("click", (e) => {
+    const b = e.target.closest(".chip"); if (!b) return;
+    filter = b.dataset.f;
+    document.querySelectorAll("#statusChips .chip").forEach((c) => c.setAttribute("aria-pressed", String(c === b)));
+    renderRadar();
+  });
+  $("q").addEventListener("input", (e) => { query = e.target.value.toLowerCase(); renderRadar(); });
+  document.querySelectorAll("th[data-s]").forEach((th) => th.addEventListener("click", () => {
+    const k = th.dataset.s; if (sortKey === k) sortDir = -sortDir; else { sortKey = k; sortDir = (k === "name" || k === "status") ? 1 : -1; }
+    renderRadar();
+  }));
+
+  function sortVal(s, k) {
+    if (k === "mult") return mult(s);
+    if (k === "val" || k === "arr") return s[k];
+    if (k === "status") return ["acces", "ipo", "suivre"].indexOf(s.status);
+    return (s[k] || "").toString().toLowerCase();
+  }
+
+  function renderRadar() {
+    const body = $("radarBody");
+    let rows = startups.filter((s) => filter === "all" || s.status === filter);
+    if (query) rows = rows.filter((s) => [s.name, s.sector, s.country, s.why].join(" ").toLowerCase().includes(query));
+    rows.sort((a, b) => {
+      const x = sortVal(a, sortKey), y = sortVal(b, sortKey);
+      if (x == null && y == null) return 0; if (x == null) return 1; if (y == null) return -1;
+      return (x > y ? 1 : x < y ? -1 : 0) * sortDir;
+    });
+    if (!startups.length) { body.innerHTML = '<tr><td colspan="7" class="empty">Ta liste est vide. Ajoute une startup avec « + Ajouter une startup ».</td></tr>'; return; }
+    if (!rows.length) { body.innerHTML = '<tr><td colspan="7" class="empty">Aucune startup ne correspond à ce filtre.</td></tr>'; return; }
+    body.innerHTML = rows.map((s) => {
+      const m = mult(s);
+      const main = `<tr class="row" tabindex="0" data-id="${esc(s.id)}" aria-expanded="${openId === s.id}">
+        <td><div class="nm">${esc(s.name)}</div><div class="meta">${esc([s.sector, s.country].filter(Boolean).join(" · "))}</div></td>
+        <td><span class="pill ${esc(s.status)}">${esc(STATUS[s.status] || s.status)}</span>${s.next ? `<div class="meta">${esc(s.next)}</div>` : ""}</td>
+        <td>${esc(s.round || "—")}</td>
+        <td class="n">${fmtBig(s.val, s.cur || "$")}</td>
+        <td class="n">${fmtBig(s.arr, s.cur || "$")}</td>
+        <td class="n">${m == null ? "—" : nf.format(m) + "×"}</td>
+        <td class="mono">${esc(fmtMonth(s.date))}</td></tr>`;
+      if (openId !== s.id) return main;
+      const src = safeUrl(s.src);
+      return main + `<tr class="detail"><td colspan="7">
+        <div class="dgrid">
+          <div><span class="lab">Pourquoi la suivre</span><p>${esc(s.why || "—")}</p>${s.growth ? `<p class="meta"><b>Chiffres :</b> ${esc(s.growth)}</p>` : ""}</div>
+          <div><span class="lab">Risques</span><p>${esc(s.risks || "—")}</p></div>
+          <div><span class="lab">Comment y investir</span><p>${esc(s.how || "—")}</p></div>
+        </div>
+        <div class="dfoot">
+          <span class="meta">${src ? `Source : <a href="${esc(src)}" target="_blank" rel="noopener">${esc(s.srcl || src)}</a>` : "Pas de source renseignée"}${s.updated ? " · mis à jour " + esc(s.updated) : ""}</span>
+          <span class="actions"><button class="btn ghost" data-edit="${esc(s.id)}" type="button">Modifier</button><button class="btn danger" data-del="${esc(s.id)}" type="button">Retirer</button></span>
+        </div></td></tr>`;
+    }).join("");
+  }
+  $("radarBody").addEventListener("click", (e) => {
+    const ed = e.target.closest("[data-edit]"); if (ed) { openForm(ed.dataset.edit); return; }
+    const dl = e.target.closest("[data-del]");
+    if (dl) {
+      if (dl.dataset.armed) { removeDoc("startups", dl.dataset.del); openId = null; }
+      else { dl.dataset.armed = "1"; dl.textContent = "Confirmer le retrait"; }
+      return;
+    }
+    const r = e.target.closest("tr.row"); if (!r) return;
+    openId = openId === r.dataset.id ? null : r.dataset.id; renderRadar();
+  });
+  $("radarBody").addEventListener("keydown", (e) => {
+    const r = e.target.closest("tr.row"); if (!r || (e.key !== "Enter" && e.key !== " ")) return;
+    e.preventDefault(); openId = openId === r.dataset.id ? null : r.dataset.id; renderRadar();
+    const again = document.querySelector(`tr.row[data-id="${CSS.escape(r.dataset.id)}"]`); if (again) again.focus();
+  });
+
+  const F = ["name", "sector", "country", "status", "round", "date", "val", "cur", "arr", "growth", "why", "risks", "how", "src", "srcl", "next"];
+  const FID = { val: "fs-val", arr: "fs-arr", src: "fs-src", srcl: "fs-srcl", round: "fs-round" };
+  const fid = (k) => FID[k] || "fs-" + k;
+  function openForm(id) {
+    editId = id || null;
+    const s = startups.find((x) => x.id === id) || { status: "suivre", cur: "$" };
+    F.forEach((k) => { const el = $(fid(k)); if (el) el.value = s[k] ?? ""; });
+    $("fsTitle").textContent = id ? "Modifier " + s.name : "Ajouter une startup";
+    $("fsMsg").textContent = "";
+    showTab("radar"); $("formStartup").hidden = false; $("fs-name").focus();
+  }
+  $("btnAddStartup").addEventListener("click", () => openForm(null));
+  $("fsCancel").addEventListener("click", () => { $("formStartup").hidden = true; });
+  $("fsForm").addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const d = {};
+    F.forEach((k) => { const el = $(fid(k)); if (el) d[k] = el.value.trim(); });
+    d.val = toNum(d.val); d.arr = toNum(d.arr);
+    d.updated = new Date().toISOString().slice(0, 10);
+    const id = editId || d.name.toLowerCase().normalize("NFD").replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "") + "-" + Date.now().toString(36);
+    if (await save("startups", id, d, $("fsMsg"))) { $("formStartup").hidden = true; openId = id; }
+  });
+
+  /* ---------- Portefeuille ---------- */
+  function renderPf() {
+    const body = $("pfBody"), foot = $("pfFoot");
+    let inv = 0, cur = 0;
+    if (!positions.length) {
+      body.innerHTML = '<tr><td colspan="8" class="empty">Aucun investissement enregistré. Ajoute ton premier avec le formulaire ci-dessus.</td></tr>';
+      foot.innerHTML = "";
+    } else {
+      const rows = positions.slice().sort((a, b) => (b.date || "").localeCompare(a.date || ""));
+      body.innerHTML = rows.map((p) => {
+        const a = p.amount || 0, c = p.current ?? a, diff = c - a; inv += a; cur += c;
+        const pct = a ? (diff / a) * 100 : 0;
+        return `<tr><td class="nm">${esc(p.name)}${p.notes ? `<div class="meta">${esc(p.notes)}</div>` : ""}</td>
+          <td>${esc(p.type || "")}</td><td>${esc(p.platform || "")}</td><td class="mono">${esc(p.date || "")}</td>
+          <td class="n">${eur.format(a)}</td><td class="n">${eur.format(c)}</td>
+          <td class="n ${diff > 0 ? "pos" : diff < 0 ? "neg" : ""}">${diff >= 0 ? "+" : ""}${nf.format(pct)} %</td>
+          <td><button class="del" data-pdel="${esc(p.id)}" type="button">Supprimer</button></td></tr>`;
+      }).join("");
+      const d = cur - inv;
+      foot.innerHTML = `<tr><td colspan="4"><b>Total</b></td><td class="n"><b>${eur.format(inv)}</b></td><td class="n"><b>${eur.format(cur)}</b></td><td class="n ${d > 0 ? "pos" : d < 0 ? "neg" : ""}"><b>${inv ? (d >= 0 ? "+" : "") + nf.format((d / inv) * 100) + " %" : "—"}</b></td><td></td></tr>`;
+    }
+    $("kPf").textContent = eur.format(cur);
+    $("kPfSub").textContent = positions.length ? `${positions.length} ligne${positions.length > 1 ? "s" : ""} · investi ${eur.format(inv)}` : "aucune ligne";
+    renderGauge(cur);
+  }
+  function renderGauge(cur) {
+    const pat = toNum($("patrimoine").value);
+    if (!pat) { $("gFill").style.width = "0%"; $("gText").textContent = "Renseigne ton patrimoine pour voir la jauge"; return; }
+    const pct = (cur / pat) * 100;
+    $("gFill").style.width = Math.min(100, (pct / 25) * 100) + "%";
+    $("gFill").classList.toggle("over", pct > 10);
+    $("gText").textContent = `${nf.format(pct)} % de ton patrimoine en startups` + (pct > 10 ? " : au-dessus de la limite prudente" : "");
+  }
+  let patTimer = null;
+  $("patrimoine").addEventListener("input", () => {
+    renderGauge(positions.reduce((s, p) => s + (p.current ?? p.amount ?? 0), 0));
+    clearTimeout(patTimer);
+    patTimer = setTimeout(() => { if (db) db.doc("settings/main").set({ patrimoine: toNum($("patrimoine").value) }).catch(() => {}); }, 800);
+  });
+  $("pfForm").addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const amount = toNum($("pf-amount").value);
+    if (amount == null) { $("pfMsg").textContent = "Indique un montant en euros, par exemple 500."; $("pfMsg").className = "msg err"; return; }
+    const d = { name: $("pf-name").value.trim(), platform: $("pf-platform").value.trim(), date: $("pf-date").value, amount,
+      current: toNum($("pf-current").value), type: $("pf-type").value, notes: $("pf-notes").value.trim() };
+    if (d.current == null) delete d.current;
+    if (await save("positions", "p-" + Date.now().toString(36), d, $("pfMsg"))) { e.target.reset(); $("pfMsg").textContent = "Investissement ajouté."; $("pfMsg").className = "msg"; }
+  });
+  $("pfBody").addEventListener("click", (e) => {
+    const b = e.target.closest("[data-pdel]"); if (!b) return;
+    if (b.dataset.armed) removeDoc("positions", b.dataset.pdel); else { b.dataset.armed = "1"; b.textContent = "Confirmer"; }
+  });
+
+  /* ---------- Calendrier ---------- */
+  function renderCal() {
+    const tl = $("timeline"), today = new Date().toISOString().slice(0, 10);
+    if (!events.length) { tl.innerHTML = '<p class="empty">Aucun événement pour l\'instant. Ajoute une IPO, une levée ou un rachat à surveiller.</p>'; return; }
+    const rows = events.slice().sort((a, b) => (b.date || "").localeCompare(a.date || ""));
+    tl.innerHTML = rows.map((ev) => `<div class="ev ${ev.date > today ? "future" : ""}">
+      <span class="date">${esc(ev.date)}${ev.date > today ? " · à venir" : ""}</span>
+      <span><span class="pill ${ev.type === "IPO" ? "ipo" : ev.type === "Levée" ? "acces" : "suivre"}">${esc(ev.type)}</span></span>
+      <span><b>${esc(ev.who)}</b> · ${esc(ev.what)}</span>
+      <button class="del" data-edel="${esc(ev.id)}" type="button">Supprimer</button></div>`).join("");
+    const next = rows.filter((e) => e.type === "IPO" && e.date > today).sort((a, b) => a.date.localeCompare(b.date))[0];
+    $("kNextIpo").textContent = next ? `prochaine : ${next.who} (${fmtMonth(next.date.slice(0, 7))})` : "aucune IPO datée";
+  }
+  $("timeline").addEventListener("click", (e) => {
+    const b = e.target.closest("[data-edel]"); if (!b) return;
+    if (b.dataset.armed) removeDoc("events", b.dataset.edel); else { b.dataset.armed = "1"; b.textContent = "Confirmer"; }
+  });
+  $("evForm").addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const d = { date: $("ev-date").value, type: $("ev-type").value, who: $("ev-who").value.trim(), what: $("ev-what").value.trim() };
+    if (await save("events", "e-" + Date.now().toString(36), d, $("evMsg"))) { e.target.reset(); $("evMsg").textContent = "Événement ajouté."; }
+  });
+
+  /* ---------- KPI ---------- */
+  function renderKpis() {
+    $("kTotal").textContent = startups.length;
+    $("kAcces").textContent = startups.filter((s) => s.status === "acces").length;
+    $("kIpo").textContent = startups.filter((s) => s.status === "ipo").length;
+    const sec = {}; startups.forEach((s) => { const k = (s.sector || "").split(/[ ,/·]/)[0]; if (k) sec[k] = (sec[k] || 0) + 1; });
+    const top = Object.entries(sec).sort((a, b) => b[1] - a[1]).slice(0, 2).map(([k, n]) => `${k} (${n})`);
+    $("kSectors").textContent = top.length ? "surtout " + top.join(", ") : "—";
+    $("startupNames").innerHTML = startups.map((s) => `<option value="${esc(s.name)}"></option>`).join("");
+  }
+
+  /* ---------- Base de données ---------- */
+  async function save(col, id, data, msgEl) {
+    if (!db) { msgEl.textContent = "La base n'est pas disponible dans cette vue : ouvre la page depuis ton compte Claude."; msgEl.className = "msg err"; return false; }
+    try { await db.collection(col).doc(id).set(data); msgEl.textContent = ""; return true; }
+    catch (err) {
+      msgEl.className = "msg err";
+      msgEl.textContent = err && err.code === "invalid_argument" ? "Tu n'as pas le droit de modifier cette page (lecture seule)." : "Enregistrement impossible pour le moment, réessaie dans un instant.";
+      return false;
+    }
+  }
+  async function removeDoc(col, id) { if (db) { try { await db.collection(col).doc(id).delete(); } catch (e) {} } }
+  function snap(col, cb) {
+    db.collection(col).onSnapshot((s) => { cb(s.docs.map((d) => Object.assign({ id: d.id }, d.data()))); },
+      () => { $("dbMsg").hidden = false; $("dbMsg").textContent = "La connexion aux données a été interrompue. Recharge la page."; });
+  }
+
+  (async () => {
+    db = window.claude && window.claude.use ? await window.claude.use("db") : null;
+    if (!db) {
+      $("radarBody").innerHTML = '<tr><td colspan="7" class="empty">Les données ne sont pas disponibles dans cette vue. Ouvre la page depuis ton compte Claude pour voir et modifier ta liste.</td></tr>';
+      return;
+    }
+    snap("startups", (d) => { startups = d; renderRadar(); renderKpis(); });
+    snap("positions", (d) => { positions = d; renderPf(); });
+    snap("events", (d) => { events = d; renderCal(); });
+    try { const s = await db.doc("settings/main").get(); if (s.exists && s.data().patrimoine) { $("patrimoine").value = s.data().patrimoine; renderPf(); } } catch (e) {}
+  })();
+})();
+</script>
